@@ -23,40 +23,42 @@ const PLATFORM_MODULES: readonly string[] = [
  */
 const isPlatformModule = (specifier: string): boolean => PLATFORM_MODULES.includes(specifier)
 
+
 /**
- * A bare specifier is a runtime dependency the harness installs (`@deepseek-ai/cordis`)
- * or a peer it provides, so it stays an import.
- * @param specifier - module specifier the bundle reached.
- * @returns whether the specifier stays an import.
+ * The package name a browser bundle registers itself under in the shell's module table.
  */
-const isNodeExternal = (specifier: string): boolean => !specifier.startsWith('.')
+const PACKAGE_NAME = '@free-lzj/dsh-client-ui-settings-agent-import'
 
 export default defineConfig([
   {
     // The node half is an empty apply: it exists only so the package holds a
     // Loader row the client module system attaches the browser half to.
-    name: '@free-lzj/dsh-client-ui-settings-agent-import/node',
-    entry: { index: 'src/index.ts' },
+    name: `${PACKAGE_NAME}/node`,
+    // Bundle what tsc emitted, not the sources: that pass rewrites the `.ts`
+    // specifiers this repository writes for local imports into the `.js` ones a
+    // Node consumer can resolve.
+    entry: { index: 'lib/types/index.js' },
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
-    // `index.js`, not `index.mjs`: the manifest and the published payload name that file.
-    outExtensions: () => ({ js: '.js' }),
     dts: false,
     sourcemap: true,
     clean: false,
-    deps: { neverBundle: isNodeExternal },
+    // tsdown's default keeps the package's declared dependency (the `cordis`
+    // peer) external and inlines this package's own relative modules.
+    outputOptions: { entryFileNames: 'index.js' },
   },
   {
-    // The shell fetches this bundle outside Vite's module graph and runs it as a
-    // factory with the module table as its `require`, so it is a browser CJS bundle.
-    name: '@free-lzj/dsh-client-ui-settings-agent-import/client',
-    entry: { client: 'src/client/index.ts' },
+    // The shell fetches this bundle outside Vite's module graph and evaluates it
+    // as a closure factory: it registers with the module table, receives the
+    // table as its `require`, and returns the module exports. The banner,
+    // footer, and intro are what make the artifact that shape — a plain CJS
+    // bundle would reference an `exports` the browser never defines.
+    name: `${PACKAGE_NAME}/client`,
+    entry: { client: 'lib/types/client/index.js' },
     outDir: 'lib',
     format: 'cjs',
     platform: 'browser',
-    // `client.js`, not `client.cjs`: the module table fetches exactly that file.
-    outExtensions: () => ({ js: '.js' }),
     dts: false,
     sourcemap: true,
     clean: false,
@@ -65,6 +67,16 @@ export default defineConfig([
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
+    },
+    outputOptions: {
+      entryFileNames: 'client.js',
+      // No `import()` in this package, so every static relative dependency stays
+      // in the entry; the name is pinned for a future async chunk.
+      chunkFileNames: 'client.[name].js',
+      banner: (chunk: { isEntry: boolean; fileName: string }): string =>
+        `window.__ModuleLoader__.load({ id: ${JSON.stringify(PACKAGE_NAME)}, ${chunk.isEntry ? '' : `chunk: ${JSON.stringify(chunk.fileName)}, `}factory: (require) => {`,
+      footer: 'return module.exports; } });',
+      intro: 'var module = { exports: {} }; var exports = module.exports;',
     },
   },
 ])
