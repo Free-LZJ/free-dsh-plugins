@@ -95,6 +95,8 @@ pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js、lib/client.js
 pnpm run test        # vitest：12 个 spec 文件 / 226 个测试
 ```
 
+CI（`.github/workflows/ci.yml`）在 `windows-latest` 上跑：adapter 的 spec 断言 Windows 盘符路径（Codex / Claude Code 主目录用 `C:`、`D:` 夹具），在 Linux 上这些夹具会被当成相对路径。
+
 浏览器半边的 spec 需要 dsh 客户端包的 Node 半边与模块表，`vitest.config.ts` 与 `packages/ui-settings-agent-import/tests/support/` 说明了这两处接线（见该包 README 的「测试如何拿到 dsh 的客户端代码」）。
 
 ## 已知限制

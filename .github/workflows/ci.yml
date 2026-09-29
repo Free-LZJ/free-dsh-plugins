@@ -7,7 +7,10 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Windows, not Linux: the adapter specs assert Windows drive-letter path
+    # handling (`C:`, `D:` fixtures for Codex and Claude Code homes), which Linux
+    # reads as relative paths. The plugin was also verified on this platform.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

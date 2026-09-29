@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // The published dsh packages ship no source maps while their bundles reference
+  // them; Vite's per-file warnings about that would bury real output.
+  logLevel: 'error',
   // The client specs render `.tsx` components; the host specs stay plain TypeScript.
   esbuild: { jsx: 'automatic' },
   test: {
