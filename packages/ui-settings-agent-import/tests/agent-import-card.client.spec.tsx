@@ -7,7 +7,8 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { bindSnapshotSelector, makeTranslate } from './support/runtime.ts'
 import type { SettingsFieldState, SettingsFormShell } from '@deepseek-ai/dsh-client-ui-primitives'
 import { AgentImportCard, type AgentImportCardProps } from '../src/client/AgentImportCard.tsx'
-import type { AgentImportPageState, AgentImportSourceState } from '../src/client/agent-import-card-controller.ts'
+import type { AgentImportPageState, AgentImportReportState, AgentImportSourceState } from '../src/client/agent-import-card-controller.ts'
+import type { AgentImportReport } from '../src/client/agent-import-report.ts'
 import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
@@ -76,7 +77,18 @@ const servedPage: Omit<AgentImportPageState, keyof SettingsFormShell> = {
 function cardActions() {
   return {
     edit: vi.fn(), clear: vi.fn(), setToggle: vi.fn(), setChoices: vi.fn(), setList: vi.fn(), save: vi.fn(), discard: vi.fn(),
+    refreshReport: vi.fn(),
   }
+}
+
+/** One import result, as the Host half reports it. */
+function report(overrides: Partial<AgentImportReport> = {}): AgentImportReport {
+  return { importedAt: '2026-09-30T00:00:00.000Z', sources: ['codex'], skills: [], servers: [], notes: [], ...overrides }
+}
+
+/** The loaded-items snapshot the card's second hook serves. */
+function reportHook(state: AgentImportReportState) {
+  return bindSnapshotSelector(createSnapshotStore<AgentImportReportState>(state))
 }
 
 /** The switch the page renders for one field. */
@@ -85,10 +97,19 @@ function toggle(name: string) {
 }
 
 describe('AgentImportCard', () => {
-  function renderCard(state: Partial<AgentImportPageState> = {}) {
+  function renderCard(
+    state: Partial<AgentImportPageState> = {},
+    loaded: AgentImportReportState = { phase: 'unavailable', reason: 'not read' },
+  ) {
     const store = createSnapshotStore<AgentImportPageState>({ ...settled, ...servedPage, ...state })
     const actions = cardActions()
-    const props = { ...actions, view: 'page', t, useAgentImportCard: bindSnapshotSelector(store) } as AgentImportCardProps
+    const props = {
+      ...actions,
+      view: 'page',
+      t,
+      useAgentImportCard: bindSnapshotSelector(store),
+      useAgentImportReport: reportHook(loaded),
+    } as AgentImportCardProps
     render(<AgentImportCard {...props} />)
     return actions
   }
@@ -96,7 +117,11 @@ describe('AgentImportCard', () => {
   it('renders its one-liner alone in the summary view', () => {
     const store = createSnapshotStore<AgentImportPageState>({ ...settled, ...servedPage })
     const props = {
-      ...cardActions(), view: 'summary', t, useAgentImportCard: bindSnapshotSelector(store),
+      ...cardActions(),
+      view: 'summary',
+      t,
+      useAgentImportCard: bindSnapshotSelector(store),
+      useAgentImportReport: reportHook({ phase: 'loading' }),
     } as AgentImportCardProps
     render(<AgentImportCard {...props} />)
 
@@ -118,8 +143,57 @@ describe('AgentImportCard', () => {
     expect(screen.getByLabelText('Server name 1')).toHaveProperty('value', '')
   })
 
-  it('stages the text and number drafts a user types', () => {
-    const actions = renderCard()
+  it('groups the controls under titled sections', () => {
+    renderCard()
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent)
+    expect(headings).toEqual([en.loadedTitle, en.sources, en.pathsTitle, en.scopeTitle, en.serverDenyList])
+  })
+
+  it('lists the skills and servers the import reports, with a count above each list', () => {
+    renderCard({}, {
+      phase: 'ready',
+      report: report({
+        skills: [{ name: 'drawio-generator', description: 'Draws.', source: 'codex', path: '/home/u/.codex/skills/drawio/SKILL.md' }],
+        servers: [
+          { name: 'demo', serverName: 'demo', transport: 'stdio', target: 'demo-server', source: 'codex', status: 'mounted' },
+          { name: 'fs', transport: 'stdio', target: 'fs-server', source: 'codex', status: 'skipped', reason: 'listed in serverDenyList' },
+        ],
+        notes: ['codex: server "fs" skipped: listed in serverDenyList'],
+      }),
+    })
+
+    expect(screen.getByText('1 skills · 2 MCP servers')).toBeTruthy()
+    expect(screen.getByText('drawio-generator')).toBeTruthy()
+    expect(screen.getByTitle('/home/u/.codex/skills/drawio/SKILL.md')).toBeTruthy()
+    expect(screen.getByText(en.loadedMounted)).toBeTruthy()
+    expect(screen.getByText(en.loadedSkipped)).toBeTruthy()
+    expect(screen.getByText('fs-server')).toBeTruthy()
+    expect(screen.getByText('listed in serverDenyList')).toBeTruthy()
+    expect(screen.getByText('codex: server "fs" skipped: listed in serverDenyList')).toBeTruthy()
+  })
+
+  it('says an empty import loaded nothing', () => {
+    renderCard({}, { phase: 'ready', report: report() })
+
+    expect(screen.getByText('0 skills · 0 MCP servers')).toBeTruthy()
+    expect(screen.getByText(en.loadedNoSkills)).toBeTruthy()
+    expect(screen.getByText(en.loadedNoServers)).toBeTruthy()
+  })
+
+  it('says it is still reading the import result, and why when the read failed', () => {
+    renderCard({}, { phase: 'loading' })
+    expect(screen.getByText(en.reportLoading)).toBeTruthy()
+
+    cleanup()
+    const actions = renderCard({}, { phase: 'unavailable', reason: 'HTTP 404' })
+    expect(screen.getByText('The import result is unavailable: HTTP 404')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en.refresh }))
+    expect(actions.refreshReport).toHaveBeenCalledTimes(1)
+  })
+
+  it('stages the text and number drafts a user types', () => {    const actions = renderCard()
 
     fireEvent.change(screen.getByLabelText(en.codexHome), { target: { value: 'D:/codex' } })
     fireEvent.change(screen.getByLabelText(en.maxSkills), { target: { value: '150' } })

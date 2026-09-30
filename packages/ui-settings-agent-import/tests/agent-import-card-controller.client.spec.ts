@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { stubConfigForm } from './support/runtime.ts'
 import { AgentImportCardController } from '../src/client/agent-import-card-controller.ts'
 import type { AgentImportSettings } from '../src/client/agent-import-fields.ts'
+import type { AgentImportReportResult } from '../src/client/agent-import-report.ts'
 
 /** The section the Host resolves before any user override. */
 const DEFAULTS: AgentImportSettings = {
@@ -33,10 +34,13 @@ function served() {
   return host
 }
 
+/** A report read the form tests never exercise. */
+const unread = (): Promise<AgentImportReportResult> => Promise.resolve({ phase: 'unavailable', reason: 'not read' })
+
 describe('AgentImportCardController', () => {
   it('projects every control the page renders from the section the Host serves', () => {
     const host = served()
-    const controller = new AgentImportCardController(host.scope)
+    const controller = new AgentImportCardController(host.scope, unread)
     const { agentImportCard } = controller.inject().hooks
 
     expect(agentImportCard.getSnapshot()).toEqual({
@@ -70,7 +74,7 @@ describe('AgentImportCardController', () => {
   it('reads a namespace the Host does not serve as unavailable, with blank controls', () => {
     const host = stubConfigForm<AgentImportSettings>()
     host.publish({ status: 'loading' })
-    const controller = new AgentImportCardController(host.scope)
+    const controller = new AgentImportCardController(host.scope, unread)
 
     expect(controller.inject().hooks.agentImportCard.getSnapshot()).toMatchObject({
       available: false,
@@ -91,7 +95,7 @@ describe('AgentImportCardController', () => {
 
   it('stages every kind of control and writes each edit onto its section path', async () => {
     const host = served()
-    const controller = new AgentImportCardController(host.scope)
+    const controller = new AgentImportCardController(host.scope, unread)
     const { hooks, ...face } = controller.inject()
 
     face.edit('codex.home', ' D:/codex ')
@@ -122,7 +126,7 @@ describe('AgentImportCardController', () => {
 
   it('refuses to write a draft a bound does not accept', async () => {
     const host = served()
-    const controller = new AgentImportCardController(host.scope)
+    const controller = new AgentImportCardController(host.scope, unread)
     const { hooks, ...face } = controller.inject()
 
     face.edit('maxServers', 'many')
@@ -140,7 +144,7 @@ describe('AgentImportCardController', () => {
   it('clears an override, keeps it when the Host refuses the write, and drops it on discard', async () => {
     const host = served()
     host.mutate.mockImplementation(() => Promise.resolve(false))
-    const controller = new AgentImportCardController(host.scope)
+    const controller = new AgentImportCardController(host.scope, unread)
     const { hooks, ...face } = controller.inject()
 
     face.clear('maxServers')
@@ -158,7 +162,7 @@ describe('AgentImportCardController', () => {
     expect(hooks.agentImportCard.getSnapshot().values.maxServers).toEqual({ text: '8', overridden: true, invalid: false })  })
 
   it('stages a switch back to the state the section holds', () => {
-    const controller = new AgentImportCardController(served().scope)
+    const controller = new AgentImportCardController(served().scope, unread)
     const { hooks, ...face } = controller.inject()
 
     face.setToggle('mcp', false)

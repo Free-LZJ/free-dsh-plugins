@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-client-ui-settings-agent-import",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "The DeepSeek Harness Web Plugins-page card that configures @free-lzj/dsh-agent-import",
   "type": "module",
   "main": "lib/index.js",

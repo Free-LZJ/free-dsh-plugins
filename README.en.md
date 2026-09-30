@@ -16,7 +16,8 @@ If this machine already runs Codex or Claude Code, neither tool's MCP servers no
 - `[mcp_servers.*]` (Codex `config.toml`) and `mcpServers` (Claude Code `~/.claude.json`, project `.mcp.json`) mount through dsh's `mcp-client` as `mcp__<server>__<tool>` tools;
 - both tools' `skills/` directories join the skill catalog as one provider, where a same-named dsh skill wins;
 - a declaration the plugin cannot translate becomes one `agent-import: …` warning and is skipped, so one unusable entry never costs the rest;
-- the plugin's own configuration is live: saving on the Plugins page re-imports immediately, with no restart.
+- the plugin's own configuration is live: saving on the Plugins page re-imports immediately, with no restart;
+- the card starts with a **Loaded** section: the MCP servers this import mounted (transport, command or URL, mounted/skipped and why) and the skills it published (name, source, `SKILL.md` path), with a **Refresh** button.
 
 ## Install
 
@@ -85,6 +86,14 @@ The Plugins-page card covers every field; the equivalent row configuration is:
 | `maxSkills` | `200` | Maximum imported skills to publish |
 | `failOnStartupError` | `false` | Reject plugin activation when one imported server fails to start |
 
+## Where the Loaded section comes from
+
+The Host plugin publishes the current import on `GET /agent-import/report`, and the card reads it with a same-origin `fetch`. That route sits beside dsh's own pages but outside the API gateway's session check, so it answers **same-origin** requests only (`Sec-Fetch-Site` other than `same-origin`/`none`, or an `Origin` naming another host, is refused with 403; anything but GET/HEAD with 405), and it carries names and locations only: a server's arguments, environment, and headers never appear.
+
+The skill list is enumerated **per request**, not captured at activation, so adding or removing a skill in Codex or Claude Code shows up on the next **Refresh**; the server rows describe the current import generation.
+
+Host code is JS loaded at boot, so a change to it needs a `dsh web` restart; the browser half (`lib/client.js`) needs a page refresh.
+
 ## Development
 
 ```sh
@@ -97,7 +106,8 @@ pnpm run test        # vitest
 ## Known limitations
 
 - Neither package ships in the installed dsh Web composition; a deployment declares the two rows above.
-- The Plugins-page card does not list the servers and skills it recognized: that needs a Remote namespace in dsh's own `packages/api/remotes`. Today they surface through the tool registry, the skill catalog, and the `agent-import: …` log lines.
+- The Plugins-page card reads the import report over dsh Web's own HTTP routes: the Electron desktop loads a `file://` page with no `ctx.webServer`, so that section is absent there (the rest of the card still works). Desktop parity needs a Remote namespace in dsh's own `packages/api/remotes`.
+- The Loaded section answers "did it mount": a server that mounted but cannot connect is logged by dsh's own `mcp-client` (which keeps reconnecting while `failOnStartupError` is `false`), and its row still reads **Mounted**.
 - Foreign files are read at activation only (this plugin's own configuration excepted): editing a Codex or Claude Code declaration takes effect after a reload or restart.
 - Neither tool's plugin marketplaces are expanded (for example Codex `plugin.json`); only server declarations and skill directories are imported.
 - The real-composition end-to-end test (boot a shipped profile, assert the imported tools and skills are model-visible) runs in the dsh monorepo, because it depends on that repository's own profile-boot fixture. This repository's CI runs typecheck, build, and the unit/component suites.

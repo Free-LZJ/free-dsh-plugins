@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-agent-import",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
@@ -44,6 +44,7 @@
     "@deepseek-ai/cordis": "^4.0.3",
     "@deepseek-ai/cordis-plugin-loader": "^1.0.4",
     "@deepseek-ai/dsh-app-boot": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-mcp-client": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-skill": "^0.1.7-alpha.2",
     "@types/node": "^22.20.0",

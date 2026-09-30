@@ -5,6 +5,10 @@
  * `plugins.item` slot while the Host serves the `agent-import` settings
  * namespace, so it appears as a card of its own and a deployment without the
  * plugin shows no trace of it.
+ *
+ * The card carries two hooks: the configuration the Host serves, and the import
+ * report the Host answers on its own route. The report is read through a
+ * same-origin request, so it needs no cooperation from the Host page.
  */
 
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
@@ -17,7 +21,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { AgentImportCard } from './AgentImportCard.tsx'
+import { installAgentImportStyles } from './agent-import-card-style.ts'
 import { AGENT_IMPORT_NS, AgentImportCardController } from './agent-import-card-controller.ts'
+import { loadAgentImportReport } from './agent-import-report.ts'
 import { en, zh, type AgentImportLocaleKey } from './locales.ts'
 
 export type { AgentImportCardProps } from './AgentImportCard.tsx'
@@ -44,8 +50,10 @@ export const inject = ['slots', 'locale', 'configForms']
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-agent-import: dictionaries')
-  const card = new AgentImportCardController(ctx.configForms.get(AGENT_IMPORT_NS))
+  ctx.effect(() => installAgentImportStyles(), 'ui-settings-agent-import: card styles')
+  const card = new AgentImportCardController(ctx.configForms.get(AGENT_IMPORT_NS), loadAgentImportReport)
   ctx.effect(() => () => { card.dispose() }, 'ui-settings-agent-import: form subscription')
+  card.refreshReport()
   ctx.effect(() => ctx.configForms.whileServed([AGENT_IMPORT_NS], () => ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item', id: 'agent-import', order: 50, label: () => t('title'), locale: NS, inject: () => card.inject(),
   }, AgentImportCard))), 'ui-settings-agent-import: page')

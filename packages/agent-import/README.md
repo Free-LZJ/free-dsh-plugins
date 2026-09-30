@@ -44,11 +44,13 @@
 - **技能优先级**：导入技能注册在 rank 550——低于 dsh 的项目级与用户级技能根，高于随附技能——因此同名的 dsh 技能总是胜出；两个导入源之间按 `sources` 顺序先者胜。
 - **失败处理**：读不懂的声明变成一条 `agent-import: …` 警告并跳过，激活照常成功；只有导入的服务器启动失败且 `failOnStartupError: true` 时才会拒绝激活。
 - **重导入窗口**：重新导入时先卸载上一代再挂载下一代，因此中间有一瞬间两代都不在；那一瞬发出的请求看不到导入的工具与技能。
+- **导入报告**：`GET /agent-import/report` 返回当前这一代的结果——`importedAt`、`sources`、`skills`（名字、描述、来源、`SKILL.md` 路径）、`servers`（名字、dsh 命名空间、传输方式、命令或 URL、来源、`mounted`/`skipped` 与原因）、`notes`。技能是按请求现读技能目录，所以外部增删技能后刷新即可看到；服务器行描述的是当前这一代。这条路由要求伪装成 dsh 自己页面的同源请求（见根 README「已加载」怎么来的），且不含参数、环境变量与请求头。
 
 ## 已知限制
 
 - 这两个包不在 dsh 自带 Web 组合里，必须自行声明；插件页卡片需要伴生包那一行同时在位。
-- 插件页不列出已识别的服务器与技能（需要 dsh 自身的 Remote 命名空间）。它们通过工具注册表、技能目录与 `agent-import: …` 日志行可见。
+- 报告路由只在有 `ctx.webServer` 的组合里注册（dsh Web）；Electron 桌面端加载 `file://` 页面，没有这个服务，那一节不显示。
+- 服务器行只说「挂载了吗」：挂载成功但自身连不上时，错误由 dsh 的 `mcp-client` 记日志（`failOnStartupError: false` 时它会重连），该行仍为 `mounted`。
 - 外部文件只在激活时读取：Codex / Claude Code 侧改了声明需要重载或重启。
 - 不展开两边工具自己的插件市场（如 Codex `plugin.json`）。
 - Codex 的 `startup_timeout_sec` 在 dsh 侧没有对应项；Claude Code 的 `sse` 传输不支持。
@@ -61,4 +63,4 @@ pnpm run build     # tsc 出 lib/types，tsdown 出 lib/index.js
 pnpm run test      # 在本仓库根目录运行 vitest
 ```
 
-源码结构：`src/index.ts` 是插件本体（字段声明、导入代际、热重导），`src/adapters/{codex,claude-code}.ts` 各自解析一种外部格式，`src/mcp.ts` 负责把服务器挂到 `mcp-client`，`src/skills.ts` 是技能 provider，`src/toml.ts` / `src/skill-file.ts` / `src/values.ts` 是纯解析与取值工具。
+源码结构：`src/index.ts` 是插件本体（字段声明、导入代际、热重导、报告路由注册），`src/report.ts` 是报告类型与那条同源路由，`src/adapters/{codex,claude-code}.ts` 各自解析一种外部格式，`src/mcp.ts` 负责把服务器挂到 `mcp-client`，`src/skills.ts` 是技能 provider，`src/toml.ts` / `src/skill-file.ts` / `src/values.ts` 是纯解析与取值工具。

@@ -6,6 +6,10 @@ import type { SettingsFormLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 export type AgentImportLocaleKey =
   | 'title' | 'summary'
   | 'sources' | 'sourcesHint' | 'sourceCodex' | 'sourceClaudeCode'
+  | 'pathsTitle' | 'pathsHint' | 'scopeTitle' | 'scopeHint'
+  | 'loadedTitle' | 'loadedHint' | 'loadedSummary' | 'loadedSkills' | 'loadedServers'
+  | 'loadedNoSkills' | 'loadedNoServers' | 'loadedMounted' | 'loadedSkipped' | 'loadedNotes'
+  | 'reportLoading' | 'reportUnavailable' | 'refresh'
   | 'mcp' | 'mcpHint' | 'skills' | 'skillsHint'
   | 'failOnStartupError' | 'failOnStartupErrorHint'
   | 'codexIncludeSystemSkills' | 'codexIncludeSystemSkillsHint'
@@ -26,6 +30,23 @@ export const en: Record<AgentImportLocaleKey, string> = {
   sourcesHint: 'Tools to read, in import precedence order.',
   sourceCodex: 'Codex',
   sourceClaudeCode: 'Claude Code',
+  pathsTitle: 'Locations',
+  pathsHint: "Where each tool keeps its files. Leave a field blank to use that tool's own default.",
+  scopeTitle: 'Import scope',
+  scopeHint: 'What to import, and how much of it.',
+  loadedTitle: 'Loaded',
+  loadedHint: 'What the current import mounted and published. Editing any setting above rebuilds it.',
+  loadedSummary: '{skills} skills · {servers} MCP servers',
+  loadedSkills: 'Skills',
+  loadedServers: 'MCP servers',
+  loadedNoSkills: 'No skill is imported.',
+  loadedNoServers: 'No MCP server is imported.',
+  loadedMounted: 'Mounted',
+  loadedSkipped: 'Skipped',
+  loadedNotes: 'Import notes',
+  reportLoading: 'Reading the import result…',
+  reportUnavailable: 'The import result is unavailable: {reason}',
+  refresh: 'Refresh',
   mcp: 'Import MCP servers',
   mcpHint: 'Mount every server the selected tools declare.',
   skills: 'Import skills',
@@ -72,6 +93,23 @@ export const zh: Record<AgentImportLocaleKey, string> = {
   sourcesHint: '要读取的工具，按导入优先级排列。',
   sourceCodex: 'Codex',
   sourceClaudeCode: 'Claude Code',
+  pathsTitle: '路径',
+  pathsHint: '各工具存放文件的目录；留空表示使用该工具自身的默认值。',
+  scopeTitle: '导入范围',
+  scopeHint: '导入哪些内容，以及导入多少。',
+  loadedTitle: '已加载',
+  loadedHint: '当前这次导入实际挂载的服务器与发布的技能；改动上面任何设置都会自动重建。',
+  loadedSummary: '{skills} 个技能 · {servers} 个 MCP 服务器',
+  loadedSkills: '技能',
+  loadedServers: 'MCP 服务器',
+  loadedNoSkills: '没有导入任何技能。',
+  loadedNoServers: '没有导入任何 MCP 服务器。',
+  loadedMounted: '已挂载',
+  loadedSkipped: '已跳过',
+  loadedNotes: '导入提示',
+  reportLoading: '正在读取导入结果…',
+  reportUnavailable: '暂时读不到导入结果：{reason}',
+  refresh: '刷新',
   mcp: '导入 MCP 服务器',
   mcpHint: '挂载所选工具声明的每个服务器。',
   skills: '导入技能',

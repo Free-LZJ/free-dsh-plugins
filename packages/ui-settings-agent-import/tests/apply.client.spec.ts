@@ -90,7 +90,9 @@ describe('agent-import client apply', () => {
     expect(locale.bind(NS)('save')).toBe('保存')
 
     const face = (entry.inject as () => Pick<AgentImportCardFace, 'hooks'>)()
-    expect(Object.keys(face)).toEqual(['edit', 'clear', 'setToggle', 'setChoices', 'setList', 'save', 'discard', 'hooks'])
+    expect(Object.keys(face)).toEqual([
+      'edit', 'clear', 'setToggle', 'setChoices', 'setList', 'save', 'discard', 'refreshReport', 'hooks',
+    ])
     // The page reads the served section through the Host's own form, nested
     // option objects included, and publishes it as the state the card renders.
     expect(face.hooks.agentImportCard.getSnapshot()).toMatchObject({

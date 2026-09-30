@@ -25,12 +25,18 @@ Host 半边本身不渲染任何界面；这个包也不做任何导入工作，
 
 ## 卡片内容
 
+分四节，最上面一节是只读的：
+
+- **已加载**（只读）：当前这次导入的结果——技能与 MCP 服务器的条数摘要、技能行（名字、来源标签、`SKILL.md` 路径）、服务器行（名字、已挂载/已跳过标签、命令或 URL、跳过原因）、导入提示，以及一个 **刷新** 按钮。数据来自 Host 的 `GET /agent-import/report`（同源 `fetch`），Host 没回答时显示原因而不是空白。
 - **来源**：Codex / Claude Code 两个开关（`sources`）；
-- **开关**：导入 MCP 服务器、导入技能、包含 Codex 自带技能、服务器启动失败即报错；
-- **跳过的服务器**：`serverDenyList` 一行一个，可增删；
-- **数值**：`maxServers`、`maxSkills`，只接受 0 或更大的整数，留空表示使用默认值；
 - **路径**：`projectRoot`、Codex 主目录与配置文件、Claude Code 目录与配置文件，留空即沿用文档中的回退（`$CODEX_HOME`、`~/.claude` 等）；
+- **导入范围**：导入 MCP 服务器、导入技能、包含 Codex 自带技能、服务器启动失败即报错四个开关，以及 `maxServers`、`maxSkills` 两个数值（只接受 0 或更大的整数，留空表示使用默认值）；
+- **跳过的服务器**：`serverDenyList` 一行一个，可增删；
 - 用户层显式设过的字段标 **已覆盖** 并提供 **恢复默认**；只有 **保存** 会写入，且一次性写全部暂存修改，离开页面丢弃草稿。
+
+样式由 `src/client/agent-import-card-style.ts` 在 `apply` 时作为 `<style>` 注入：动态加载的浏览器半边拿不到外壳的样式表，而这张卡片只用 `--dsw-*` 设计令牌，所以跟随主题。
+
+Host 侧报告的字段与同源限制见 [`../agent-import/README.md`](../agent-import/README.md) 与根 README。
 
 ## 构建
 
@@ -44,7 +50,7 @@ pnpm run test      # 在本仓库根目录运行 vitest
 
 ### 测试如何拿到 dsh 的客户端代码
 
-5 个浏览器半边 spec 只依赖 npm 上发布的包，但有两处需要说明：
+6 个浏览器半边 spec 只依赖 npm 上发布的包，但有两处需要说明：
 
 - **平台包只有 Node 半边。** `dsh-client-store`、`dsh-client-ui-primitives`、`dsh-client-ui-slots` 在 npm 上不发布浏览器包（浏览器版本由 Web 外壳自己打进 bundle），其 Node 半边的依赖保持外置。所以本包把这些外部依赖（`clsx`、`zustand`、`immer`、`shiki`、`katex`、`micromark` 系列等）显式声明为 `devDependencies`，并让 `vitest.config.ts` 的 `server.deps.inline` 把它们交给 Vite 转换——CSS 模块也走这条路径。
 - **浏览器半边按模块表加载。** `dsh-client-locale`、`dsh-client-ui-renderer`、`dsh-client-ui-settings` 发布的 `lib/client.js` 是给 Web 外壳的模块表用的：它调用 `window.__ModuleLoader__.load({ id, factory })`，通过外壳给的 `require` 取平台模块。`tests/support/module-loader.ts`（经 `setupFiles` 装载）在 jsdom 里装一张最小模块表，spec 再用 `clientModule(id)` 取它的导出。
@@ -54,4 +60,4 @@ pnpm run test      # 在本仓库根目录运行 vitest
 
 - 不在 dsh 自带 Web 组合里：必须自行安装并声明上面前面那两行。
 - 只在 Host 服务该命名空间期间存在；Host 行停用即撤销。
-- 不展示导入结果清单（需要 dsh 自身的 Remote 命名空间）。
+- **已加载** 一节依赖 dsh Web 的路由与页面的 `fetch`：桌面端（`file://`）没有 Host 的 `ctx.webServer`，这一节不出现。

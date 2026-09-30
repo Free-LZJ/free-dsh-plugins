@@ -1,5 +1,6 @@
 node_modules/
 lib/
+.tarballs/
 *.tsbuildinfo
 *.log
 .DS_Store

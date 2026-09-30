@@ -7,9 +7,13 @@
  * the flat-name view — and projects it into the page state the component
  * reads. Every rendered value is the section the Host serves plus the drafts
  * staged on top of it.
+ *
+ * A second store carries what the import actually produced, which the Host
+ * answers on its own route and this controller reads on demand; it is separate
+ * because it changes on a different clock than the form.
  */
 
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import {
   SettingsFormModel, type SettingsFieldState, type SettingsFormScope, type SettingsFormShell,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -19,6 +23,7 @@ import {
   type AgentImportListFieldId, type AgentImportSettings, type AgentImportToggleFieldId, type ForeignSource,
 } from './agent-import-fields.ts'
 import { flatScope } from './agent-import-flat-scope.ts'
+import type { AgentImportReport, AgentImportReportResult } from './agent-import-report.ts'
 
 /** Every field of the row, in the order the page renders its controls. */
 const FIELDS = Object.values(AGENT_IMPORT_FIELDS)
@@ -102,11 +107,21 @@ export interface AgentImportPageState extends SettingsFormShell {
   readonly switches: Readonly<Record<AgentImportToggleFieldId, AgentImportToggleState>>
 }
 
+/** What the card's loaded-items section renders. */
+export type AgentImportReportState =
+  | { readonly phase: 'loading' }
+  | { readonly phase: 'ready'; readonly report: AgentImportReport }
+  | { readonly phase: 'unavailable'; readonly reason: string }
+
 /** What the card's slot registration injects into the page component. */
 export interface AgentImportCardFace extends AgentImportFormActions {
+  /** Read the Host half's import report again. */
+  readonly refreshReport: () => void
   hooks: {
     /** Page snapshot the renderer binds as `useAgentImportCard`. */
     agentImportCard: SnapshotStore<AgentImportPageState>
+    /** Loaded-items snapshot the renderer binds as `useAgentImportReport`. */
+    agentImportReport: SnapshotStore<AgentImportReportState>
   }
 }
 
@@ -114,14 +129,37 @@ export interface AgentImportCardFace extends AgentImportFormActions {
 export class AgentImportCardController {
   private readonly form: SettingsFormModel<Record<string, unknown>>
   private readonly store: SnapshotStore<AgentImportPageState>
+  private readonly reports: SnapshotStore<AgentImportReportState> = createSnapshotStore<AgentImportReportState>({ phase: 'loading' })
+  private readonly loadReport: () => Promise<AgentImportReportResult>
+  private disposed = false
 
-  /** @param scope - the shared configuration form for the row's settings namespace. */
-  constructor(scope: SettingsFormScope<AgentImportSettings>) {
+  /**
+   * @param scope - the shared configuration form for the row's settings namespace.
+   * @param loadReport - reads the Host half's import report; injected so the card's tests drive it directly.
+   */
+  constructor(scope: SettingsFormScope<AgentImportSettings>, loadReport: () => Promise<AgentImportReportResult>) {
+    this.loadReport = loadReport
     this.form = new SettingsFormModel(
       flatScope(scope, FIELDS.map(field => field.field)),
       FIELDS.map(field => field.spec),
     )
     this.store = this.form.bind(() => this.projection())
+  }
+
+  /** Read the Host half's import report again, replacing what the card shows. */
+  refreshReport(): void {
+    void this.loadReport().then(
+      (result) => {
+        if (this.disposed) return
+        this.reports.set(result.phase === 'ready'
+          ? { phase: 'ready', report: result.report }
+          : { phase: 'unavailable', reason: result.reason })
+      },
+      (error: unknown) => {
+        if (this.disposed) return
+        this.reports.set({ phase: 'unavailable', reason: String(error) })
+      },
+    )
   }
 
   /**
@@ -138,12 +176,14 @@ export class AgentImportCardController {
       setList: (field, rows) => { actions.edit(field, listDraft(rows)) },
       save: actions.save,
       discard: actions.discard,
-      hooks: { agentImportCard: this.store },
+      refreshReport: () => { this.refreshReport() },
+      hooks: { agentImportCard: this.store, agentImportReport: this.reports },
     }
   }
 
   /** Release the form's subscription to the Host's section. */
   dispose(): void {
+    this.disposed = true
     this.form.dispose()
   }
 
