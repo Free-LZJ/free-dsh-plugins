@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    // The browser half renders `.tsx`; the Host half stays plain TypeScript.
+    "jsx": "react-jsx"
   },
   "include": ["src", "tests"]
 }

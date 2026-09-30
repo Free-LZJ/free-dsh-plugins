@@ -10,7 +10,7 @@ export default defineConfig({
     include: ['packages/*/tests/**/*.spec.{ts,tsx}'],
     // Installs the harness Web shell's module table before any spec imports a
     // published browser bundle (a no-op outside jsdom).
-    setupFiles: ['packages/ui-settings-agent-import/tests/support/module-loader.ts'],
+    setupFiles: ['packages/agent-import/tests/support/module-loader.ts'],
     // The live-configuration specs drive the real Loader, which mounts and disposes fibers.
     testTimeout: 20_000,
     server: {

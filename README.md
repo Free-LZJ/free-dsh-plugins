@@ -4,8 +4,9 @@
 
 | 包 | 角色 |
 |---|---|
-| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | **Host 插件**：读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，挂载到 dsh 自己的 MCP 客户端与技能目录里 |
-| [`@free-lzj/dsh-client-ui-settings-agent-import`](packages/ui-settings-agent-import/README.md) | **浏览器伴生包**：在 dsh Web 的插件页「官方」分组注册一张「代理配置导入」卡片，实时读写上面那个插件的配置 |
+| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | **Host 插件 + 浏览器卡片**：读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，挂载到 dsh 自己的 MCP 客户端与技能目录里；同一个包还通过 `dsh.client` 声明，在 dsh Web 的插件页「官方」分组注册一张「代理配置导入」卡片，实时读写自己的配置 |
+
+一个包、一条 Loader 行：`0.3.0` 起这两半合并了，此前是两个包、两行（见下面「从 0.2.x 升级」）。
 
 English: [README.en.md](README.en.md)
 
@@ -21,12 +22,12 @@ English: [README.en.md](README.en.md)
 
 ## 安装
 
-两个包都要装：Host 插件提供设置命名空间，伴生包提供那张卡片。
+装一个包就够：Host 半边提供设置命名空间，同一个包的浏览器半边提供那张卡片 —— 卡片挂在声明了 `dsh.client` 的那条 Loader 行上，所以它天然跟着 Host 走。
 
 ### 从 npm 安装（发布后）
 
 ```sh
-dsh plugin --profile web add @free-lzj/dsh-agent-import @free-lzj/dsh-client-ui-settings-agent-import
+dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
 ### 从本仓库安装（未发布时）
@@ -36,28 +37,37 @@ pnpm install
 pnpm run build
 
 # 用目录或 tarball 装进你的 profile
-dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import" "<本仓库绝对路径>/packages/ui-settings-agent-import"
+dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
 
-### 声明两行（必须）
+### 声明一行（必须）
 
-装包只让它们可解析；插件要真正启用，还得在你的 profile 里声明两行。可以写进 `$DSH_HOME/profiles/web/cordis.patch.yml`，也可以用 overlay 启动：
+装包只让它可解析；插件要真正启用，还得在你的 profile 里声明这一行。可以写进 `$DSH_HOME/profiles/web/cordis.patch.yml`，也可以用 overlay 启动：
 
 ```yaml
 - insert:
     - id: agent-import
       name: '@free-lzj/dsh-agent-import'
-
-    - id: ui-settings-agent-import
-      name: '@free-lzj/dsh-client-ui-settings-agent-import'
 ```
 
 ```sh
 dsh web --patch examples/agent-import.cordis.yml
 ```
 
-**`agent-import` 这个 id 不能改**：dsh 用行自身的条目 id 命名它的设置命名空间，插件页那张卡片跟随的正是这个命名空间。
+**`agent-import` 这个 id 不能改**：dsh 用行自身的条目 id 命名它的设置命名空间，而插件页那张卡片跟随的正是这个命名空间。
+
+### 从 0.2.x 升级
+
+0.2.x 是两个包、两条 Loader 行（`@free-lzj/dsh-agent-import` +
+`@free-lzj/dsh-client-ui-settings-agent-import`）。0.3.0 把它们合成一个包，`@free-lzj/dsh-client-ui-settings-agent-import` 不再发布：
+
+```sh
+dsh plugin --profile web remove @free-lzj/dsh-client-ui-settings-agent-import
+dsh plugin --profile web add @free-lzj/dsh-agent-import
+```
+
+然后把 profile 里那两条 `insert` 行删掉 `ui-settings-agent-import` 那条，只留 `id: agent-import` 这一行（内容与上面的示例一致），重启 `dsh web`。卡片来自包自身的 `dsh.client` 声明，不需要再单独声明。
 
 ## 配置字段
 
@@ -99,18 +109,20 @@ Host 插件在 `GET /agent-import/report` 上公布当前那次导入的结果�
 
 ```sh
 pnpm install
-pnpm run typecheck   # 两个包
-pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js、lib/client.js
-pnpm run test        # vitest：15 个 spec 文件 / 248 个测试
+pnpm run typecheck   # 单包（两个半边一起）
+pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js（Node 半边）、lib/client.js（浏览器半边）
+pnpm run test        # vitest：16 个 spec 文件 / 250 个测试
 ```
+
+先 `build` 再 `test`：`tests/package-faces.client.spec.ts` 校验的是**产物**（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口有没有向 Host 半边取值），没有 `lib/` 时其中一条会显示为 skipped。
 
 CI（`.github/workflows/ci.yml`）在 `windows-latest` 上跑：adapter 的 spec 断言 Windows 盘符路径（Codex / Claude Code 主目录用 `C:`、`D:` 夹具），在 Linux 上这些夹具会被当成相对路径。
 
-浏览器半边的 spec 需要 dsh 客户端包的 Node 半边与模块表，`vitest.config.ts` 与 `packages/ui-settings-agent-import/tests/support/` 说明了这两处接线（见该包 README 的「测试如何拿到 dsh 的客户端代码」）。
+浏览器半边的 spec 需要 dsh 客户端包的 Node 半边与模块表，`vitest.config.ts` 与 `packages/agent-import/tests/support/` 说明了这两处接线（见该包 README 的「测试如何拿到 dsh 的客户端代码」）。
 
 ## 已知限制
 
-- 这两个包**不在 dsh 自带 Web 组合里**，必须在 profile 中自行声明上面那两行。
+- 这个包**不在 dsh 自带 Web 组合里**，必须在 profile 中自行声明上面那一行。
 - 「已加载」走的是 dsh Web 自身的 HTTP 路由：Electron 桌面端加载 `file://` 页面、没有 `ctx.webServer`，这张卡片在那里不显示这一节（其余配置照常可用）。要两端一致，需要在 dsh 自身的 `packages/api/remotes` 加一个 Remote 命名空间。
 - 卡片只回答「挂载了吗」：服务器挂载成功但自身连不上时，连接错误由 dsh 的 `mcp-client` 自己记日志（`failOnStartupError: false` 时它会持续重连），卡片这一行仍显示「已挂载」。
 - 外部配置文件只在激活时读取一次（本插件自身配置除外）：Codex/Claude Code 那边改了声明，需要重载或重启 dsh。

@@ -3,54 +3,17 @@
  *
  * A dynamically loaded card receives only the configuration the Host serves, so
  * what the current import generation actually mounted and published arrives
- * over the same origin that served this bundle. The types are spelled here
- * rather than imported from the host package: a client package must not depend
- * on a Host package.
+ * over the same origin that served this bundle.
+ *
+ * The wire shape is defined once, by the Host half: the two halves are one
+ * package, so `../report.ts` is the same contract the route serializes. It is
+ * reached as a *type* only — nothing outside `src/client/**` belongs in the
+ * browser bundle, so the import is erased and `isReport` below stays the only
+ * runtime check.
  */
+import type { AgentImportReport } from '../report.ts'
 
-/** One skill the host half reports as published. */
-export interface ReportedSkill {
-  /** Skill name callers address it by. */
-  readonly name: string
-  /** One-line description from the skill's own frontmatter. */
-  readonly description: string
-  /** Tool whose directory the skill came from. */
-  readonly source: string
-  /** Absolute path of the skill's instruction file. */
-  readonly path: string
-}
-
-/** One MCP server the host half reports as planned. */
-export interface ReportedServer {
-  /** Server name as the declaring tool writes it. */
-  readonly name: string
-  /** dsh server namespace it mounts under; absent when the plan skipped the server. */
-  readonly serverName?: string
-  /** Transport the declaration uses. */
-  readonly transport: string
-  /** Executable or endpoint the server runs. */
-  readonly target: string
-  /** Tool whose configuration declared the server. */
-  readonly source: string
-  /** Whether the generation mounted the server, or why it did not. */
-  readonly status: 'mounted' | 'skipped'
-  /** The bound or list entry that left a skipped server unmounted. */
-  readonly reason?: string
-}
-
-/** What the current import generation mounted and published. */
-export interface AgentImportReport {
-  /** ISO instant the reported generation was built; empty when none is active. */
-  readonly importedAt: string
-  /** Tools the generation read, in precedence order. */
-  readonly sources: readonly string[]
-  /** Skills the generation publishes. */
-  readonly skills: readonly ReportedSkill[]
-  /** Servers the generation planned, in declaration order. */
-  readonly servers: readonly ReportedServer[]
-  /** Declarations and files the import could not use. */
-  readonly notes: readonly string[]
-}
+export type { AgentImportReport }
 
 /** What one read of the report produced. */
 export type AgentImportReportResult =

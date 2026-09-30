@@ -1,8 +1,8 @@
 # @free-lzj/dsh-agent-import
 
-读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，通过 DeepSeek Harness 自己的 `mcp-client` 与技能目录挂载进来。
+读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，通过 DeepSeek Harness 自己的 `mcp-client` 与技能目录挂载进来；同一个包还带一张 dsh Web 插件页的「代理配置导入」卡片，用来读写这套配置。
 
-这是 **Host 半边**。插件页那张配置卡片在伴生包 [`@free-lzj/dsh-client-ui-settings-agent-import`](../ui-settings-agent-import/README.md) 里，两个包都要装、都要声明。
+这是一个**双面包**：`lib/index.js` 是 Host 半边（Loader 行挂载的插件本体），`lib/client.js` 是浏览器半边（那张卡片），由包自己的 `dsh.client` 声明挂在**同一条 Loader 行**上。所以只装一个包、只声明一行。
 
 ## 声明
 
@@ -46,21 +46,63 @@
 - **重导入窗口**：重新导入时先卸载上一代再挂载下一代，因此中间有一瞬间两代都不在；那一瞬发出的请求看不到导入的工具与技能。
 - **导入报告**：`GET /agent-import/report` 返回当前这一代的结果——`importedAt`、`sources`、`skills`（名字、描述、来源、`SKILL.md` 路径）、`servers`（名字、dsh 命名空间、传输方式、命令或 URL、来源、`mounted`/`skipped` 与原因）、`notes`。技能是按请求现读技能目录，所以外部增删技能后刷新即可看到；服务器行描述的是当前这一代。这条路由要求伪装成 dsh 自己页面的同源请求（见根 README「已加载」怎么来的），且不含参数、环境变量与请求头。
 
-## 已知限制
+## 插件页卡片
 
-- 这两个包不在 dsh 自带 Web 组合里，必须自行声明；插件页卡片需要伴生包那一行同时在位。
-- 报告路由只在有 `ctx.webServer` 的组合里注册（dsh Web）；Electron 桌面端加载 `file://` 页面，没有这个服务，那一节不显示。
-- 服务器行只说「挂载了吗」：挂载成功但自身连不上时，错误由 dsh 的 `mcp-client` 记日志（`failOnStartupError: false` 时它会重连），该行仍为 `mounted`。
-- 外部文件只在激活时读取：Codex / Claude Code 侧改了声明需要重载或重启。
-- 不展开两边工具自己的插件市场（如 Codex `plugin.json`）。
-- Codex 的 `startup_timeout_sec` 在 dsh 侧没有对应项；Claude Code 的 `sse` 传输不支持。
+卡片的注册条件是 **Host 正在服务 `agent-import` 设置命名空间**：
 
-## 开发
+- 命名空间就是 Loader 行的条目 id，所以那行必须叫 `agent-import`；换个 id 就是另一个命名空间，这张卡片永远不会出现。
+- 卡片来自包自身的 `dsh.client` 声明：行被停用或没装这个包时，卡片直接消失（不是显示「未加载」），页面上不留痕迹。
+- 保存写入 Host 的设置表单；本部署不支持持久化时页面显示只读提示。
+
+卡片是一个 `SegmentedControl` 标签页，两个 tab：
+
+- **已加载**（只读，默认打开）：当前这次导入的结果——技能与 MCP 服务器的条数摘要、**两张表格**（技能：名称 / 来源 / 指令文件；MCP 服务器：名称 / 状态 / 命令或 URL / 说明，说明列只在有行需要时出现）、导入提示，以及一个 **刷新** 按钮。路径与命令用等宽字体并截断显示，悬停可见全路径。数据来自 Host 的 `GET /agent-import/report`（同源 `fetch`），Host 没回答时显示原因而不是空白。
+- **配置**：字段按四节分组——
+  - **来源**：Codex / Claude Code 两个开关（`sources`）；
+  - **路径**：`projectRoot`、Codex 主目录与配置文件、Claude Code 目录与配置文件，留空即沿用文档中的回退（`$CODEX_HOME`、`~/.claude` 等）；
+  - **导入范围**：导入 MCP 服务器、导入技能、包含 Codex 自带技能、服务器启动失败即报错四个开关，以及 `maxServers`、`maxSkills` 两个数值（只接受 0 或更大的整数，留空表示使用默认值）；
+  - **跳过的服务器**：`serverDenyList` 一行一个，可增删。
+
+切换 tab 不会丢草稿（草稿在控制器里，不在组件里）；用户层显式设过的字段标 **已覆盖** 并提供 **恢复默认**；只有 **保存** 会写入，且一次性写全部暂存修改，离开页面丢弃草稿。
+
+样式由 `src/client/agent-import-card-style.ts` 在 `apply` 时作为 `<style>` 注入：动态加载的浏览器半边拿不到外壳的样式表，而这张卡片只用 `--dsw-*` 设计令牌，所以跟随主题。
+
+## 构建
+
+`tsc` 先把 `src/**` 编到 `lib/types/`，`tsdown` 再打两个面：
+
+- **Host 半边** `lib/index.js`（ESM）：入口 `lib/types/index.js`，包声明的依赖与 peer（`schemastery`、`yaml`、`cordis`、`dsh-mcp-client`、`dsh-skill`）保持外置。
+- **浏览器半边** `lib/client.js`（浏览器 CJS，包在 module-table 的闭包工厂里）：入口 `lib/types/client/index.js`，只打包 `src/client/**`；dsh Web 外壳共享的模块（React、`@deepseek-ai/cordis`、`client-store`、`ui-slots`、`ui-primitives`、`ui-dockkit`）保持外置，其余内联。
+
+**`src/client/**` 不得对 Host 半边做值引用**，只能 `import type`（会被擦除）：否则 tsdown 的相对路径内联会把 `yaml`、`mcp-client` 那坨 Node 代码打进浏览器包。导入报告的结构就是这条规则的一个例子——它只在 `src/report.ts` 定义一次，浏览器半边以类型引用。
+
+`tests/package-faces.client.spec.ts` 把这些约定钉在**产物**上：它在 jsdom 里按外壳的模块表协议求值 `lib/client.js`，断言注册 id 就是包名、导出形状正确、且这个 bundle 没有向外壳索取任何它不 seed 的模块（也就是上面那条纯度规则）。它读 `lib/`，所以要先 `pnpm run build`。
 
 ```sh
 pnpm run typecheck
-pnpm run build     # tsc 出 lib/types，tsdown 出 lib/index.js
+pnpm run build
 pnpm run test      # 在本仓库根目录运行 vitest
 ```
 
-源码结构：`src/index.ts` 是插件本体（字段声明、导入代际、热重导、报告路由注册），`src/report.ts` 是报告类型与那条同源路由，`src/adapters/{codex,claude-code}.ts` 各自解析一种外部格式，`src/mcp.ts` 负责把服务器挂到 `mcp-client`，`src/skills.ts` 是技能 provider，`src/toml.ts` / `src/skill-file.ts` / `src/values.ts` 是纯解析与取值工具。
+### 测试如何拿到 dsh 的客户端代码
+
+6 个浏览器半边 spec 只依赖 npm 上发布的包，但有两处需要说明：
+
+- **平台包只有 Node 半边。** `dsh-client-store`、`dsh-client-ui-primitives`、`dsh-client-ui-slots` 在 npm 上不发布浏览器包（浏览器版本由 Web 外壳自己打进 bundle），其 Node 半边的依赖保持外置。所以本包把这些外部依赖（`clsx`、`zustand`、`immer`、`shiki`、`katex`、`micromark` 系列等）显式声明为 `devDependencies`，并让 `vitest.config.ts` 的 `server.deps.inline` 把它们交给 Vite 转换——CSS 模块也走这条路径。
+- **浏览器半边按模块表加载。** `dsh-client-locale`、`dsh-client-ui-renderer`、`dsh-client-ui-settings` 发布的 `lib/client.js` 是给 Web 外壳的模块表用的：它调用 `window.__ModuleLoader__.load({ id, factory })`，通过外壳给的 `require` 取平台模块。`tests/support/module-loader.ts`（经 `setupFiles` 装载）在 jsdom 里装一张最小模块表，spec 再用 `clientModule(id)` 取它的导出。
+- `tests/support/runtime.ts` 是 dsh 仓库里 `@deepseek-ai/dsh-client-test-runtime` 的本地替身：那个包发布时保留了只在 dsh 仓库内存在的源码路径，无法从 npm 使用。
+
+## 已知限制
+
+- 不在 dsh 自带 Web 组合里，必须自行安装并声明那一行。
+- 卡片只在 Host 服务该命名空间期间存在；行停用即撤销。
+- **已加载** 一节依赖 dsh Web 的路由与页面的 `fetch`：桌面端（`file://`）没有 Host 的 `ctx.webServer`，这一节不出现。
+- 报告路由只在有 `ctx.webServer` 的组合里注册（dsh Web）。
+- 服务器行只说「挂载了吗」：挂载成功但自身连不上时，错误由 dsh 的 `mcp-client` 记日志（`failOnStartupError: false` 时它会重连），该行仍为 `mounted`。
+- 外部文件只在激活时读取（本插件自身配置除外）：Codex / Claude Code 侧改了声明需要重载或重启。
+- 不展开两边工具自己的插件市场（如 Codex `plugin.json`）。
+- Codex 的 `startup_timeout_sec` 在 dsh 侧没有对应项；Claude Code 的 `sse` 传输不支持。
+
+## 源码结构
+
+`src/index.ts` 是插件本体（字段声明、导入代际、热重导、报告路由注册），`src/report.ts` 是报告类型与那条同源路由，`src/adapters/{codex,claude-code}.ts` 各自解析一种外部格式，`src/mcp.ts` 负责把服务器挂到 `mcp-client`，`src/skills.ts` 是技能 provider，`src/toml.ts` / `src/skill-file.ts` / `src/values.ts` 是纯解析与取值工具，`src/client/**` 是插件页那张卡片。

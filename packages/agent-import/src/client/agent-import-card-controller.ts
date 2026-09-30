@@ -30,7 +30,8 @@ const FIELDS = Object.values(AGENT_IMPORT_FIELDS)
 
 /**
  * Settings namespace the Host serves for this plugin's Loader row. Spelled here
- * rather than imported: a client package must not depend on a Host package.
+ * rather than read from the Host half's modules: the value is a Loader row id
+ * (`configForms` keys forms by entry id), not something the plugin body knows.
  */
 export const AGENT_IMPORT_NS = 'agent-import'
 

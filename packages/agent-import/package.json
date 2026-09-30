@@ -1,7 +1,16 @@
 {
   "name": "@free-lzj/dsh-agent-import",
-  "version": "0.2.1",
-  "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness",
+  "version": "0.3.0",
+  "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness, with the Web Plugins-page card that configures the import",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Free-LZJ/free-dsh-plugins.git",
+    "directory": "packages/agent-import"
+  },
+  "homepage": "https://github.com/Free-LZJ/free-dsh-plugins#readme",
+  "bugs": {
+    "url": "https://github.com/Free-LZJ/free-dsh-plugins/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -10,23 +19,42 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
+    "lib/client.js",
     "lib/types/**/*.d.ts",
     "README.md"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "dsh",
     "deepseek-harness",
     "cordis-plugin",
+    "dsh-client-plugin",
     "codex",
     "claude-code",
     "mcp"
   ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsdown",
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -44,12 +72,50 @@
     "@deepseek-ai/cordis": "^4.0.3",
     "@deepseek-ai/cordis-plugin-loader": "^1.0.4",
     "@deepseek-ai/dsh-app-boot": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-locale": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-store": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-test-runtime": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-host-webserver": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-mcp-client": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-skill": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-util-code-language": "^0.1.7-alpha.2",
+    "@deepseek-ai/dsh-util-workspace-path": "^0.1.7-alpha.2",
+    "@shikijs/langs": "^4.3.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.20.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "anser": "^2.3.5",
+    "clsx": "^2.0.0",
+    "diff": "^9.0.0",
+    "immer": "^10.1.1",
+    "jsdom": "29.1.1",
+    "katex": "^0.16.47",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-math": "^3.0.0",
+    "micromark-core-commonmark": "^2.0.3",
+    "micromark-extension-gfm": "^3.0.0",
+    "micromark-extension-math": "^3.1.0",
+    "micromark-factory-space": "^2.0.1",
+    "micromark-util-character": "^2.1.1",
+    "micromark-util-classify-character": "^2.0.1",
+    "micromark-util-sanitize-uri": "^2.0.1",
+    "micromark-util-symbol": "^2.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "shiki": "^4.3.1",
+    "simple-icons": "16.31.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "use-sync-external-store": "^1.2.0",
+    "vitest": "^4.1.8",
+    "zustand": "~4.4.7"
   }
 }

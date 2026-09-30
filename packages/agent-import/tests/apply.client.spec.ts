@@ -14,7 +14,6 @@ import { RemoteError, TestRemote } from './support/runtime.ts'
 import { AgentImportCard } from '../src/client/AgentImportCard.tsx'
 import { apply, inject, NS } from '../src/client/index.ts'
 import type { AgentImportCardFace } from '../src/client/index.ts'
-import { apply as hostApply } from '../src/index.ts'
 
 const { LocaleRuntime } = clientModule<typeof import('@deepseek-ai/dsh-client-locale/client')>('@deepseek-ai/dsh-client-locale')
 type RendererClient = typeof import('@deepseek-ai/dsh-client-ui-renderer/client')
@@ -67,10 +66,6 @@ function declareOfficialItems(slots: SlotRegistry): void {
 }
 
 describe('agent-import client apply', () => {
-  it('keeps the host Loader entry inert', () => {
-    expect(hostApply).not.toThrow()
-  })
-
   it('declares the services it uses', () => {
     expect(inject).toEqual(['slots', 'locale', 'configForms'])
   })

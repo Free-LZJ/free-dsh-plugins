@@ -1,10 +1,8 @@
-# The two rows the agent-import feature composes: the Host plugin that reads the
-# foreign declarations and the browser companion that renders its Plugins-page
-# card. The Host row's id must stay `agent-import`: the settings namespace it
-# serves, and therefore the card that follows it, is keyed by the row's own entry id.
+# The one Loader row the agent-import feature needs: the Host plugin that reads
+# the foreign declarations, plus — through this package's own `dsh.client`
+# declaration — the browser card that configures it in the Plugins page. The id
+# must stay `agent-import`: the settings namespace the plugin serves, and
+# therefore the card that follows it, is keyed by the row's own entry id.
 - insert:
     - id: agent-import
       name: '@free-lzj/dsh-agent-import'
-
-    - id: ui-settings-agent-import
-      name: '@free-lzj/dsh-client-ui-settings-agent-import'
