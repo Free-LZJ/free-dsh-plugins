@@ -1,38 +1,55 @@
+<div align="center">
+
 # free-dsh-plugins
 
-My collection of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) plugins.
+**Brings the MCP servers and skills Codex or Claude Code already declares into [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh).**
 
-| Package | Role |
+[![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
+[![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](packages/agent-import/README.md)
+
+[中文](README.md) · [Package docs](packages/agent-import/README.md) · [Example overlay](examples/agent-import.cordis.yml)
+
+</div>
+
+---
+
+> When one machine runs both dsh and Codex or Claude Code, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations, mounts them through dsh's own `mcp-client` and skill catalog, and adds a card to the dsh Web Plugins page that shows what the import actually mounted and which parts of it to read.
+
+## What is in here
+
+| Package | In one line |
 |---|---|
-| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | **Host plugin + browser card**: reads the MCP servers and skills a Codex or Claude Code installation already declares and mounts them through dsh's own MCP client and skill catalog; the same package also declares `dsh.client`, which registers the **Agent import** card in the dsh Web Plugins page to read and write its own configuration |
+| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host plugin + browser card (a dual-face package): the Host half imports and mounts, the browser half renders the Plugins-page card |
 
-One package, one Loader row: the two halves merged in `0.3.0`; they used to be two packages and two rows (see "Upgrading from 0.2.x" below).
+One package, one Loader row: the two halves merged in `0.3.0`; they used to be two packages and two rows (see [Upgrading from 0.2.x](#upgrading-from-02x)).
 
-中文: [README.md](README.md)
+## What it does
 
-## What the plugin does
-
-If this machine already runs Codex or Claude Code, neither tool's MCP servers nor skills have to be copied into dsh:
-
-- `[mcp_servers.*]` (Codex `config.toml`) and `mcpServers` (Claude Code `~/.claude.json`, project `.mcp.json`) mount through dsh's `mcp-client` as `mcp__<server>__<tool>` tools;
-- both tools' `skills/` directories join the skill catalog as one provider, where a same-named dsh skill wins;
-- a declaration the plugin cannot translate becomes one `agent-import: …` warning and is skipped, so one unusable entry never costs the rest;
-- the plugin's own configuration is live: saving on the Plugins page re-imports immediately, with no restart;
-- the card has two tabs, **Loaded** and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills it published (source, instruction file) with a **Refresh** button, while Configuration holds every setting.
+| Capability | Detail |
+|---|---|
+| **MCP servers** | `[mcp_servers.*]` (Codex `config.toml`) and `mcpServers` (Claude Code `~/.claude.json`, project `.mcp.json`) mount through dsh's `mcp-client` as `mcp__<server>__<tool>` tools |
+| **Skills** | Both tools' `skills/` directories join the skill catalog as one provider, where a same-named dsh skill wins |
+| **One bad entry costs nothing** | A declaration the plugin cannot translate becomes one `agent-import: …` warning and is skipped; the rest still imports |
+| **Live configuration** | The plugin's own configuration is live: saving on the Plugins page re-imports immediately, with no restart |
+| **One card that states the result** | The card has two tabs, **Loaded** and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills it published (source, instruction file) with a **Refresh** button, while Configuration holds every setting |
+| **Minimal exposure** | The report carries names and locations only: a server's arguments, environment, and headers never appear in it |
 
 ## Install
 
 One package is enough: its Host half serves the settings namespace and its browser half renders the card — the card attaches to whichever Loader row declares `dsh.client`, so it always follows the Host.
 
-### From npm (once published)
+> **Requirements**: `@deepseek-ai/cordis ^4.0.3`, plus `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `^0.1.7-alpha.2` — peers the dsh runtime provides. The Plugins-page card exists in dsh Web; its Loaded section also needs the composition's `ctx.webServer`.
+
+### 1. Install the package
 
 ```sh
+# once published to npm
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-### From this checkout (before publication)
-
 ```sh
+# from this checkout, before publication
 pnpm install
 pnpm run build
 
@@ -40,9 +57,9 @@ dsh plugin --profile web add "<absolute path>/packages/agent-import"
 # or run pnpm pack first and install the .tgz file
 ```
 
-### Declare the one row (required)
+### 2. Declare the one row (required)
 
-Installing only makes the package resolvable; the feature is enabled by declaring this row in your profile. Put it in `$DSH_HOME/profiles/web/cordis.patch.yml`, or boot with an overlay:
+Installing only makes the package resolvable; the feature is enabled by declaring this row in the profile. Put it in `$DSH_HOME/profiles/web/cordis.patch.yml`, or boot with an overlay:
 
 ```yaml
 - insert:
@@ -54,19 +71,22 @@ Installing only makes the package resolvable; the feature is enabled by declarin
 dsh web --patch examples/agent-import.cordis.yml
 ```
 
-The id `agent-import` is fixed: dsh names a row's settings namespace after the row's own entry id, and the Plugins-page card follows that namespace.
+> **The id `agent-import` is fixed.** dsh names a row's settings namespace after the row's own entry id, and the Plugins-page card follows that namespace; a different id is a different namespace, and the card never appears.
+
+### 3. Take effect
+
+Host code is JS loaded at boot, so a change to it needs a `dsh web` restart; the browser half (`lib/client.js`) needs a page refresh.
 
 ### Upgrading from 0.2.x
 
-0.2.x was two packages and two Loader rows (`@free-lzj/dsh-agent-import` plus
-`@free-lzj/dsh-client-ui-settings-agent-import`). 0.3.0 merges them into one package and stops publishing the companion:
+0.2.x was two packages and two Loader rows (`@free-lzj/dsh-agent-import` plus `@free-lzj/dsh-client-ui-settings-agent-import`). 0.3.0 merges them into one package and stops publishing the companion:
 
 ```sh
 dsh plugin --profile web remove @free-lzj/dsh-client-ui-settings-agent-import
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-Then drop the `ui-settings-agent-import` row from your profile, leaving only `id: agent-import` (as in the example above), and restart `dsh web`. The card comes from the package's own `dsh.client` declaration and needs no row of its own.
+Then drop the `ui-settings-agent-import` row from the profile, leaving only `id: agent-import` (as in the example above), and restart `dsh web`. The card comes from the package's own `dsh.client` declaration and needs no row of its own.
 
 ## Configuration
 
@@ -102,8 +122,6 @@ The Host plugin publishes the current import on `GET /agent-import/report`, and 
 
 The skill list is enumerated **per request**, not captured at activation, so adding or removing a skill in Codex or Claude Code shows up on the next **Refresh**; the server rows describe the current import generation.
 
-Host code is JS loaded at boot, so a change to it needs a `dsh web` restart; the browser half (`lib/client.js`) needs a page refresh.
-
 ## Development
 
 ```sh
@@ -113,7 +131,11 @@ pnpm run build       # tsc for types, tsdown for lib/index.js (Node half) and li
 pnpm run test        # vitest: 16 spec files / 250 tests
 ```
 
-Build before testing: `tests/package-faces.client.spec.ts` checks the **artifacts** (registration id, the `dsh.client` declaration, `exports["./client"]`, and that nothing in the browser entry takes a value from the Host half), and one of its cases reports as skipped without `lib/`.
+Build before testing: [`tests/package-faces.client.spec.ts`](packages/agent-import/tests/package-faces.client.spec.ts) checks the **artifacts** (registration id, the `dsh.client` declaration, `exports["./client"]`, and that nothing in the browser entry takes a value from the Host half), and one of its cases reports as skipped without `lib/`.
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on `windows-latest`: the adapter specs assert Windows drive-letter path handling (`C:`, `D:` fixtures for Codex and Claude Code homes), which Linux reads as relative paths.
+
+The browser-half specs need the dsh client packages' Node halves and their module table; [`vitest.config.ts`](vitest.config.ts) and [`packages/agent-import/tests/support/`](packages/agent-import/tests/support) document those two seams (see "How the specs get dsh's client code" in the package README).
 
 ## Known limitations
 

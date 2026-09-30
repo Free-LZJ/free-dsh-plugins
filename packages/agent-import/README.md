@@ -1,8 +1,25 @@
+<div align="center">
+
 # @free-lzj/dsh-agent-import
 
-读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，通过 DeepSeek Harness 自己的 `mcp-client` 与技能目录挂载进来；同一个包还带一张 dsh Web 插件页的「代理配置导入」卡片，用来读写这套配置。
+**读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，挂载进 DeepSeek Harness；同一个包还带一张 dsh Web 插件页的「代理配置导入」卡片。**
 
-这是一个**双面包**：`lib/index.js` 是 Host 半边（Loader 行挂载的插件本体），`lib/client.js` 是浏览器半边（那张卡片），由包自己的 `dsh.client` 声明挂在**同一条 Loader 行**上。所以只装一个包、只声明一行。
+[![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](../../LICENSE)
+[![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](../../README.md)
+
+[仓库 README](../../README.md) · [示例 overlay](../../examples/agent-import.cordis.yml) · [插件页卡片](#插件页卡片)
+
+</div>
+
+---
+
+这是一个**双面包**：两半出自同一次构建，由包自己的 `dsh.client` 声明挂在**同一条 Loader 行**上，所以只装一个包、只声明一行。
+
+| 半边 | 产物 | 入口 | 跑在哪 |
+|---|---|---|---|
+| **Host** | `lib/index.js`（ESM） | `src/index.ts` | Node 进程：Loader 行挂载的插件本体，提供设置命名空间与 `GET /agent-import/report` |
+| **浏览器** | `lib/client.js`（module-table 闭包工厂） | `src/client/index.ts` | 页面：插件页那张卡片，按行 id 索引命名空间后注册 |
 
 ## 声明
 
@@ -86,7 +103,7 @@ pnpm run test      # 在本仓库根目录运行 vitest
 
 ### 测试如何拿到 dsh 的客户端代码
 
-6 个浏览器半边 spec 只依赖 npm 上发布的包，但有两处需要说明：
+8 个浏览器半边 spec（`tests/*.client.spec.{ts,tsx}`，其中 5 个带 `@vitest-environment jsdom`）只依赖 npm 上发布的包，但有两处需要说明：
 
 - **平台包只有 Node 半边。** `dsh-client-store`、`dsh-client-ui-primitives`、`dsh-client-ui-slots` 在 npm 上不发布浏览器包（浏览器版本由 Web 外壳自己打进 bundle），其 Node 半边的依赖保持外置。所以本包把这些外部依赖（`clsx`、`zustand`、`immer`、`shiki`、`katex`、`micromark` 系列等）显式声明为 `devDependencies`，并让 `vitest.config.ts` 的 `server.deps.inline` 把它们交给 Vite 转换——CSS 模块也走这条路径。
 - **浏览器半边按模块表加载。** `dsh-client-locale`、`dsh-client-ui-renderer`、`dsh-client-ui-settings` 发布的 `lib/client.js` 是给 Web 外壳的模块表用的：它调用 `window.__ModuleLoader__.load({ id, factory })`，通过外壳给的 `require` 取平台模块。`tests/support/module-loader.ts`（经 `setupFiles` 装载）在 jsdom 里装一张最小模块表，spec 再用 `clientModule(id)` 取它的导出。
