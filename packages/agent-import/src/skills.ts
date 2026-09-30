@@ -5,12 +5,15 @@
  * skill a user adds for Codex or Claude Code becomes addressable in dsh without
  * a copy step. Candidate construction follows `dsh-skill-filesystem`: bodies are
  * re-read on every {@link ForeignSkillProvider.get}, and a file that disappeared
- * or lost its frontmatter yields `undefined` instead of a stale body.
+ * or lost its frontmatter yields `undefined` instead of a stale body. A skill
+ * directory a foreign tool reaches through a symbolic link counts as a skill,
+ * because sharing one installed copy across tools is the usual arrangement.
  *
  * @module @deepseek-ai/dsh-agent-import/skills
  */
 
-import { readdir } from 'node:fs/promises'
+import type { Dirent, Stats } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SkillCandidate, SkillDefinition, SkillLookupOptions, SkillProvider, SkillSource, SkillSummary } from '@deepseek-ai/dsh-skill'
@@ -109,9 +112,9 @@ export class ForeignSkillProvider implements SkillProvider {
     const candidates: SkillCandidate[] = []
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (candidates.length >= limit) break
-      if (!entry.isDirectory()) continue
       if (root.skipDotEntries && entry.name.startsWith('.')) continue
       const directory = join(root.path, entry.name)
+      if (!await this.#isSkillDirectory(directory, entry)) continue
       const locator: SkillLocator = { path: join(directory, SKILL_FILE), directory }
       const parsed = await readSkillFile(locator.path)
       if (typeof parsed === 'string') {
@@ -124,6 +127,26 @@ export class ForeignSkillProvider implements SkillProvider {
       candidates.push({ ...this.#summary(parsed, locator, root.source), rank: FOREIGN_SKILL_RANK, locator })
     }
     return candidates
+  }
+
+  /**
+   * Report whether one root entry is a directory this provider may read an instruction file from.
+   *
+   * A plain directory answers from the entry alone. A symbolic link — how a link farm shares one
+   * installed skill across tools — is followed, so a link to a directory counts while a link to a
+   * file, and one whose target is gone, does not.
+   */
+  async #isSkillDirectory(directory: string, entry: Dirent): Promise<boolean> {
+    if (entry.isDirectory()) return true
+    if (!entry.isSymbolicLink()) return false
+    let target: Stats
+    try {
+      target = await stat(directory)
+    } catch {
+      // A link whose target is gone, or one this process may not stat, holds no skill directory.
+      return false
+    }
+    return target.isDirectory()
   }
 
   /** Project one parsed file onto the metadata dsh candidates and definitions share. */

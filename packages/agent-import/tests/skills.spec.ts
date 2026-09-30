@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -92,6 +92,18 @@ describe('ForeignSkillProvider.list', () => {
     await writeSkill(dir, 'nested')
     const { ctx } = context()
     expect((await provider(ctx, [root(dir)]).list({})).map(candidate => candidate.name)).toEqual(['nested'])
+  })
+
+  it('follows a skill directory linked into a root', async () => {
+    const store = await tempDir()
+    const dir = await tempDir()
+    await writeSkill(store, 'drawio-generator')
+    const link = join(dir, 'drawio-generator')
+    await symlink(join(store, 'drawio-generator'), link, process.platform === 'win32' ? 'junction' : 'dir')
+    const { ctx } = context()
+    const candidates = await provider(ctx, [root(dir)]).list({})
+    expect(candidates.map(candidate => candidate.name)).toEqual(['drawio-generator'])
+    expect(candidates[0]?.path).toBe(join(link, 'SKILL.md'))
   })
 
   it('ignores a directory without an instruction file and reports one that is unusable', async () => {
