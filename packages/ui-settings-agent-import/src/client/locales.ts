@@ -8,7 +8,9 @@ export type AgentImportLocaleKey =
   | 'sources' | 'sourcesHint' | 'sourceCodex' | 'sourceClaudeCode'
   | 'pathsTitle' | 'pathsHint' | 'scopeTitle' | 'scopeHint'
   | 'loadedTitle' | 'loadedHint' | 'loadedSummary' | 'loadedSkills' | 'loadedServers'
+  | 'configTitle' | 'viewLabel'
   | 'loadedNoSkills' | 'loadedNoServers' | 'loadedMounted' | 'loadedSkipped' | 'loadedNotes'
+  | 'columnName' | 'columnSource' | 'columnPath' | 'columnStatus' | 'columnTarget' | 'columnReason'
   | 'reportLoading' | 'reportUnavailable' | 'refresh'
   | 'mcp' | 'mcpHint' | 'skills' | 'skillsHint'
   | 'failOnStartupError' | 'failOnStartupErrorHint'
@@ -35,7 +37,9 @@ export const en: Record<AgentImportLocaleKey, string> = {
   scopeTitle: 'Import scope',
   scopeHint: 'What to import, and how much of it.',
   loadedTitle: 'Loaded',
-  loadedHint: 'What the current import mounted and published. Editing any setting above rebuilds it.',
+  loadedHint: 'What the current import mounted and published. Saving a configuration change rebuilds it.',
+  configTitle: 'Configuration',
+  viewLabel: 'Card view',
   loadedSummary: '{skills} skills · {servers} MCP servers',
   loadedSkills: 'Skills',
   loadedServers: 'MCP servers',
@@ -44,6 +48,12 @@ export const en: Record<AgentImportLocaleKey, string> = {
   loadedMounted: 'Mounted',
   loadedSkipped: 'Skipped',
   loadedNotes: 'Import notes',
+  columnName: 'Name',
+  columnSource: 'Source',
+  columnPath: 'Instruction file',
+  columnStatus: 'Status',
+  columnTarget: 'Command or URL',
+  columnReason: 'Detail',
   reportLoading: 'Reading the import result…',
   reportUnavailable: 'The import result is unavailable: {reason}',
   refresh: 'Refresh',
@@ -98,7 +108,9 @@ export const zh: Record<AgentImportLocaleKey, string> = {
   scopeTitle: '导入范围',
   scopeHint: '导入哪些内容，以及导入多少。',
   loadedTitle: '已加载',
-  loadedHint: '当前这次导入实际挂载的服务器与发布的技能；改动上面任何设置都会自动重建。',
+  loadedHint: '当前这次导入实际挂载的服务器与发布的技能；保存配置后会重建。',
+  configTitle: '配置',
+  viewLabel: '卡片视图',
   loadedSummary: '{skills} 个技能 · {servers} 个 MCP 服务器',
   loadedSkills: '技能',
   loadedServers: 'MCP 服务器',
@@ -107,6 +119,12 @@ export const zh: Record<AgentImportLocaleKey, string> = {
   loadedMounted: '已挂载',
   loadedSkipped: '已跳过',
   loadedNotes: '导入提示',
+  columnName: '名称',
+  columnSource: '来源',
+  columnPath: '指令文件',
+  columnStatus: '状态',
+  columnTarget: '命令 / URL',
+  columnReason: '说明',
   reportLoading: '正在读取导入结果…',
   reportUnavailable: '暂时读不到导入结果：{reason}',
   refresh: '刷新',

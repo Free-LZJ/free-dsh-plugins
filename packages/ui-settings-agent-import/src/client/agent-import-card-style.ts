@@ -27,11 +27,19 @@ export const AGENT_IMPORT_CLASS = {
   summary: 'dsh-agent-import-summary',
   summaryText: 'dsh-agent-import-summary-text',
   subheading: 'dsh-agent-import-subheading',
-  items: 'dsh-agent-import-items',
-  item: 'dsh-agent-import-item',
-  itemName: 'dsh-agent-import-item-name',
-  itemPath: 'dsh-agent-import-item-path',
-  itemNote: 'dsh-agent-import-item-note',
+  tableWrap: 'dsh-agent-import-table-wrap',
+  table: 'dsh-agent-import-table',
+  columnName: 'dsh-agent-import-column-name',
+  columnSource: 'dsh-agent-import-column-source',
+  columnStatus: 'dsh-agent-import-column-status',
+  columnReason: 'dsh-agent-import-column-reason',
+  cellName: 'dsh-agent-import-cell-name',
+  cellClip: 'dsh-agent-import-cell-clip',
+  cellCode: 'dsh-agent-import-cell-code',
+  cellAside: 'dsh-agent-import-cell-aside',
+  cellReason: 'dsh-agent-import-cell-reason',
+  tabs: 'dsh-agent-import-tabs',
+  panel: 'dsh-agent-import-panel',
   itemNotes: 'dsh-agent-import-item-notes',
 } as const
 
@@ -137,38 +145,74 @@ const AGENT_IMPORT_CSS = `
   line-height: 1.5;
   color: var(--dsw-alias-label-tertiary);
 }
-.${AGENT_IMPORT_CLASS.items} {
-  display: grid;
-  gap: 6px;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
+.${AGENT_IMPORT_CLASS.tableWrap} {
+  margin-top: 8px;
+  overflow-x: auto;
 }
-.${AGENT_IMPORT_CLASS.item} {
-  display: grid;
-  grid-template-columns: minmax(0, auto) auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
+.${AGENT_IMPORT_CLASS.tabs} {
+  margin-bottom: 14px;
+}
+.${AGENT_IMPORT_CLASS.panel} {
   min-width: 0;
+}
+.${AGENT_IMPORT_CLASS.table} {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
   line-height: 1.5;
 }
-.${AGENT_IMPORT_CLASS.itemName} {
+.${AGENT_IMPORT_CLASS.table} th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--dsw-alias-label-tertiary);
+}
+.${AGENT_IMPORT_CLASS.table} td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dsw-alias-label-primary);
 }
-.${AGENT_IMPORT_CLASS.itemPath} {
+.${AGENT_IMPORT_CLASS.table} tbody tr:last-child td {
+  border-bottom: 0;
+}
+.${AGENT_IMPORT_CLASS.table} tbody tr:hover td {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.${AGENT_IMPORT_CLASS.columnName} {
+  width: 38%;
+}
+.${AGENT_IMPORT_CLASS.columnSource} {
+  width: 104px;
+}
+.${AGENT_IMPORT_CLASS.columnStatus} {
+  width: 92px;
+}
+.${AGENT_IMPORT_CLASS.columnReason} {
+  width: 30%;
+}
+.${AGENT_IMPORT_CLASS.cellName} {
+  font-weight: 500;
+}
+.${AGENT_IMPORT_CLASS.cellClip} {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.${AGENT_IMPORT_CLASS.cellCode} {
+  font-family: var(--dsw-font-markdown-code-font-family, Consolas, monospace);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+.${AGENT_IMPORT_CLASS.cellAside} {
+  margin-left: 6px;
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
-.${AGENT_IMPORT_CLASS.itemNote} {
-  white-space: nowrap;
+.${AGENT_IMPORT_CLASS.cellReason} {
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }

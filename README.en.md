@@ -17,7 +17,7 @@ If this machine already runs Codex or Claude Code, neither tool's MCP servers no
 - both tools' `skills/` directories join the skill catalog as one provider, where a same-named dsh skill wins;
 - a declaration the plugin cannot translate becomes one `agent-import: …` warning and is skipped, so one unusable entry never costs the rest;
 - the plugin's own configuration is live: saving on the Plugins page re-imports immediately, with no restart;
-- the card starts with a **Loaded** section: the MCP servers this import mounted (transport, command or URL, mounted/skipped and why) and the skills it published (name, source, `SKILL.md` path), with a **Refresh** button.
+- the card has two tabs, **Loaded** and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills it published (source, instruction file) with a **Refresh** button, while Configuration holds every setting.
 
 ## Install
 

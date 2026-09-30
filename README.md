@@ -17,7 +17,7 @@ English: [README.en.md](README.en.md)
 - 两边的 `skills/` 目录 → 作为一个技能 provider 进入 dsh 技能目录（同名时 dsh 自己的技能优先）；
 - 读不懂的声明只记一条 `agent-import: …` 警告并跳过，不会拖垮其余导入；
 - 插件自己的配置是**热生效**的：插件页保存后立即重新导入，不需要重启；
-- 插件页那张卡片最上方是「**已加载**」：当前这次导入实际挂载的 MCP 服务器（传输方式、命令或 URL、已挂载/已跳过及原因）和已发布的技能（名字、来源、`SKILL.md` 路径），带一个「刷新」按钮。
+- 插件页那张卡片分「**已加载**」和「**配置**」两个 tab：「已加载」用表格列出当前这次导入实际挂载的 MCP 服务器（状态、命令或 URL、跳过原因）与已发布的技能（来源、指令文件路径），带一个「刷新」按钮；「配置」放全部设置字段。
 
 ## 安装
 
@@ -101,7 +101,7 @@ Host 插件在 `GET /agent-import/report` 上公布当前那次导入的结果�
 pnpm install
 pnpm run typecheck   # 两个包
 pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js、lib/client.js
-pnpm run test        # vitest：15 个 spec 文件 / 246 个测试
+pnpm run test        # vitest：15 个 spec 文件 / 248 个测试
 ```
 
 CI（`.github/workflows/ci.yml`）在 `windows-latest` 上跑：adapter 的 spec 断言 Windows 盘符路径（Codex / Claude Code 主目录用 `C:`、`D:` 夹具），在 Linux 上这些夹具会被当成相对路径。

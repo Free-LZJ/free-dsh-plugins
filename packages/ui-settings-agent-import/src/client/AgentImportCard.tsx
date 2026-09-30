@@ -6,10 +6,10 @@
  * not interleaved with the bounds that apply to both.
  */
 
-import { useId, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import {
-  Button, Checkbox, Input, PathLabel, SettingsForm, SettingsValueField, Switch, Tag,
+  Button, Checkbox, Input, PathLabel, SegmentedControl, SettingsForm, SettingsValueField, Switch, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
@@ -71,15 +71,59 @@ export function AgentImportCard(props: AgentImportCardProps) {
   const { t } = props
   const state = props.useAgentImportCard(snapshot => snapshot)
   const report = props.useAgentImportReport(snapshot => snapshot)
+  const view = useId()
+  const [tab, setTab] = useState<AgentImportTab>('loaded')
   if (props.view === 'summary') return t('summary')
   const disabled = !state.writable || state.saving
   const overriddenLabel = t('overridden')
   const resetLabel = t('reset')
   return (
     <SettingsForm labels={formLabels(t)} state={state} onSave={props.save} onDiscard={props.discard}>
-      <Section id="loaded" title={t('loadedTitle')} hint={t('loadedHint')}>
-        <LoadedItems t={t} report={report} onRefresh={props.refreshReport} />
-      </Section>
+      <SegmentedControl
+        id={`${view}-view`}
+        value={tab}
+        onChange={setTab}
+        label={t('viewLabel')}
+        className={AGENT_IMPORT_CLASS.tabs}
+        options={[
+          { value: 'loaded', label: t('loadedTitle') },
+          { value: 'config', label: t('configTitle') },
+        ]}
+      />
+      <div
+        role="tabpanel"
+        id={`${view}-view-${tab}-panel`}
+        aria-labelledby={`${view}-view-${tab}`}
+        className={AGENT_IMPORT_CLASS.panel}
+      >
+        {tab === 'loaded'
+          ? (
+            <>
+              <p className={AGENT_IMPORT_CLASS.hint}>{t('loadedHint')}</p>
+              <LoadedItems t={t} report={report} onRefresh={props.refreshReport} />
+            </>
+          )
+          : <ConfigSections {...props} state={state} disabled={disabled} overriddenLabel={overriddenLabel} resetLabel={resetLabel} />}
+      </div>
+    </SettingsForm>
+  )
+}
+
+/** The tabs the card switches between. */
+type AgentImportTab = 'loaded' | 'config'
+
+/** The configuration tab: every field the Host serves, grouped by what it controls. */
+function ConfigSections(
+  props: AgentImportCardProps & {
+    state: AgentImportPageState
+    disabled: boolean
+    overriddenLabel: string
+    resetLabel: string
+  },
+) {
+  const { t, state, disabled, overriddenLabel, resetLabel } = props
+  return (
+    <>
       <Section id="sources" title={t('sources')} hint={t('sourcesHint')}>
         <div className={AGENT_IMPORT_CLASS.choices}>
           {state.sources.choices.map(choice => (
@@ -196,7 +240,7 @@ export function AgentImportCard(props: AgentImportCardProps) {
           </Button>
         </div>
       </Section>
-    </SettingsForm>
+    </>
   )
 }
 
@@ -222,42 +266,78 @@ function LoadedItems(props: {
   )
 }
 
-/** The skill and server rows of one report, with the notes the import recorded. */
+/** The skill and server tables of one report, with the notes the import recorded. */
 function LoadedLists(props: { t: AgentImportCardProps['t']; report: AgentImportReport }) {
   const { t, report } = props
+  const skillsHeadingId = useId()
+  const serversHeadingId = useId()
+  // A reason column no row fills would be a permanently blank column.
+  const reasons = report.servers.some(server => server.reason !== undefined)
   return (
     <>
-      <h4 className={AGENT_IMPORT_CLASS.subheading}>{t('loadedSkills')}</h4>
+      <h4 className={AGENT_IMPORT_CLASS.subheading} id={skillsHeadingId}>{t('loadedSkills')}</h4>
       {report.skills.length === 0
         ? <p className={AGENT_IMPORT_CLASS.hint}>{t('loadedNoSkills')}</p>
         : (
-          <ul className={AGENT_IMPORT_CLASS.items}>
-            {report.skills.map(skill => (
-              // A path identifies a skill even when two roots declare one name.
-              <li className={AGENT_IMPORT_CLASS.item} key={skill.path === '' ? skill.name : skill.path}>
-                <span className={AGENT_IMPORT_CLASS.itemName}>{skill.name}</span>
-                <Tag tone="outline">{reportedSourceLabel(t, skill.source)}</Tag>
-                <PathLabel className={AGENT_IMPORT_CLASS.itemPath} path={skill.path} />
-              </li>
-            ))}
-          </ul>
+          <div className={AGENT_IMPORT_CLASS.tableWrap}>
+            <table className={AGENT_IMPORT_CLASS.table} aria-labelledby={skillsHeadingId}>
+              <thead>
+                <tr>
+                  <th scope="col" className={AGENT_IMPORT_CLASS.columnName}>{t('columnName')}</th>
+                  <th scope="col" className={AGENT_IMPORT_CLASS.columnSource}>{t('columnSource')}</th>
+                  <th scope="col">{t('columnPath')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.skills.map(skill => (
+                  // A path identifies a skill even when two roots declare one name.
+                  <tr key={skill.path === '' ? skill.name : skill.path}>
+                    <td className={AGENT_IMPORT_CLASS.cellName}>{skill.name}</td>
+                    <td><Tag tone="outline">{reportedSourceLabel(t, skill.source)}</Tag></td>
+                    <td className={`${AGENT_IMPORT_CLASS.cellClip} ${AGENT_IMPORT_CLASS.cellCode}`}>
+                      <PathLabel path={skill.path} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      <h4 className={AGENT_IMPORT_CLASS.subheading}>{t('loadedServers')}</h4>
+      <h4 className={AGENT_IMPORT_CLASS.subheading} id={serversHeadingId}>{t('loadedServers')}</h4>
       {report.servers.length === 0
         ? <p className={AGENT_IMPORT_CLASS.hint}>{t('loadedNoServers')}</p>
         : (
-          <ul className={AGENT_IMPORT_CLASS.items}>
-            {report.servers.map(server => (
-              <li className={AGENT_IMPORT_CLASS.item} key={`${server.name}:${server.serverName ?? ''}`}>
-                <span className={AGENT_IMPORT_CLASS.itemName}>{server.name}</span>
-                <Tag tone={server.status === 'mounted' ? 'success' : 'warning'}>
-                  {server.status === 'mounted' ? t('loadedMounted') : t('loadedSkipped')}
-                </Tag>
-                <span className={AGENT_IMPORT_CLASS.itemPath}>{server.target}</span>
-                {server.reason === undefined ? null : <span className={AGENT_IMPORT_CLASS.itemNote}>{server.reason}</span>}
-              </li>
-            ))}
-          </ul>
+          <div className={AGENT_IMPORT_CLASS.tableWrap}>
+            <table className={AGENT_IMPORT_CLASS.table} aria-labelledby={serversHeadingId}>
+              <thead>
+                <tr>
+                  <th scope="col" className={AGENT_IMPORT_CLASS.columnName}>{t('columnName')}</th>
+                  <th scope="col" className={AGENT_IMPORT_CLASS.columnStatus}>{t('columnStatus')}</th>
+                  <th scope="col">{t('columnTarget')}</th>
+                  {reasons ? <th scope="col" className={AGENT_IMPORT_CLASS.columnReason}>{t('columnReason')}</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {report.servers.map(server => (
+                  <tr key={`${server.name}:${server.serverName ?? ''}`}>
+                    <td className={AGENT_IMPORT_CLASS.cellName}>
+                      {server.name}
+                      {server.serverName === undefined || server.serverName === server.name
+                        ? null
+                        : <span className={AGENT_IMPORT_CLASS.cellAside}>{server.serverName}</span>}
+                    </td>
+                    <td>
+                      <Tag tone={server.status === 'mounted' ? 'success' : 'warning'}>
+                        {server.status === 'mounted' ? t('loadedMounted') : t('loadedSkipped')}
+                      </Tag>
+                    </td>
+                    <td className={`${AGENT_IMPORT_CLASS.cellClip} ${AGENT_IMPORT_CLASS.cellCode}`}>{server.target}</td>
+                    {reasons ? <td className={AGENT_IMPORT_CLASS.cellReason}>{server.reason ?? ''}</td> : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       {report.notes.length === 0
         ? null

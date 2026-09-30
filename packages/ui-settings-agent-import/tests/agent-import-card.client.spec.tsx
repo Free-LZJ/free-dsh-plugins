@@ -97,11 +97,18 @@ function toggle(name: string) {
 }
 
 describe('AgentImportCard', () => {
+  /** Switch the card to its configuration tab, where the settings form lives. */
+  function openConfig(): void {
+    fireEvent.click(screen.getByRole('tab', { name: en.configTitle }))
+  }
+
   function renderCard(
     state: Partial<AgentImportPageState> = {},
     loaded: AgentImportReportState = { phase: 'unavailable', reason: 'not read' },
+    tab: 'loaded' | 'config' = 'config',
   ) {
-    const store = createSnapshotStore<AgentImportPageState>({ ...settled, ...servedPage, ...state })
+    const page = { ...settled, ...servedPage, ...state }
+    const store = createSnapshotStore<AgentImportPageState>(page)
     const actions = cardActions()
     const props = {
       ...actions,
@@ -111,6 +118,8 @@ describe('AgentImportCard', () => {
       useAgentImportReport: reportHook(loaded),
     } as AgentImportCardProps
     render(<AgentImportCard {...props} />)
+    // A page the Host does not serve renders its own notice in place of the card.
+    if (tab === 'config' && page.available) openConfig()
     return actions
   }
 
@@ -147,10 +156,22 @@ describe('AgentImportCard', () => {
     renderCard()
 
     const headings = screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent)
-    expect(headings).toEqual([en.loadedTitle, en.sources, en.pathsTitle, en.scopeTitle, en.serverDenyList])
+    expect(headings).toEqual([en.sources, en.pathsTitle, en.scopeTitle, en.serverDenyList])
   })
 
-  it('lists the skills and servers the import reports, with a count above each list', () => {
+  it('opens on the loaded tab, and leaves the settings form off it', () => {
+    renderCard({}, { phase: 'loading' }, 'loaded')
+
+    const tabs = screen.getAllByRole('tab').map(tab => tab.textContent)
+    expect(tabs).toEqual([en.loadedTitle, en.configTitle])
+    expect(screen.getByRole('tab', { name: en.loadedTitle }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByLabelText(en.codexHome)).toBeNull()
+
+    openConfig()
+    expect(screen.getByLabelText(en.codexHome)).toHaveProperty('value', '/home/u/.codex')
+  })
+
+  it('tabulates the skills and servers the import reports, with a count above each table', () => {
     renderCard({}, {
       phase: 'ready',
       report: report({
@@ -161,9 +182,13 @@ describe('AgentImportCard', () => {
         ],
         notes: ['codex: server "fs" skipped: listed in serverDenyList'],
       }),
-    })
+    }, 'loaded')
 
     expect(screen.getByText('1 skills · 2 MCP servers')).toBeTruthy()
+    expect(screen.getAllByRole('table')).toHaveLength(2)
+    expect(screen.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual([
+      en.columnName, en.columnSource, en.columnPath, en.columnName, en.columnStatus, en.columnTarget, en.columnReason,
+    ])
     expect(screen.getByText('drawio-generator')).toBeTruthy()
     expect(screen.getByTitle('/home/u/.codex/skills/drawio/SKILL.md')).toBeTruthy()
     expect(screen.getByText(en.loadedMounted)).toBeTruthy()
@@ -173,20 +198,34 @@ describe('AgentImportCard', () => {
     expect(screen.getByText('codex: server "fs" skipped: listed in serverDenyList')).toBeTruthy()
   })
 
+  it('leaves out a detail column no server fills', () => {
+    renderCard({}, {
+      phase: 'ready',
+      report: report({
+        servers: [{ name: 'demo', serverName: 'demo', transport: 'stdio', target: 'demo-server', source: 'codex', status: 'mounted' }],
+      }),
+    }, 'loaded')
+
+    expect(screen.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual([
+      en.columnName, en.columnStatus, en.columnTarget,
+    ])
+  })
+
   it('says an empty import loaded nothing', () => {
-    renderCard({}, { phase: 'ready', report: report() })
+    renderCard({}, { phase: 'ready', report: report() }, 'loaded')
 
     expect(screen.getByText('0 skills · 0 MCP servers')).toBeTruthy()
     expect(screen.getByText(en.loadedNoSkills)).toBeTruthy()
     expect(screen.getByText(en.loadedNoServers)).toBeTruthy()
+    expect(screen.queryByRole('table')).toBeNull()
   })
 
   it('says it is still reading the import result, and why when the read failed', () => {
-    renderCard({}, { phase: 'loading' })
+    renderCard({}, { phase: 'loading' }, 'loaded')
     expect(screen.getByText(en.reportLoading)).toBeTruthy()
 
     cleanup()
-    const actions = renderCard({}, { phase: 'unavailable', reason: 'HTTP 404' })
+    const actions = renderCard({}, { phase: 'unavailable', reason: 'HTTP 404' }, 'loaded')
     expect(screen.getByText('The import result is unavailable: HTTP 404')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: en.refresh }))

@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-agent-import",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness",
   "type": "module",
   "main": "lib/index.js",
