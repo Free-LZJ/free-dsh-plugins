@@ -5,10 +5,10 @@
 **读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，挂载进 DeepSeek Harness；同一个包还带一张 dsh Web 插件页的「代理配置导入」卡片。**
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](../../LICENSE)
-[![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](../../README.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](https://github.com/Free-LZJ/free-dsh-plugins/blob/main/LICENSE)
+[![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](https://github.com/Free-LZJ/free-dsh-plugins#readme)
 
-[仓库 README](../../README.md) · [示例 overlay](../../examples/agent-import.cordis.yml) · [插件页卡片](#插件页卡片)
+[仓库 README](https://github.com/Free-LZJ/free-dsh-plugins#readme) · [示例 overlay](https://github.com/Free-LZJ/free-dsh-plugins/blob/main/examples/agent-import.cordis.yml) · [插件页卡片](#插件页卡片)
 
 </div>
 
@@ -31,7 +31,7 @@
     serverDenyList: ['node_repl']
 ```
 
-安装与完整步骤见[仓库根 README](../../README.md)。
+安装与完整步骤见[仓库根 README](https://github.com/Free-LZJ/free-dsh-plugins#readme)。
 
 ## 配置
 
