@@ -2,13 +2,14 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  AGENT_IMPORT_FIELDS, FOREIGN_SOURCES, listDraft, listRows, sourceDraft, sourceSelection,
+  AGENT_IMPORT_FIELDS, FOREIGN_SOURCES, SKILL_IMPORT_SOURCES, listDraft, listRows, sourceDraft, sourceSelection,
   type AgentImportFieldId, type AgentImportFieldKind,
 } from '../src/client/agent-import-fields.ts'
 
 /** Every field of the row, and the control the page edits it through. */
 const KINDS: Readonly<Record<AgentImportFieldId, AgentImportFieldKind>> = {
   sources: 'sources',
+  skillSources: 'sources',
   projectRoot: 'text',
   'codex.home': 'text',
   'codex.configPath': 'text',
@@ -18,6 +19,7 @@ const KINDS: Readonly<Record<AgentImportFieldId, AgentImportFieldKind>> = {
   maxSkills: 'count',
   mcp: 'switch',
   skills: 'switch',
+  skillAutoImport: 'switch',
   'codex.includeSystemSkills': 'switch',
   failOnStartupError: 'switch',
   serverDenyList: 'list',
@@ -65,9 +67,25 @@ describe('agent-import fields', () => {
     expect(spec('sources').parse(' claude-code , codex ')).toEqual({ kind: 'set', value: ['claude-code', 'codex'] })
     expect(spec('sources').parse('')).toEqual({ kind: 'set', value: [] })
 
+    expect(spec('skillSources').format(['codex', 'cursor'])).toBe('codex,cursor')
+    expect(spec('skillSources').format(undefined)).toBe('')
+    expect(spec('skillSources').parse(' cursor , codex ')).toEqual({ kind: 'set', value: ['cursor', 'codex'] })
+    expect(spec('skillSources').parse('')).toEqual({ kind: 'set', value: [] })
+
     expect(spec('serverDenyList').format(['fs', 'telemetry'])).toBe('fs\ntelemetry')
     expect(spec('serverDenyList').format(undefined)).toBe('')
     expect(spec('serverDenyList').parse('fs\n\ntelemetry\n')).toEqual({ kind: 'set', value: ['fs', 'telemetry'] })
+  })
+
+  it('lists every tool a skill source may name, in the Host\u2019s precedence order', () => {
+    // Spelled out here because the browser half may not import the Host's own
+    // table, so this list is what keeps a dropped or renamed id visible.
+    expect(SKILL_IMPORT_SOURCES.map(option => option.id)).toEqual([
+      'dsh', 'agents', 'project', 'cc-switch', 'codex', 'claude-code', 'gemini', 'opencode', 'cursor',
+      'copilot', 'windsurf', 'windsurf-legacy', 'trae', 'trae-cn', 'openclaw', 'clawdbot', 'roo',
+      'codebuddy', 'workbuddy', 'qoder', 'qoder-cn', 'lingma',
+    ])
+    expect(SKILL_IMPORT_SOURCES.every(option => option.label !== '')).toBe(true)
   })
 
   it('keeps the tools in precedence order and drops the names a draft leaves blank', () => {

@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { claudeCodeAdapter, claudeSkillRoots, readClaudeProjectServers, readClaudeServers } from '../src/adapters/claude-code.ts'
+import { claudeCodeAdapter, readClaudeProjectServers, readClaudeServers } from '../src/adapters/claude-code.ts'
 import type { AdapterContext } from '../src/adapter.ts'
 
 /** Adapter inputs backed by an in-memory file map. */
@@ -179,19 +179,6 @@ describe('readClaudeProjectServers', () => {
   })
 })
 
-describe('claudeSkillRoots', () => {
-  it('reads the user skill directory and the workspace directory', () => {
-    expect(claudeSkillRoots(join('C:', 'home', '.claude'), join('C:', 'work'))).toEqual([
-      { path: join('C:', 'home', '.claude', 'skills'), source: 'claude-code', skipDotEntries: true },
-      { path: join('C:', 'work', '.claude', 'skills'), source: 'claude-code', skipDotEntries: true },
-    ])
-  })
-
-  it('reads only the user skill directory without a workspace', () => {
-    expect(claudeSkillRoots(join('C:', 'home', '.claude'), undefined)).toHaveLength(1)
-  })
-})
-
 describe('claudeCodeAdapter', () => {
   it('reads the workspace override, the project file, and the user servers in that order', async () => {
     const userPath = join('C:', 'cfg', 'claude.json')
@@ -224,26 +211,5 @@ describe('claudeCodeAdapter', () => {
 
   it('reports nothing when the user file is absent', async () => {
     expect(await claudeCodeAdapter({}).readServers(context())).toEqual([])
-  })
-
-  it('lists the user and workspace skill roots', () => {
-    const roots = claudeCodeAdapter({ configDir: join('D:', 'claude') }).skillRoots(context())
-    expect(roots[0]).toEqual({ path: join('D:', 'claude', 'skills'), source: 'claude-code', skipDotEntries: true })
-    expect(roots[1]).toMatchObject({ path: join('C:', 'work', '.claude', 'skills') })
-  })
-
-  it('prefers CLAUDE_CONFIG_DIR over the default directory', () => {
-    const roots = claudeCodeAdapter({}).skillRoots(context({}, { CLAUDE_CONFIG_DIR: join('D:', 'claude') }))
-    expect(roots[0]).toMatchObject({ path: join('D:', 'claude', 'skills') })
-  })
-
-  it('falls back to the default directory without the environment override', () => {
-    const roots = claudeCodeAdapter({}).skillRoots(context())
-    expect(roots[0]).toMatchObject({ path: join(homedir(), '.claude', 'skills') })
-  })
-
-  it('resolves a relative config directory against the working directory', () => {
-    const roots = claudeCodeAdapter({ configDir: 'relative' }).skillRoots(context())
-    expect(roots[0]).toMatchObject({ path: join(process.cwd(), 'relative', 'skills') })
   })
 })

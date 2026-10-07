@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import SkillRegistry from '@deepseek-ai/dsh-skill'
 import * as AgentImport from '../src/index.ts'
 import { allocateServerName, mountForeignServers } from '../src/mcp.ts'
 import type { ForeignMcpServer } from '../src/types.ts'
@@ -63,13 +62,12 @@ async function codexHome(toml: string): Promise<string> {
 }
 
 /**
- * Mount one plugin fiber over a context that provides the skill catalog.
+ * Mount one plugin fiber on a context of its own.
  * @param input - raw plugin configuration, resolved once by the mounting fiber.
  * @returns the mounted context.
  */
 async function mount(input: Parameters<typeof AgentImport.Config>[0]): Promise<Context> {
   const ctx = new Context()
-  await ctx.plugin(SkillRegistry)
   await ctx.plugin(AgentImport, input)
   return ctx
 }
@@ -189,7 +187,6 @@ describe('apply — mount planning', () => {
       'command = "node"',
     ].join('\n'))
     const ctx = new Context()
-    await ctx.plugin(SkillRegistry)
     const warn = vi.spyOn(ctx.logger, 'warn')
     await ctx.plugin(AgentImport, { sources: ['codex'], codex: { home }, skills: false, serverDenyList: ['denied'], maxServers: 1 })
     expect(configs).toEqual([{
@@ -247,7 +244,6 @@ describe('apply — mount planning', () => {
   it('reports a declaration file it cannot read instead of failing activation', async () => {
     const home = await codexHome('[mcp_servers.a]\ncommand = "node"')
     const ctx = new Context()
-    await ctx.plugin(SkillRegistry)
     const warn = vi.spyOn(ctx.logger, 'warn')
     await ctx.plugin(AgentImport, { sources: ['codex'], codex: { home, configPath: home }, skills: false })
     expect(configs).toEqual([])
@@ -265,7 +261,6 @@ describe('apply — live mount changes', () => {
       'command = "node"',
     ].join('\n'))
     const ctx = new Context()
-    await ctx.plugin(SkillRegistry)
     const live = await liveConfig(ctx, AgentImport, { sources: ['codex'], codex: { home }, skills: false })
     expect(events).toEqual(['mount:keep', 'mount:drop'])
     await live.update({ serverDenyList: ['drop'] })
@@ -287,7 +282,6 @@ describe('apply — live mount changes', () => {
       'command = "node"',
     ].join('\n'))
     const ctx = new Context()
-    await ctx.plugin(SkillRegistry)
     const error = vi.spyOn(ctx.logger, 'error')
     const live = await liveConfig(ctx, AgentImport, { sources: ['codex'], codex: { home }, skills: false })
     expect(events).toEqual(['mount:first', 'mount:second'])

@@ -12,6 +12,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { isSameOrigin, respond } from './http.ts'
 
 /** Path the report route answers on. */
 export const REPORT_PATH = '/agent-import/report'
@@ -52,7 +53,7 @@ export interface AgentImportReport {
   readonly importedAt: string
   /** Tools the generation read, in precedence order. */
   readonly sources: readonly string[]
-  /** Skills the generation publishes, as its provider lists them now. */
+  /** Skills dsh's own root holds: the imports this plugin linked, and anything placed there by hand. */
   readonly skills: readonly ImportedSkillReport[]
   /** Servers the generation planned, in declaration order. */
   readonly servers: readonly ImportedServerReport[]
@@ -97,38 +98,3 @@ export function createReportHandler(
   }
 }
 
-/**
- * Whether a request came from the page this server sent, so a document on
- * another origin cannot read the report through the user's browser.
- *
- * A browser states the relationship in `Sec-Fetch-Site`; a request that
- * carries no such header is not a cross-site document request (a local client,
- * or an older browser), and one that states `same-origin` or `none` is the
- * harness's own page or a direct navigation. Any stated `Origin` must still
- * name the host the request was addressed to.
- * @param req - the incoming request.
- * @returns true when the request comes from this server's own page.
- */
-function isSameOrigin(req: IncomingMessage): boolean {
-  const site = req.headers['sec-fetch-site']
-  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return false
-  const origin = req.headers.origin
-  if (typeof origin !== 'string') return true
-  try {
-    return new URL(origin).host === req.headers.host
-  } catch {
-    // An unparseable Origin is not this server's own page.
-    return false
-  }
-}
-
-/** Answer one request with a JSON body and no caching. */
-function respond(res: ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload)
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-length': Buffer.byteLength(body),
-  })
-  res.end(body)
-}

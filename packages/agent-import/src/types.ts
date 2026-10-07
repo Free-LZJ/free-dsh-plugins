@@ -47,16 +47,6 @@ export interface ForeignHttpServer extends ForeignServerBase {
 /** One normalized MCP server declaration from another agent tool. */
 export type ForeignMcpServer = ForeignStdioServer | ForeignHttpServer
 
-/** One skill directory owned by another agent tool. */
-export interface ForeignSkillRoot {
-  /** Absolute directory containing one `<skill>/SKILL.md` bundle per skill. */
-  readonly path: string
-  /** Tool whose configuration declares this root. */
-  readonly source: ForeignSource
-  /** Whether entries whose name starts with `.` are skipped. */
-  readonly skipDotEntries: boolean
-}
-
 /** One declaring file's normalized servers plus one line per declaration that was not mounted. */
 export interface ForeignServerRead {
   /** Servers in declaration order. */

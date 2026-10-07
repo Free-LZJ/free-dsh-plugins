@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { codexAdapter, codexSkillRoots, readCodexServers } from '../src/adapters/codex.ts'
+import { codexAdapter, readCodexServers } from '../src/adapters/codex.ts'
 import type { AdapterContext } from '../src/adapter.ts'
 
 /** Adapter inputs backed by an in-memory file map. */
@@ -215,21 +215,6 @@ describe('readCodexServers — keys this package does not apply', () => {
   })
 })
 
-describe('codexSkillRoots', () => {
-  it('reads the home skills directory and skips its dot entries', () => {
-    expect(codexSkillRoots(join('C:', 'home', '.codex'), false)).toEqual([
-      { path: join('C:', 'home', '.codex', 'skills'), source: 'codex', skipDotEntries: true },
-    ])
-  })
-
-  it('reads the system skill directory of the home as its own root when asked', () => {
-    expect(codexSkillRoots(join('C:', 'home', '.codex'), true)).toEqual([
-      { path: join('C:', 'home', '.codex', 'skills'), source: 'codex', skipDotEntries: true },
-      { path: join('C:', 'home', '.codex', 'skills', '.system'), source: 'codex', skipDotEntries: false },
-    ])
-  })
-})
-
 describe('codexAdapter', () => {
   it('reads the configured configuration file', async () => {
     const files = { [join('C:', 'cfg', 'config.toml')]: '[mcp_servers.a]\ncommand = "node"' }
@@ -259,16 +244,6 @@ describe('codexAdapter', () => {
 
   it('reports nothing when the configuration file is absent', async () => {
     expect(await codexAdapter({ home: join('C:', 'cfg') }).readServers(context())).toEqual([])
-  })
-
-  it('lists the skill roots of the configured home', () => {
-    const roots = codexAdapter({ home: join('C:', 'cfg'), includeSystemSkills: true }).skillRoots(context())
-    expect(roots.map(root => root.path)).toEqual([join('C:', 'cfg', 'skills'), join('C:', 'cfg', 'skills', '.system')])
-  })
-
-  it('leaves the system skills out when the options do not ask for them', () => {
-    const roots = codexAdapter({ home: join('C:', 'cfg') }).skillRoots(context())
-    expect(roots.map(root => root.path)).toEqual([join('C:', 'cfg', 'skills')])
   })
 
   it('resolves a relative home against the working directory', async () => {

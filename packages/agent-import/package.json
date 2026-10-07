@@ -1,7 +1,7 @@
 {
   "name": "@free-lzj/dsh-agent-import",
   "version": "0.3.1",
-  "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness, with the Settings page that configures the import",
+  "description": "Imports the MCP servers Codex or Claude Code already declares into DeepSeek Harness, and manages the skills every agent tool keeps by linking them into dsh's own skills directory, with the Settings page that configures both",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Free-LZJ/free-dsh-plugins.git",
@@ -43,7 +43,8 @@
     "dsh-client-plugin",
     "codex",
     "claude-code",
-    "mcp"
+    "mcp",
+    "skills"
   ],
   "dsh": {
     "client": {

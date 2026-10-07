@@ -42,6 +42,22 @@ export const AGENT_IMPORT_CLASS = {
   tabs: 'dsh-agent-import-tabs',
   panel: 'dsh-agent-import-panel',
   itemNotes: 'dsh-agent-import-item-notes',
+  skillSearch: 'dsh-agent-import-skill-search',
+  skillRows: 'dsh-agent-import-skill-rows',
+  skillRow: 'dsh-agent-import-skill-row',
+  skillHead: 'dsh-agent-import-skill-head',
+  skillName: 'dsh-agent-import-skill-name',
+  skillDescription: 'dsh-agent-import-skill-description',
+  skillMeta: 'dsh-agent-import-skill-meta',
+  skillConflict: 'dsh-agent-import-skill-conflict',
+  skillChoice: 'dsh-agent-import-skill-choice',
+  skillRowActions: 'dsh-agent-import-skill-row-actions',
+  skillFeedback: 'dsh-agent-import-skill-feedback',
+  skillFeedbackLine: 'dsh-agent-import-skill-feedback-line',
+  skillDetail: 'dsh-agent-import-skill-detail',
+  skillDetailBar: 'dsh-agent-import-skill-detail-bar',
+  skillBody: 'dsh-agent-import-skill-body',
+  skillCode: 'dsh-agent-import-skill-code',
 } as const
 
 /** Id of the one style element the card installs, keyed so a reload replaces it. */
@@ -233,6 +249,122 @@ const AGENT_IMPORT_CSS = `
   font-size: 12px;
   line-height: 1.6;
   color: var(--dsw-alias-label-tertiary);
+}
+.${AGENT_IMPORT_CLASS.skillSearch} {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.${AGENT_IMPORT_CLASS.skillRows} {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.${AGENT_IMPORT_CLASS.skillRow} {
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.${AGENT_IMPORT_CLASS.skillRow}:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.${AGENT_IMPORT_CLASS.skillHead} {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.${AGENT_IMPORT_CLASS.skillName} {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+}
+.${AGENT_IMPORT_CLASS.skillRowActions} {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.${AGENT_IMPORT_CLASS.skillDescription} {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+.${AGENT_IMPORT_CLASS.skillMeta} {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary);
+}
+.${AGENT_IMPORT_CLASS.skillConflict} {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+.${AGENT_IMPORT_CLASS.skillChoice} {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.${AGENT_IMPORT_CLASS.skillFeedback} {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+.${AGENT_IMPORT_CLASS.skillFeedbackLine} {
+  min-width: 0;
+}
+.${AGENT_IMPORT_CLASS.skillDetail} {
+  min-width: 0;
+  margin-top: 10px;
+}
+.${AGENT_IMPORT_CLASS.skillDetailBar} {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.${AGENT_IMPORT_CLASS.skillBody} {
+  max-height: 360px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  font-family: var(--dsw-font-markdown-code-font-family, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dsw-alias-label-primary);
+}
+.${AGENT_IMPORT_CLASS.skillCode} {
+  font-family: var(--dsw-font-markdown-code-font-family, Consolas, monospace);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
 }
 `
 

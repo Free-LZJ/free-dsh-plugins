@@ -1,9 +1,9 @@
 /**
- * The import report the host half publishes, and the read that fetches it.
+ * The import report the host half answers with, and the read that fetches it.
  *
  * A dynamically loaded card receives only the configuration the Host serves, so
- * what the current import generation actually mounted and published arrives
- * over the same origin that served this bundle.
+ * what the current import generation actually mounted, and what dsh's own
+ * directory now holds, arrives over the same origin that served this bundle.
  *
  * The wire shape is defined once, by the Host half: the two halves are one
  * package, so `../report.ts` is the same contract the route serializes. It is

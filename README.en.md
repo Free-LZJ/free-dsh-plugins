@@ -2,7 +2,7 @@
 
 # free-dsh-plugins
 
-**Brings the MCP servers and skills Codex or Claude Code already declares into [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh).**
+**Brings the MCP servers Codex or Claude Code already declares into [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh), and manages every agent tool's skills by linking them into dsh's own skills directory.**
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
@@ -15,7 +15,7 @@
 
 ---
 
-> When one machine runs both dsh and Codex or Claude Code, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations, mounts them through dsh's own `mcp-client` and skill catalog, and adds a page to dsh's Settings page that shows what the import actually mounted and which parts of it to read.
+> When one machine runs dsh alongside other agent tools, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations: servers are mounted through dsh's own `mcp-client`, and skills are **linked** (a junction on Windows, so no Administrator is needed) into dsh's own skills directory — nothing is copied, so an edit on either side is the edit the other sees, and removing an import removes only the link. The Settings page it adds shows what the import actually mounted, imports or removes one skill at a time, and edits which parts are read.
 
 ## What is in here
 
@@ -30,10 +30,10 @@ One package, one Loader row: the two halves merged in `0.3.0`; they used to be t
 | Capability | Detail |
 |---|---|
 | **MCP servers** | `[mcp_servers.*]` (Codex `config.toml`) and `mcpServers` (Claude Code `~/.claude.json`, project `.mcp.json`) mount through dsh's `mcp-client` as `mcp__<server>__<tool>` tools |
-| **Skills** | Both tools' `skills/` directories join the skill catalog as one provider, where a same-named dsh skill wins |
+| **Skills** | The skill directories of 22 known sources — every agent tool this package knows, plus the project-level roots — are merged by the frontmatter `name`, one winner per name is chosen by rank, and the winner is **linked** into `~/.dsh/skills`; one file reachable through several tools (`realpath` alike, for example through CC Switch) is imported once, and a real skill dsh already has is never replaced or removed. **A removal is remembered** (in `~/.dsh/agent-import/state.json`, names only), so a restart does not put it back until you import it again |
 | **One bad entry costs nothing** | A declaration the plugin cannot translate becomes one `agent-import: …` warning and is skipped; the rest still imports |
 | **Live configuration** | The plugin's own configuration is live: saving on the Settings page re-imports immediately, with no restart |
-| **One page that states the result** | The page has two tabs, **Loaded** and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills it published (source, instruction file) with a **Refresh** button, while Configuration holds every setting |
+| **One page that states the result** | The page has three tabs, **Loaded**, **Skills**, and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills now in dsh's own directory, Skills searches the catalog, browses it by state and source, shows a skill's instruction body, imports or removes one skill, and surfaces same-name conflicts, while Configuration holds every setting |
 | **Minimal exposure** | The report carries names and locations only: a server's arguments, environment, and headers never appear in it |
 
 ## Install
@@ -118,25 +118,29 @@ The Settings page covers every field; the equivalent row configuration is:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `sources` | `['codex', 'claude-code']` | Tools to read, in precedence order |
+| `sources` | `['codex', 'claude-code']` | Tools whose MCP servers are read, in precedence order |
+| `skillSources` | `['codex', 'claude-code']` | Sources whose skills are **imported automatically** (22 values, see the [package README](packages/agent-import/README.md#configuration)); every skill directory is always read and listed, and a source you left out can be imported one skill at a time |
+| `skillAutoImport` | `true` | Import the enabled sources' skills as links on activation |
 | `codex.home` | `$CODEX_HOME`, else `~/.codex` | Codex home holding `config.toml` and `skills/` |
 | `codex.configPath` | `<home>/config.toml` | Codex configuration file to read |
-| `codex.includeSystemSkills` | `false` | Also publish Codex's own `skills/.system` bundles |
+| `codex.includeSystemSkills` | `false` | Also import Codex's own `skills/.system` bundles |
 | `claudeCode.configDir` | `$CLAUDE_CONFIG_DIR`, else `~/.claude` | Claude Code directory holding `skills/` |
 | `claudeCode.configPath` | `~/.claude.json` | Claude Code user configuration holding user-scope servers and workspace overrides |
-| `projectRoot` | empty, meaning the process working directory | Workspace whose project-local servers and Claude skill directory are read |
+| `projectRoot` | empty, meaning the process working directory | Workspace whose project-local servers and skill directories are read |
 | `mcp` | `true` | Mount the imported MCP servers |
-| `skills` | `true` | Publish the imported skills |
+| `skills` | `true` | Import and manage skills at all |
 | `serverDenyList` | `[]` | Foreign server names to leave unmounted, matched against the declaring tool's own name |
 | `maxServers` | `64` | Maximum imported servers to mount |
-| `maxSkills` | `200` | Maximum imported skills to publish |
+| `maxSkills` | `200` | Maximum skills one catalog read considers |
 | `failOnStartupError` | `false` | Reject plugin activation when one imported server fails to start |
 
 ## Where the Loaded section comes from
 
 The Host plugin publishes the current import on `GET /agent-import/report`, and its Loaded section reads it with a same-origin `fetch`. That route sits beside dsh's own pages but outside the API gateway's session check, so it answers **same-origin** requests only (`Sec-Fetch-Site` other than `same-origin`/`none`, or an `Origin` naming another host, is refused with 403; anything but GET/HEAD with 405), and it carries names and locations only: a server's arguments, environment, and headers never appear.
 
-The skill list is enumerated **per request**, not captured at activation, so adding or removing a skill in Codex or Claude Code shows up on the next **Refresh**; the server rows describe the current import generation.
+The skill list is read from disk **per request**, so it describes what dsh's own skills directory currently holds — the links this plugin made and any skill placed there by hand, which is exactly what dsh loads — and adding or removing a skill elsewhere shows up on the next **Refresh**; the server rows describe the current import generation.
+
+The Skills tab reads and writes through three more routes: `GET /agent-import/skills` (the whole catalog), `GET /agent-import/skills/content?name=&source=` (one skill's instruction body), and `POST /agent-import/skills/import` / `POST /agent-import/skills/remove`. Besides being same-origin, a write must carry `x-dsh-agent-import: 1` and `content-type: application/json`: a cross-site form cannot set a custom header, so no page you happen to have open in a browser can import or remove a skill through your session.
 
 ## Development
 
@@ -170,7 +174,9 @@ npm publish      # prepublishOnly builds first; publishConfig carries access: pu
 - The Loaded section reads dsh Web's own HTTP route, so it needs a composition with `ctx.webServer`. dsh Web and the Electron Desktop both have one (the Desktop page is served by the Host's own `ctx.webServer` on a local port); in a composition without `ctx.webServer` the section reports itself unavailable while the rest of the configuration still works.
 - dsh runs a compatibility preflight at startup: a plugin whose peer range excludes the running runtime has its row **disabled outright** (stderr prints `dsh: disabling profile plugin row …`), and **the Settings page then never appears at all**, which reads as "the install did nothing". Grant the exact-version exemption to admit it: `dsh plugin --profile <profile> allow-version <package@version> --dsh-version <runtime version> --accept-risk`. This package's peer range covers the 0.1.x and 0.2.x runtimes; anything later needs a wider range or a grant.
 - The Loaded section answers "did it mount": a server that mounted but cannot connect is logged by dsh's own `mcp-client` (which keeps reconnecting while `failOnStartupError` is `false`), and its row still reads **Mounted**.
-- Foreign files are read at activation only (this plugin's own configuration excepted): editing a Codex or Claude Code declaration takes effect after a reload or restart.
+- Foreign **MCP declarations** are read at activation only (this plugin's own configuration excepted): editing a Codex or Claude Code server declaration takes effect after a reload or restart. **Skill directories are read per request**, so skills added or removed elsewhere appear on the next Refresh.
+- **File-shaped skills on Windows** (a `<root>/<name>.md` file rather than a directory) need Developer Mode for a symbolic link. This plugin does **not** fall back to copying or to a hard link (a hard link cannot be recognised as a link, which would make removal ineffective and the skill look local): it reports `unsupported` and skips the entry, with the reason shown on the page. A directory-shaped skill is linked as a junction on Windows, which works without any special permission.
+- Alongside `@michengai/dsh-skills-manager` the two are unaware of each other: that plugin skips symbolic links under `~/.dsh/skills`, so it neither sees nor manages the skills this plugin imports. Manage the same skills with one of them.
 - Neither tool's plugin marketplaces are expanded (for example Codex `plugin.json`); only server declarations and skill directories are imported.
 - The real-composition end-to-end test (boot a shipped profile, assert the imported tools and skills are model-visible) runs in the dsh monorepo, because it depends on that repository's own profile-boot fixture. This repository's CI runs typecheck, build, and the unit/component suites.
 

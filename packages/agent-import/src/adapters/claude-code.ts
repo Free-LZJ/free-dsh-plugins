@@ -1,5 +1,5 @@
 /**
- * Claude Code adapter: the MCP servers and skill directories of a Claude Code home.
+ * Claude Code adapter: the MCP servers of a Claude Code home and its workspaces.
  *
  * Claude Code keeps its user-scope servers in the `mcpServers` object of
  * `~/.claude.json` (plus a `projects.<path>.mcpServers` override per workspace)
@@ -11,11 +11,11 @@
  */
 
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
-import type { AdapterContext, ForeignAgentAdapter } from '../adapter.ts'
-import type { ForeignMcpServer, ForeignServerRead, ForeignSkillRoot } from '../types.ts'
+import type { ForeignAgentAdapter } from '../adapter.ts'
+import type { ForeignMcpServer, ForeignServerRead } from '../types.ts'
 import { nonEmptyString, stringList } from '../values.ts'
 
 /** Claude Code transports that map onto a dsh transport. */
@@ -44,8 +44,6 @@ export const ClaudeCodeOptionsSchema: Schema<ClaudeCodeOptions> = z.object({
  * @returns the adapter the plugin composes when `sources` names `claude-code`.
  */
 export function claudeCodeAdapter(options: ClaudeCodeOptions): ForeignAgentAdapter {
-  const configDir = (context: AdapterContext): string =>
-    resolve(options.configDir ?? context.env['CLAUDE_CONFIG_DIR'] ?? join(homedir(), '.claude'))
   return {
     source: 'claude-code',
     readServers: async (context) => {
@@ -59,7 +57,6 @@ export function claudeCodeAdapter(options: ClaudeCodeOptions): ForeignAgentAdapt
       reads.push(readClaudeServers(user, userPath))
       return reads
     },
-    skillRoots: context => claudeSkillRoots(configDir(context), context.projectRoot),
   }
 }
 
@@ -93,20 +90,6 @@ export function readClaudeProjectServers(text: string, origin: string, projectRo
     return readServerEntries(entry.mcpServers, origin)
   }
   return { servers: [], notes: [] }
-}
-
-/**
- * Derive the skill directories Claude Code serves for one home and workspace.
- * @param configDir - resolved Claude Code configuration directory.
- * @param projectRoot - workspace directory, or `undefined` to read only the user directory.
- * @returns the Claude Code skill roots in precedence order.
- */
-export function claudeSkillRoots(configDir: string, projectRoot: string | undefined): ForeignSkillRoot[] {
-  const roots: ForeignSkillRoot[] = [{ path: join(configDir, 'skills'), source: 'claude-code', skipDotEntries: true }]
-  if (projectRoot !== undefined) {
-    roots.push({ path: join(projectRoot, '.claude', 'skills'), source: 'claude-code', skipDotEntries: true })
-  }
-  return roots
 }
 
 /** Read one `mcpServers` object into normalized servers. */

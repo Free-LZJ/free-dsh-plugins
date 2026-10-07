@@ -13,6 +13,7 @@
  */
 
 import { settingsTextField, type SettingsFieldSpec } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { SkillSourceId } from '../skill-roots.ts'
 
 /** The foreign agent tools this plugin reads. */
 export type ForeignSource = 'codex' | 'claude-code'
@@ -20,10 +21,60 @@ export type ForeignSource = 'codex' | 'claude-code'
 /** Every tool `sources` accepts, in precedence order. */
 export const FOREIGN_SOURCES: readonly ForeignSource[] = ['codex', 'claude-code']
 
+/** One tool `skillSources` can name, and its English name. */
+export interface SkillSourceOption {
+  /** Identifier `src/skill-roots.ts` addresses the source by. */
+  readonly id: SkillSourceId
+  /** English name, which the page localizes by id and falls back to. */
+  readonly label: string
+}
+
+/**
+ * Every tool `skillSources` accepts, in the precedence order `src/skill-roots.ts`
+ * declares.
+ *
+ * The ids are spelled here rather than read from the Host half's `SKILL_SOURCES`:
+ * that module imports `node:os` and `node:path`, so a *value* import would drag
+ * Node code into this browser bundle. `src/skill-roots.ts` stays the source of
+ * truth for the ids, their labels, and their ranks; the `SkillSourceId` type
+ * above keeps this list honest against it.
+ *
+ * `dsh` leads the list because its rank is the lowest, but its own skill root is
+ * always read whether or not the row names it: it is the only write target.
+ */
+export const SKILL_IMPORT_SOURCES: readonly SkillSourceOption[] = [
+  { id: 'dsh', label: 'dsh' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'project', label: 'Project skills' },
+  { id: 'cc-switch', label: 'CC Switch' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'opencode', label: 'OpenCode' },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'copilot', label: 'Copilot' },
+  { id: 'windsurf', label: 'Windsurf' },
+  { id: 'windsurf-legacy', label: 'Windsurf (legacy)' },
+  { id: 'trae', label: 'Trae' },
+  { id: 'trae-cn', label: 'Trae CN' },
+  { id: 'openclaw', label: 'OpenClaw' },
+  { id: 'clawdbot', label: 'Clawdbot' },
+  { id: 'roo', label: 'Roo' },
+  { id: 'codebuddy', label: 'CodeBuddy' },
+  { id: 'workbuddy', label: 'WorkBuddy' },
+  { id: 'qoder', label: 'Qoder' },
+  { id: 'qoder-cn', label: 'Qoder CN' },
+  { id: 'lingma', label: 'Lingma' },
+]
+
 /** The row's settings section as the Host resolves it. */
 export interface AgentImportSettings {
   /** Which foreign tools to read. */
   sources?: readonly ForeignSource[]
+  /** Which tools' skills are linked on activation; every source is still scanned. */
+  skillSources?: readonly SkillSourceId[]
+  /** Whether source skills are linked into dsh without being asked for one by one. */
+  skillAutoImport?: boolean
   /** Codex discovery overrides. */
   codex?: {
     /** Codex home directory; the Codex default when absent. */
@@ -71,10 +122,15 @@ type AgentImportCountFieldId = 'maxServers' | 'maxSkills'
 export type AgentImportInputFieldId = AgentImportTextFieldId | AgentImportCountFieldId
 
 /** Fields edited through a switch. */
-export type AgentImportToggleFieldId = 'mcp' | 'skills' | 'codex.includeSystemSkills' | 'failOnStartupError'
+export type AgentImportToggleFieldId =
+  | 'mcp'
+  | 'skills'
+  | 'skillAutoImport'
+  | 'codex.includeSystemSkills'
+  | 'failOnStartupError'
 
-/** The multi-choice field naming the tools to read. */
-export type AgentImportChoiceFieldId = 'sources'
+/** The multi-choice fields naming tools: the MCP sources, and the auto-import sources. */
+export type AgentImportChoiceFieldId = 'sources' | 'skillSources'
 
 /** The list field naming the imported servers to leave unmounted. */
 export type AgentImportListFieldId = 'serverDenyList'
@@ -183,6 +239,7 @@ function field(field: AgentImportFieldId, kind: AgentImportFieldKind): AgentImpo
  */
 export const AGENT_IMPORT_FIELDS: Readonly<Record<AgentImportFieldId, AgentImportField>> = {
   sources: field('sources', 'sources'),
+  skillSources: field('skillSources', 'sources'),
   projectRoot: field('projectRoot', 'text'),
   'codex.home': field('codex.home', 'text'),
   'codex.configPath': field('codex.configPath', 'text'),
@@ -192,6 +249,7 @@ export const AGENT_IMPORT_FIELDS: Readonly<Record<AgentImportFieldId, AgentImpor
   maxSkills: field('maxSkills', 'count'),
   mcp: field('mcp', 'switch'),
   skills: field('skills', 'switch'),
+  skillAutoImport: field('skillAutoImport', 'switch'),
   'codex.includeSystemSkills': field('codex.includeSystemSkills', 'switch'),
   failOnStartupError: field('failOnStartupError', 'switch'),
   serverDenyList: field('serverDenyList', 'list'),
@@ -209,10 +267,10 @@ function names(text: string, separator: string): string[] {
 
 /**
  * The draft a source selection stages.
- * @param values - the tools to read.
+ * @param values - the tools to name, for MCP servers or for automatic import.
  * @returns the draft text.
  */
-export function sourceDraft(values: readonly ForeignSource[]): string {
+export function sourceDraft(values: readonly string[]): string {
   return values.join(SOURCE_SEPARATOR)
 }
 

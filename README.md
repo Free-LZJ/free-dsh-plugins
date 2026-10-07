@@ -2,7 +2,7 @@
 
 # free-dsh-plugins
 
-**把 Codex / Claude Code 已经声明好的 MCP 服务器与技能，接进 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）。**
+**把 Codex / Claude Code 已经声明好的 MCP 服务器接进 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh），并把各 Agent 工具的技能以符号链接导入 dsh 自己的技能目录统一管理。**
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
@@ -15,7 +15,7 @@
 
 ---
 
-> 同一台机器上同时用 dsh 和 Codex / Claude Code 时，MCP 服务器与技能只需要声明一次。这个插件在激活时读另一侧的声明，把它们挂到 dsh 自己的 `mcp-client` 与技能目录上，并在 dsh 的设置页提供一页，用来查看这次导入实际挂载了什么、以及调整导入范围。
+> 同一台机器上同时用 dsh 和别的 Agent 工具时，MCP 服务器与技能只需要声明一次。插件在激活时读另一侧的声明：服务器挂到 dsh 的 `mcp-client` 上，技能则以**符号链接**（Windows 用 junction，免管理员权限）进入 dsh 自己的技能目录——不复制文件，所以改一处两边同步，移除导入也只删链接、源文件不动。设置页提供一页，用来看这次导入实际挂载了什么、逐项导入或移除技能、以及调整导入范围。
 
 ## 仓库里有什么
 
@@ -30,10 +30,10 @@
 | 能力 | 说明 |
 |---|---|
 | **MCP 服务器** | `[mcp_servers.*]`（Codex `config.toml`）、`mcpServers`（Claude Code `~/.claude.json`、项目 `.mcp.json`）经 dsh 的 `mcp-client` 变成 `mcp__<server>__<tool>` 工具 |
-| **技能** | 两侧的 `skills/` 目录作为一个技能 provider 进入 dsh 技能目录，同名时 dsh 自己的技能优先 |
+| **技能** | 各 Agent 的技能目录（共 22 个来源：21 个工具 + 项目级根）按 frontmatter 的 `name` 归并，同名时按 rank 自动选一个，以**符号链接**导入 `~/.dsh/skills`；同一份文件（`realpath` 相同，例如经 CC Switch 中转的多个工具）只导入一次，dsh 自己放的真实技能永不被覆盖或删除；**移除会被记住**（记在 `~/.dsh/agent-import/state.json` 里，只存名字），重启后不会被自动补回，直到你再次导入它 |
 | **不拖垮整场导入** | 读不懂的声明只记一条 `agent-import: …` 警告并跳过，其余照常导入 |
 | **热生效** | 插件自己的配置是热生效的：设置页保存后立即重新导入，不需要重启 |
-| **一页说清结果** | 设置页分「**已加载**」与「**配置**」两个 tab：「已加载」用表格列出本次导入实际挂载的 MCP 服务器（状态、命令或 URL、跳过原因）与已发布的技能（来源、指令文件路径），带一个「刷新」按钮；「配置」放全部设置字段 |
+| **一页说清结果** | 设置页分「**已加载**」「**技能**」「**配置**」三个 tab：「已加载」用表格列出本次导入实际挂载的 MCP 服务器（状态、命令或 URL、跳过原因）与已导入的技能；「技能」可搜索、按状态与来源浏览、查看技能正文、逐项导入或移除，并显式提示同名冲突；「配置」放全部设置字段 |
 | **最小暴露** | 报告里只有名字与位置：服务器的参数、环境变量与请求头不进响应 |
 
 ## 安装
@@ -118,25 +118,29 @@ dsh plugin --profile web add @free-lzj/dsh-agent-import
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
-| `sources` | `['codex', 'claude-code']` | 要读取的工具，按优先级排列 |
+| `sources` | `['codex', 'claude-code']` | 要读取 MCP 服务器的工具，按优先级排列 |
+| `skillSources` | `['codex', 'claude-code']` | **自动导入**的来源（22 个可选值见[包 README](packages/agent-import/README.md#配置)）；技能目录始终全部读取并列出，没勾选的来源可以逐个手动导入 |
+| `skillAutoImport` | `true` | 激活时是否把来源技能自动建为链接 |
 | `codex.home` | `$CODEX_HOME`，否则 `~/.codex` | 存放 Codex `config.toml` 与 `skills/` 的目录 |
 | `codex.configPath` | `<home>/config.toml` | 要读的 Codex 配置文件 |
-| `codex.includeSystemSkills` | `false` | 连 Codex 自带的 `skills/.system` 一起发布 |
+| `codex.includeSystemSkills` | `false` | 连 Codex 自带的 `skills/.system` 一起导入 |
 | `claudeCode.configDir` | `$CLAUDE_CONFIG_DIR`，否则 `~/.claude` | 存放 Claude Code 技能的目录 |
 | `claudeCode.configPath` | `~/.claude.json` | 存放用户级服务器与工作区覆盖的 Claude Code 配置 |
-| `projectRoot` | 空，取进程工作目录 | 读取项目级服务器与 Claude 技能目录的工作区 |
+| `projectRoot` | 空，取进程工作目录 | 读取项目级服务器与技能目录的工作区 |
 | `mcp` | `true` | 是否挂载导入的 MCP 服务器 |
-| `skills` | `true` | 是否发布导入的技能 |
+| `skills` | `true` | 是否导入并管理技能 |
 | `serverDenyList` | `[]` | 不挂载的服务器名，按声明工具里的原名匹配 |
 | `maxServers` | `64` | 最多挂载多少个导入的服务器 |
-| `maxSkills` | `200` | 最多发布多少个导入的技能 |
+| `maxSkills` | `200` | 一次最多读取多少个技能 |
 | `failOnStartupError` | `false` | 某个导入的服务器启动失败时是否拒绝激活本插件 |
 
 ## 「已加载」怎么来的
 
 Host 插件在 `GET /agent-import/report` 上公布当前那次导入的结果，设置页的「已加载」一节用同源 `fetch` 读它。这条路由和 dsh 自己的页面同源，但不在 API 网关的会话校验之内，所以它只回答**同源**请求（`Sec-Fetch-Site` 既不是 `same-origin`/`none`、或 `Origin` 与 `Host` 不一致，直接 403；非 GET/HEAD 405），并且只带名字与位置：服务器的参数、环境变量与请求头不出现在响应里。
 
-技能列表是**按请求实时枚举**的（不是激活那一刻的快照），所以在 Codex / Claude Code 那边增删技能后，点一次「刷新」即可看到；服务器的挂载结果来自当前这次导入生成。
+技能这一侧是**按请求现读磁盘**的：`skills` 说的是 dsh 自己技能目录里当前有什么（导入的链接与手工放的真实技能）——那才是 dsh 真正加载的东西；在外部增删技能后点一次「刷新」即可看到。服务器的挂载结果来自当前这次导入生成。
+
+「技能」一节的读写走另外三条路由：`GET /agent-import/skills`（整份目录）、`GET /agent-import/skills/content?name=&source=`（一条技能的正文）、`POST /agent-import/skills/import` 与 `POST /agent-import/skills/remove`。写路由除了同源之外还要求 `x-dsh-agent-import: 1` 与 `content-type: application/json`：跨站表单发不出这个自定义头，所以你在浏览器里打开的任意页面都无法借你的手导入或移除技能。
 
 ## 开发
 
@@ -171,6 +175,8 @@ npm publish      # prepublishOnly 会先 build；--access public 写在 publishC
 - dsh 启动时会做兼容性预检：peer 范围不含当前运行时的插件会被整行禁用（stderr 里打印 `dsh: disabling profile plugin row …`），**此时设置页完全不出现**，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。本包的 peer 范围覆盖 0.1.x 与 0.2.x 运行时，再往后的运行时需要放宽范围或授权。
 - 「已加载」一节只回答「挂载了吗」：服务器挂载成功但自身连不上时，连接错误由 dsh 的 `mcp-client` 自己记日志（`failOnStartupError: false` 时它会持续重连），这一行仍显示「已挂载」。
 - 外部配置文件只在激活时读取一次（本插件自身配置除外）：Codex / Claude Code 那边改了声明，需要重载或重启 dsh。
+- **Windows 上的文件型技能**（`<root>/<name>.md` 而不是一个目录）建符号链接需要开发者模式；本插件不会退化成复制或硬链接（硬链接无法被识别为链接），而是跳过并报 `unsupported`。目录型技能在 Windows 上用 junction，任何权限下都能导入。
+- 与 `@michengai/dsh-skills-manager` 并存时两者互不感知：那个插件会跳过 `~/.dsh/skills` 下的符号链接，因此看不到也不管理本插件导入的技能；同一批技能建议只用其一管理。
 - 两边工具的插件市场（如 Codex `plugin.json`）不会展开，只导入服务器声明和技能目录。
 - 真实组合的端到端测试（真装 dsh 启动一次、断言工具与技能可见）留在 dsh 主仓库里跑 —— 它依赖主仓库自带的 profile 启动夹具；本仓库的 CI 跑类型检查、构建与单元/组件测试。
 

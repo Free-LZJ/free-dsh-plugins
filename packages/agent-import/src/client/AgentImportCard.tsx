@@ -1,6 +1,6 @@
 /**
- * The agent-import settings page: which foreign tools the plugin reads, where
- * each one keeps its files, and how the import is bounded.
+ * The agent-import settings page: what the current import mounted, every skill
+ * the known tools offer, and which foreign tools the plugin reads.
  *
  * The form is grouped into titled sections, so the paths one tool needs are
  * not interleaved with the bounds that apply to both.
@@ -18,9 +18,10 @@ import {
 } from './agent-import-fields.ts'
 import { AGENT_IMPORT_CLASS } from './agent-import-card-style.ts'
 import type { AgentImportReport } from './agent-import-report.ts'
-import { formLabels, type AgentImportLocaleKey } from './locales.ts'
+import { SkillsTab } from './AgentImportSkills.tsx'
+import { formLabels, skillSourceLabel, type AgentImportLocaleKey } from './locales.ts'
 import type {
-  AgentImportCardFace, AgentImportPageState, AgentImportReportState, AgentImportSourceState, AgentImportToggleState,
+  AgentImportCardFace, AgentImportChoiceState, AgentImportPageState, AgentImportReportState, AgentImportToggleState,
 } from './agent-import-card-controller.ts'
 
 /** Props the renderer binds for the agent-import settings page. */
@@ -58,6 +59,7 @@ const COUNT_FIELDS: readonly ControlField<AgentImportInputFieldId>[] = [
 const SWITCH_FIELDS: readonly ControlField<AgentImportToggleFieldId>[] = [
   { field: 'mcp', labelKey: 'mcp', hintKey: 'mcpHint' },
   { field: 'skills', labelKey: 'skills', hintKey: 'skillsHint' },
+  { field: 'skillAutoImport', labelKey: 'skillAutoImport', hintKey: 'skillAutoImportHint' },
   { field: 'codex.includeSystemSkills', labelKey: 'codexIncludeSystemSkills', hintKey: 'codexIncludeSystemSkillsHint' },
   { field: 'failOnStartupError', labelKey: 'failOnStartupError', hintKey: 'failOnStartupErrorHint' },
 ]
@@ -72,22 +74,39 @@ export function AgentImportCard(props: AgentImportCardProps) {
   const { t } = props
   const state = props.useAgentImportCard(snapshot => snapshot)
   const report = props.useAgentImportReport(snapshot => snapshot)
+  const skills = props.useAgentImportSkills(snapshot => snapshot)
+  const skillAction = props.useAgentImportSkillAction(snapshot => snapshot)
+  const skillContent = props.useAgentImportSkillContent(snapshot => snapshot)
   const view = useId()
   const [tab, setTab] = useState<AgentImportTab>('loaded')
   const disabled = !state.writable || state.saving
   const overriddenLabel = t('overridden')
   const resetLabel = t('reset')
+  /** The sources the row links on activation, which the catalog is not limited to. */
+  const autoImportSources = state.skillSources.choices
+    .filter(choice => choice.checked)
+    .map(choice => choice.value)
+  /**
+   * The Skills tab reads its catalog on first open rather than on load: building
+   * it scans every agent's skill directories, which is too much work to do for a
+   * page the user may only have opened to change a path.
+   */
+  const selectTab = (next: AgentImportTab) => {
+    if (next === 'skills' && skills.phase === 'idle') props.refreshSkills()
+    setTab(next)
+  }
   return (
     <div className={AGENT_IMPORT_CLASS.page}>
       <SettingsForm labels={formLabels(t)} state={state} onSave={props.save} onDiscard={props.discard}>
         <SegmentedControl
           id={`${view}-view`}
           value={tab}
-          onChange={setTab}
+          onChange={selectTab}
           label={t('viewLabel')}
           className={AGENT_IMPORT_CLASS.tabs}
           options={[
             { value: 'loaded', label: t('loadedTitle') },
+            { value: 'skills', label: t('skillsTitle') },
             { value: 'config', label: t('configTitle') },
           ]}
         />
@@ -104,7 +123,22 @@ export function AgentImportCard(props: AgentImportCardProps) {
                 <LoadedItems t={t} report={report} onRefresh={props.refreshReport} />
               </>
             )
-            : <ConfigSections {...props} state={state} disabled={disabled} overriddenLabel={overriddenLabel} resetLabel={resetLabel} />}
+            : tab === 'skills'
+              ? (
+                <SkillsTab
+                  t={t}
+                  skills={skills}
+                  action={skillAction}
+                  content={skillContent}
+                  autoImportSources={autoImportSources}
+                  refreshSkills={props.refreshSkills}
+                  importSkill={props.importSkill}
+                  removeSkill={props.removeSkill}
+                  openSkill={props.openSkill}
+                  closeSkill={props.closeSkill}
+                />
+              )
+              : <ConfigSections {...props} state={state} disabled={disabled} overriddenLabel={overriddenLabel} resetLabel={resetLabel} />}
         </div>
       </SettingsForm>
     </div>
@@ -112,7 +146,7 @@ export function AgentImportCard(props: AgentImportCardProps) {
 }
 
 /** The tabs the card switches between. */
-type AgentImportTab = 'loaded' | 'config'
+type AgentImportTab = 'loaded' | 'skills' | 'config'
 
 /** The configuration tab: every field the Host serves, grouped by what it controls. */
 function ConfigSections(
@@ -127,7 +161,8 @@ function ConfigSections(
   return (
     <>
       <Section id="sources" title={t('sources')} hint={t('sourcesHint')}>
-        <div className={AGENT_IMPORT_CLASS.choices}>
+        {/* Two groups of checkboxes name the same tools, so each one carries its own name. */}
+        <div className={AGENT_IMPORT_CLASS.choices} role="group" aria-label={t('sources')}>
           {state.sources.choices.map(choice => (
             <Checkbox
               key={choice.value}
@@ -145,6 +180,29 @@ function ConfigSections(
               resetLabel={resetLabel}
               disabled={disabled}
               onReset={() => { props.clear('sources') }}
+            />
+          )
+          : null}
+        <h4 className={AGENT_IMPORT_CLASS.subheading}>{t('skillSources')}</h4>
+        <p className={AGENT_IMPORT_CLASS.hint}>{t('skillSourcesHint')}</p>
+        <div className={AGENT_IMPORT_CLASS.choices} role="group" aria-label={t('skillSources')}>
+          {state.skillSources.choices.map(choice => (
+            <Checkbox
+              key={choice.value}
+              checked={choice.checked}
+              disabled={disabled}
+              label={skillSourceLabel(t, choice.value, choice.value)}
+              onChange={(next) => { props.setChoices('skillSources', selectionAfter(state.skillSources.choices, choice.value, next)) }}
+            />
+          ))}
+        </div>
+        {state.skillSources.overridden
+          ? (
+            <OverrideReset
+              overriddenLabel={overriddenLabel}
+              resetLabel={resetLabel}
+              disabled={disabled}
+              onReset={() => { props.clear('skillSources') }}
             />
           )
           : null}
@@ -246,7 +304,7 @@ function ConfigSections(
   )
 }
 
-/** The loaded-items section: what the current import mounted and published, and when it was built. */
+/** The loaded-items section: what the current import mounted, and what dsh's skill directory holds. */
 function LoadedItems(props: {
   t: AgentImportCardProps['t']
   report: AgentImportReportState
@@ -464,11 +522,11 @@ function reportedSourceLabel(t: AgentImportCardProps['t'], source: string): stri
  * @param checked - the state it changed to.
  * @returns the source names to read, in precedence order.
  */
-function selectionAfter(
-  choices: readonly AgentImportSourceState[],
-  value: ForeignSource,
+function selectionAfter<Value extends string>(
+  choices: readonly AgentImportChoiceState<Value>[],
+  value: Value,
   checked: boolean,
-): readonly ForeignSource[] {
+): readonly Value[] {
   return choices
     .filter(choice => choice.value === value ? checked : choice.checked)
     .map(choice => choice.value)

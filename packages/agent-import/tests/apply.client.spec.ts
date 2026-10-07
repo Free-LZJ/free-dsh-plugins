@@ -86,7 +86,8 @@ describe('agent-import client apply', () => {
 
     const face = (entry.inject as () => Pick<AgentImportCardFace, 'hooks'>)()
     expect(Object.keys(face)).toEqual([
-      'edit', 'clear', 'setToggle', 'setChoices', 'setList', 'save', 'discard', 'refreshReport', 'hooks',
+      'edit', 'clear', 'setToggle', 'setChoices', 'setList', 'save', 'discard', 'refreshReport',
+      'refreshSkills', 'importSkill', 'removeSkill', 'openSkill', 'closeSkill', 'hooks',
     ])
     // The page reads the served section through the Host's own form, nested
     // option objects included, and publishes it as the state the card renders.

@@ -3,6 +3,16 @@
 # declaration — the browser half that adds its page to the Settings sections. The
 # id must stay `agent-import`: the settings namespace the plugin serves, and
 # therefore the page that follows it, is keyed by the row's own entry id.
+#
+# Every option below is optional, and these are the defaults. `sources` selects
+# the tools whose MCP servers are mounted; `skillSources` selects the directories
+# whose skills are imported as links into `~/.dsh/skills` (dsh's own roots are
+# always read); `skillAutoImport` imports from those sources on activation, and
+# the Skills page can still import or remove one skill at a time.
 - insert:
     - id: agent-import
       name: '@free-lzj/dsh-agent-import'
+      # config:
+      #   sources: [codex, claude-code]
+      #   skillSources: [codex, claude-code]
+      #   skillAutoImport: true

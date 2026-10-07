@@ -1,11 +1,12 @@
 /**
- * Reader for the `SKILL.md` files Codex and Claude Code serve.
+ * Reader for the `SKILL.md` files every agent tool serves.
  *
- * Both tools use the same instruction-file layout dsh does: a `---` YAML
+ * These tools share the instruction-file layout dsh uses: a `---` YAML
  * frontmatter block with `name` and `description`, followed by the instruction
  * body. This reader applies dsh's skill-name grammar so an imported skill can
  * address the model catalog, and reports why a file is unusable instead of
- * dropping it silently; the provider turns those reasons into log warnings.
+ * dropping it silently; the scanner turns those reasons into notes, and the
+ * detail route reads a skill's body through it.
  *
  * @module @deepseek-ai/dsh-agent-import/skill-file
  */

@@ -11,10 +11,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import SkillRegistry from '@deepseek-ai/dsh-skill'
 import * as AgentImport from '../src/index.ts'
 import { createReportHandler, NO_REPORT, REPORT_PATH } from '../src/report.ts'
 import type { AgentImportReport } from '../src/report.ts'
+import { SKILLS_PATH, SKILL_CONTENT_PATH, SKILL_IMPORT_PATH, SKILL_REMOVE_PATH } from '../src/skill-routes.ts'
 
 // The mount path hands declarations to another plugin, so this file records the
 // configurations it receives instead of starting real servers. The real module's
@@ -37,15 +37,37 @@ vi.mock('@deepseek-ai/dsh-mcp-client', () => {
 
 /** Every temp dir created by this file, removed after each test. */
 const tempDirs: string[] = []
+
+/** Values the environment held before this file redirected anything. */
+const savedEnv = new Map<string, string | undefined>()
+
 afterEach(async () => {
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  savedEnv.clear()
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true })
 })
+
+/** Create one temp directory, removed after the test. */
+async function tempDir(): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'agent-import-report-')))
+  tempDirs.push(dir)
+  return dir
+}
+
+/** Point one environment variable at a temp directory for this test only. */
+function redirect(key: string, value: string): void {
+  if (!savedEnv.has(key)) savedEnv.set(key, process.env[key])
+  process.env[key] = value
+}
 
 /** The report one route under test answers with. */
 const REPORT: AgentImportReport = {
   importedAt: '2026-09-30T00:00:00.000Z',
   sources: ['codex'],
-  skills: [{ name: 'demo', description: 'Demo skill.', source: 'codex', path: '/home/u/.codex/skills/demo/SKILL.md' }],
+  skills: [{ name: 'demo', description: 'Demo skill.', source: 'codex', path: '/home/u/.dsh/skills/demo/SKILL.md' }],
   servers: [{ name: 'demo', serverName: 'demo', transport: 'stdio', target: 'demo-server', source: 'codex', status: 'mounted' }],
   notes: [],
 }
@@ -107,17 +129,20 @@ async function ask(route: WebRoute, headers: Record<string, string> = {}, method
 
 /** Create one Codex home holding the given `config.toml`. */
 async function codexHome(toml: string): Promise<string> {
-  const home = await realpath(await mkdtemp(join(tmpdir(), 'agent-import-report-')))
-  tempDirs.push(home)
-  await mkdir(home, { recursive: true })
+  const home = await tempDir()
   await writeFile(join(home, 'config.toml'), toml)
   return home
 }
 
-/** Create one skill directory holding an instruction file. */
-async function writeSkill(root: string, name: string): Promise<void> {
+/**
+ * Create one skill directory holding an instruction file.
+ * @param root - the skills root to create it under.
+ * @param name - skill name.
+ * @param description - description the instruction file declares.
+ */
+async function writeSkill(root: string, name: string, description = `Skill ${name}.`): Promise<void> {
   await mkdir(join(root, name), { recursive: true })
-  await writeFile(join(root, name, 'SKILL.md'), `---\nname: ${name}\ndescription: Skill ${name}.\n---\n\nBody.\n`)
+  await writeFile(join(root, name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n\nBody.\n`)
 }
 
 /**
@@ -133,20 +158,30 @@ function routesOf(ctx: Context): readonly WebRoute[] {
 }
 
 /**
- * Mount the plugin with a webserver stand-in, then read the report its route answers.
+ * Mount the plugin with a webserver stand-in and a dsh home of its own, then read
+ * the report its route answers.
  * @param input - the plugin configuration to activate with.
- * @returns the parsed report, and the routes the plugin registered.
+ * @param options - skills to place in dsh's own root before the plugin activates.
+ * @returns the parsed report, the routes the plugin registered, and dsh's skill root.
  */
-async function mounted(input: Parameters<typeof AgentImport.Config>[0]) {
+async function mounted(
+  input: Parameters<typeof AgentImport.Config>[0],
+  options: { readonly localSkills?: readonly string[] } = {},
+) {
+  // The plugin imports into `<DSH_HOME>/skills` and reads whichever Claude Code
+  // home the environment names, so both must be temp directories here.
+  const home = await tempDir()
+  redirect('DSH_HOME', home)
+  redirect('CLAUDE_CONFIG_DIR', await tempDir())
+  for (const name of options.localSkills ?? []) await writeSkill(join(home, 'skills'), name, 'Mine.')
   const ctx = new Context()
-  await ctx.plugin(SkillRegistry)
   await ctx.plugin(RecordingWebServer)
   await ctx.plugin(AgentImport, input)
   const routes = routesOf(ctx)
-  const route = routes[0]
+  const route = routes.find(candidate => candidate.path === REPORT_PATH)
   if (route === undefined) throw new Error('the plugin registered no report route')
   const answer = await ask(route, { 'sec-fetch-site': 'same-origin' })
-  return { routes, report: JSON.parse(answer.body) as AgentImportReport }
+  return { routes, report: JSON.parse(answer.body) as AgentImportReport, skills: join(home, 'skills') }
 }
 
 describe('the report route', () => {
@@ -188,19 +223,38 @@ describe('the report the plugin publishes', () => {
     const home = await codexHome('model = "gpt"\n')
     const { routes } = await mounted({ sources: ['codex'], codex: { home }, mcp: false })
 
-    expect(routes.map(route => [route.kind, route.path])).toEqual([['exact', REPORT_PATH]])
+    expect(routes.map(route => [route.kind, route.path])).toEqual([
+      ['exact', REPORT_PATH],
+      ['exact', SKILLS_PATH],
+      ['exact', SKILL_CONTENT_PATH],
+      ['exact', SKILL_IMPORT_PATH],
+      ['exact', SKILL_REMOVE_PATH],
+    ])
   })
 
-  it('lists the skills the generation publishes, with their own source and path', async () => {
+  it('lists the skills dsh’s own root holds, with the source each came from', async () => {
     const home = await codexHome('model = "gpt"\n')
     await writeSkill(join(home, 'skills'), 'demo')
-    const { report } = await mounted({ sources: ['codex'], codex: { home }, mcp: false })
+    const { report, skills } = await mounted({ sources: ['codex'], codex: { home }, mcp: false })
 
     expect(report.sources).toEqual(['codex'])
+    // The path is where dsh loads the skill from, not the directory it came from.
     expect(report.skills).toEqual([{
-      name: 'demo', description: 'Skill demo.', source: 'codex', path: join(home, 'skills', 'demo', 'SKILL.md'),
+      name: 'demo', description: 'Skill demo.', source: 'codex', path: join(skills, 'demo', 'SKILL.md'),
     }])
     expect(report.importedAt).not.toBe('')
+  })
+
+  it('lists a skill someone placed in dsh’s own root by hand', async () => {
+    const home = await codexHome('model = "gpt"\n')
+    const { report, skills } = await mounted(
+      { sources: ['codex'], codex: { home }, mcp: false },
+      { localSkills: ['mine'] },
+    )
+
+    expect(report.skills).toEqual([{
+      name: 'mine', description: 'Mine.', source: 'dsh', path: join(skills, 'mine', 'SKILL.md'),
+    }])
   })
 
   it('lists a mounted server by its command, without the arguments it was declared with', async () => {

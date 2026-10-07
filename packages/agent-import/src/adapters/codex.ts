@@ -1,5 +1,5 @@
 /**
- * Codex adapter: the MCP servers and skill directory of a Codex home.
+ * Codex adapter: the MCP servers of a Codex home.
  *
  * Codex writes Windows paths as TOML literal strings (`'C:\path'`), so a naive
  * unescape produces a command nothing can launch; the {@link scanTomlSections}
@@ -18,7 +18,7 @@ import { scanTomlSections } from '../toml.ts'
 import type { TomlSection, TomlTable, TomlValue } from '../toml.ts'
 import { nonEmptyString, stringList } from '../values.ts'
 import type { AdapterContext, ForeignAgentAdapter } from '../adapter.ts'
-import type { EnvLookup, ForeignMcpServer, ForeignServerRead, ForeignSkillRoot } from '../types.ts'
+import type { EnvLookup, ForeignMcpServer, ForeignServerRead } from '../types.ts'
 
 /** Codex table that declares MCP servers. */
 const MCP_TABLE = 'mcp_servers'
@@ -41,9 +41,6 @@ const KNOWN_KEYS: ReadonlySet<string> = new Set([
   'http_headers',
   'bearer_token_env_var',
 ])
-
-/** Codex directory holding its own bundled skills inside the home skill directory. */
-const SYSTEM_SKILLS_DIRECTORY = '.system'
 
 /** Codex-specific import configuration. */
 export interface CodexOptions {
@@ -77,7 +74,6 @@ export function codexAdapter(options: CodexOptions): ForeignAgentAdapter {
       const text = await context.readOptional(path)
       return text === undefined ? [] : [readCodexServers(text, path, context.env)]
     },
-    skillRoots: context => codexSkillRoots(home(context), options.includeSystemSkills ?? false),
   }
 }
 
@@ -116,23 +112,6 @@ export function readCodexServers(text: string, origin: string, env: EnvLookup): 
     }
   }
   return { servers, notes }
-}
-
-/**
- * Derive the skill directories Codex serves for one home.
- *
- * Codex keeps its own bundled skills in a `.system` directory inside the home
- * skill directory, so that directory is read as a root of its own when the
- * caller opts in; the home directory itself always skips dot entries.
- * @param codexHome - resolved Codex home directory.
- * @param includeSystemSkills - whether Codex's own `.system` bundles join the catalog.
- * @returns the Codex skill roots in precedence order.
- */
-export function codexSkillRoots(codexHome: string, includeSystemSkills: boolean): ForeignSkillRoot[] {
-  const skills = join(codexHome, 'skills')
-  const roots: ForeignSkillRoot[] = [{ path: skills, source: 'codex', skipDotEntries: true }]
-  if (includeSystemSkills) roots.push({ path: join(skills, SYSTEM_SKILLS_DIRECTORY), source: 'codex', skipDotEntries: false })
-  return roots
 }
 
 /** Read one declaration into a server, or return why it cannot be mounted. */

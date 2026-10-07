@@ -2,16 +2,18 @@
  * The adapter every supported agent tool implements.
  *
  * One module under `adapters/` owns each tool: where that tool keeps its files,
- * which environment variable overrides its home, how its declarations translate,
- * and which directories hold its skills. The plugin composes the adapters named
- * by `Config.sources` into a uniform list, so supporting another tool means
- * adding one module that returns a {@link ForeignAgentAdapter} — no change to
- * the mounting, skill-provider, or bounds logic.
+ * which environment variable overrides its home, and how its declarations
+ * translate. The plugin composes the adapters named by `Config.sources` into a
+ * uniform list, so supporting another tool means adding one module that returns
+ * a {@link ForeignAgentAdapter} — no change to the mounting or bounds logic.
+ *
+ * Skill directories are not an adapter concern: `skill-roots.ts` owns the single
+ * table every tool's skill directory is read from.
  *
  * @module @deepseek-ai/dsh-agent-import/adapter
  */
 
-import type { EnvLookup, ForeignServerRead, ForeignSkillRoot, ForeignSource } from './types.ts'
+import type { EnvLookup, ForeignServerRead, ForeignSource } from './types.ts'
 
 /** Inputs an adapter resolves its own files and environment from. */
 export interface AdapterContext {
@@ -37,10 +39,4 @@ export interface ForeignAgentAdapter {
    * @returns the normalized declarations plus one note per declaration that could not be translated.
    */
   readonly readServers: (context: AdapterContext) => Promise<ForeignServerRead[]>
-  /**
-   * List the directories holding this tool's skills.
-   * @param context - resolution inputs for this read.
-   * @returns the skill roots in the order they should win name collisions.
-   */
-  readonly skillRoots: (context: AdapterContext) => ForeignSkillRoot[]
 }
