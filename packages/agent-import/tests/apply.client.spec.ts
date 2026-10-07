@@ -22,7 +22,7 @@ const { SlotRegistry } = clientModule<RendererClient>('@deepseek-ai/dsh-client-u
 type SlotRegistry = InstanceType<RendererClient['SlotRegistry']>
 const { apply: settingsApply, inject: settingsInject } = clientModule<typeof import('@deepseek-ai/dsh-client-ui-settings/client')>('@deepseek-ai/dsh-client-ui-settings')
 
-/** The Plugins page entry this page occupies. */
+/** The Settings section this page occupies. */
 const ITEM_ID = 'agent-import'
 
 /** A serialized plain-object schema: the Host vouches for the row's section, not its members. */
@@ -57,11 +57,11 @@ async function bench(served?: string[]) {
   return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, describeSettings, remote }
 }
 
-/** The Plugins page's official-plugin slot, as its owner declares it. */
-function declareOfficialItems(slots: SlotRegistry): void {
+/** The settings shell's section slot, as its owner declares it. */
+function declareSettingsSections(slots: SlotRegistry): void {
   slots.register({
     name: 'root',
-    children: { 'plugins.item': { kind: 'list', scope: 'root' } },
+    children: { 'settings.section': { kind: 'list', scope: 'root' } },
   } as never, () => null)
 }
 
@@ -70,14 +70,14 @@ describe('agent-import client apply', () => {
     expect(inject).toEqual(['slots', 'locale', 'configForms'])
   })
 
-  it('registers the settings card while the Host serves the namespace, and speaks its dictionary', async () => {
+  it('registers the settings page while the Host serves the namespace, and speaks its dictionary', async () => {
     const { ctx, slots, locale } = await bench(['agent-import'])
-    declareOfficialItems(slots)
+    declareSettingsSections(slots)
 
     await ctx.plugin({ inject: [...inject], apply }).await()
 
-    await vi.waitFor(() => { expect(slots.entries('plugins.item')).toHaveLength(1) })
-    const entry = slots.entries('plugins.item')[0]!
+    await vi.waitFor(() => { expect(slots.entries('settings.section')).toHaveLength(1) })
+    const entry = slots.entries('settings.section')[0]!
     expect(entry.component).toBe(AgentImportCard)
     expect(entry.options).toMatchObject({ id: ITEM_ID, order: 50 })
     expect(resolveSlotLabel(entry.options.label)).toBe('代理配置导入')
@@ -109,22 +109,22 @@ describe('agent-import client apply', () => {
 
   it('registers nothing while the Host does not serve the namespace', async () => {
     const { ctx, slots, describeSettings } = await bench(['shell'])
-    declareOfficialItems(slots)
+    declareSettingsSections(slots)
     await ctx.plugin({ inject: [...inject], apply }).await()
     await vi.waitFor(() => { expect(describeSettings).toHaveBeenCalled() })
 
-    expect(slots.entries('plugins.item')).toHaveLength(0)
+    expect(slots.entries('settings.section')).toHaveLength(0)
   })
 
-  it('collapses the settings card on teardown', async () => {
+  it('collapses the settings page on teardown', async () => {
     const { ctx, slots } = await bench(['agent-import'])
-    declareOfficialItems(slots)
+    declareSettingsSections(slots)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    await vi.waitFor(() => { expect(slots.entries('plugins.item')).toHaveLength(1) })
+    await vi.waitFor(() => { expect(slots.entries('settings.section')).toHaveLength(1) })
 
     await fiber.dispose()
 
-    expect(slots.entries('plugins.item')).toHaveLength(0)
+    expect(slots.entries('settings.section')).toHaveLength(0)
   })
 })

@@ -32,7 +32,7 @@ const PACKAGE_NAME = '@free-lzj/dsh-agent-import'
 
 /**
  * Both faces of this dual-face package: the Host plugin the Loader row mounts,
- * and the Plugins-page card the same row's `dsh.client` declaration attaches to
+ * and the Settings page the same row's `dsh.client` declaration attaches to
  * it in the browser. A bare specifier reached by either face is a dependency
  * (`@deepseek-ai/schemastery`, `yaml`) or a peer the harness provides
  * (`@deepseek-ai/cordis`, `@deepseek-ai/dsh-mcp-client`,

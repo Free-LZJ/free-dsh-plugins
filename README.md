@@ -15,13 +15,13 @@
 
 ---
 
-> 同一台机器上同时用 dsh 和 Codex / Claude Code 时，MCP 服务器与技能只需要声明一次。这个插件在激活时读另一侧的声明，把它们挂到 dsh 自己的 `mcp-client` 与技能目录上，并在 dsh Web 的插件页提供一张卡片，用来查看这次导入实际挂载了什么、以及调整导入范围。
+> 同一台机器上同时用 dsh 和 Codex / Claude Code 时，MCP 服务器与技能只需要声明一次。这个插件在激活时读另一侧的声明，把它们挂到 dsh 自己的 `mcp-client` 与技能目录上，并在 dsh 的设置页提供一页，用来查看这次导入实际挂载了什么、以及调整导入范围。
 
 ## 仓库里有什么
 
 | 包 | 一句话 |
 |---|---|
-| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host 插件 + 浏览器卡片（双面包）：Host 半边导入并挂载，浏览器半边提供插件页那张卡片 |
+| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host 插件 + 浏览器半边（双面包）：Host 半边导入并挂载，浏览器半边提供设置页那一页 |
 
 一个包、一条 Loader 行：`0.3.0` 起这两半合并了，此前是两个包、两行（见[从 0.2.x 升级](#从-02x-升级)）。
 
@@ -32,15 +32,17 @@
 | **MCP 服务器** | `[mcp_servers.*]`（Codex `config.toml`）、`mcpServers`（Claude Code `~/.claude.json`、项目 `.mcp.json`）经 dsh 的 `mcp-client` 变成 `mcp__<server>__<tool>` 工具 |
 | **技能** | 两侧的 `skills/` 目录作为一个技能 provider 进入 dsh 技能目录，同名时 dsh 自己的技能优先 |
 | **不拖垮整场导入** | 读不懂的声明只记一条 `agent-import: …` 警告并跳过，其余照常导入 |
-| **热生效** | 插件自己的配置是热生效的：插件页保存后立即重新导入，不需要重启 |
-| **一张卡片说清结果** | 插件页卡片分「**已加载**」与「**配置**」两个 tab：「已加载」用表格列出本次导入实际挂载的 MCP 服务器（状态、命令或 URL、跳过原因）与已发布的技能（来源、指令文件路径），带一个「刷新」按钮；「配置」放全部设置字段 |
+| **热生效** | 插件自己的配置是热生效的：设置页保存后立即重新导入，不需要重启 |
+| **一页说清结果** | 设置页分「**已加载**」与「**配置**」两个 tab：「已加载」用表格列出本次导入实际挂载的 MCP 服务器（状态、命令或 URL、跳过原因）与已发布的技能（来源、指令文件路径），带一个「刷新」按钮；「配置」放全部设置字段 |
 | **最小暴露** | 报告里只有名字与位置：服务器的参数、环境变量与请求头不进响应 |
 
 ## 安装
 
-装一个包就够：Host 半边提供设置命名空间，同一个包的浏览器半边提供那张卡片 —— 卡片挂在声明了 `dsh.client` 的那条 Loader 行上，所以它天然跟着 Host 走。
+装一个包就够：Host 半边提供设置命名空间，同一个包的浏览器半边提供设置页那一页 —— 页面挂在声明了 `dsh.client` 的那条 Loader 行上，所以它天然跟着 Host 走。
 
-> **环境要求**：`@deepseek-ai/cordis ^4.0.3`，以及 `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `^0.1.7-alpha.2`（peer 依赖，由 dsh 运行时提供）。插件页卡片出现在 dsh Web 里；「已加载」一节还需要组合里的 `ctx.webServer`。
+> **环境要求**：`@deepseek-ai/cordis ^4.0.3`，以及 `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `>=0.1.7-alpha.2 <0.3.0-0`（peer 依赖，由 dsh 运行时提供；范围覆盖 0.1.7 起的 0.1.x 与 0.2.x，包括桌面端自带的运行时）。页面本身只要有设置外壳就出现；只有「已加载」一节读 `/agent-import/report`，所以它需要组合里的 `ctx.webServer`（dsh Web 与桌面端都有）。
+
+> **为什么是设置页，不是插件页的「官方」分组。** 浏览器半边注册的是设置页的 `settings.section` 分栏，与 `general` / `models` / `account` / `plugins` 并列。插件页那个 `plugins.item` slot 按契约是官方设置卡的位置（官方占用者：`agent-loop` / `shell` / `subagent` / `web-search`）；第三方插件自己的配置页用 `settings.section`，或插件区内的 `settings.plugins.tab`。
 
 ### 1. 装包
 
@@ -61,9 +63,19 @@ dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 
 </details>
 
+### 桌面端（Electron）
+
+桌面端不是另一个客户端：它用同一套 `dsh-web-app` 组合，外加一个**自带版本**的 dsh 运行时，页面由 Host 自己的 `ctx.webServer` 在本机端口上提供 —— 所以两个半边都照常工作，只是 **Profile 是 `desktop`**，不是 `web`：
+
+```sh
+dsh plugin --profile desktop add @free-lzj/dsh-agent-import
+```
+
+> 桌面端自带的运行时版本与全局 CLI 通常**不是**同一个版本。若它落在本包 peer 范围之外，dsh 启动时的兼容性预检会把这一行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "agent-import": …`），插件与设置页都不会出现。两种解法：装一个 peer 范围覆盖该运行时的版本，或对精确版本授权 —— `dsh plugin --profile desktop allow-version <包@版本> --dsh-version <运行时版本> --accept-risk`（桌面端插件页对不兼容项也提供授权入口）。
+
 ### 2. 声明一行（必须）
 
-装包只让它可解析；插件要真正启用，还得在 profile 里声明这一行。可以写进 `$DSH_HOME/profiles/web/cordis.patch.yml`，也可以用 overlay 启动：
+装包只让它可解析；插件要真正启用，还得在 profile 里声明这一行。可以写进 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`（`web`、`desktop` 等），也可以用 overlay 启动：
 
 ```yaml
 - insert:
@@ -75,7 +87,7 @@ dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 dsh web --patch examples/agent-import.cordis.yml
 ```
 
-> **`agent-import` 这个 id 不能改。** dsh 用行自身的条目 id 命名它的设置命名空间，而插件页那张卡片跟随的正是这个命名空间；换个 id 就是另一个命名空间，卡片不会出现。
+> **`agent-import` 这个 id 不能改。** dsh 用行自身的条目 id 命名它的设置命名空间，而设置页那一页跟随的正是这个命名空间；换个 id 就是另一个命名空间，页面不会出现。
 
 ### 3. 生效
 
@@ -90,11 +102,11 @@ dsh plugin --profile web remove @free-lzj/dsh-client-ui-settings-agent-import
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-然后把 profile 里那两条 `insert` 行删掉 `ui-settings-agent-import` 那条，只留 `id: agent-import`（内容与上面示例一致），重启 `dsh web`。卡片来自包自身的 `dsh.client` 声明，不需要再单独声明。
+然后把 profile 里那两条 `insert` 行删掉 `ui-settings-agent-import` 那条，只留 `id: agent-import`（内容与上面示例一致），重启 `dsh web`。设置页来自包自身的 `dsh.client` 声明，不需要再单独声明。
 
 ## 配置
 
-插件页卡片覆盖全部字段；配置文件里等价于：
+设置页覆盖全部字段；配置文件里等价于：
 
 ```yaml
 - id: agent-import
@@ -122,7 +134,7 @@ dsh plugin --profile web add @free-lzj/dsh-agent-import
 
 ## 「已加载」怎么来的
 
-Host 插件在 `GET /agent-import/report` 上公布当前那次导入的结果，卡片用同源 `fetch` 读它。这条路由和 dsh 自己的页面同源，但不在 API 网关的会话校验之内，所以它只回答**同源**请求（`Sec-Fetch-Site` 既不是 `same-origin`/`none`、或 `Origin` 与 `Host` 不一致，直接 403；非 GET/HEAD 405），并且只带名字与位置：服务器的参数、环境变量与请求头不出现在响应里。
+Host 插件在 `GET /agent-import/report` 上公布当前那次导入的结果，设置页的「已加载」一节用同源 `fetch` 读它。这条路由和 dsh 自己的页面同源，但不在 API 网关的会话校验之内，所以它只回答**同源**请求（`Sec-Fetch-Site` 既不是 `same-origin`/`none`、或 `Origin` 与 `Host` 不一致，直接 403；非 GET/HEAD 405），并且只带名字与位置：服务器的参数、环境变量与请求头不出现在响应里。
 
 技能列表是**按请求实时枚举**的（不是激活那一刻的快照），所以在 Codex / Claude Code 那边增删技能后，点一次「刷新」即可看到；服务器的挂载结果来自当前这次导入生成。
 
@@ -155,8 +167,9 @@ npm publish      # prepublishOnly 会先 build；--access public 写在 publishC
 ## 已知限制
 
 - 这个包**不在 dsh 自带 Web 组合里**，必须在 profile 中自行声明上面那一行。
-- 「已加载」走的是 dsh Web 自身的 HTTP 路由：Electron 桌面端加载 `file://` 页面、没有 `ctx.webServer`，这张卡片在那里不显示这一节（其余配置照常可用）。要两端一致，需要在 dsh 自身的 `packages/api/remotes` 加一个 Remote 命名空间。
-- 卡片只回答「挂载了吗」：服务器挂载成功但自身连不上时，连接错误由 dsh 的 `mcp-client` 自己记日志（`failOnStartupError: false` 时它会持续重连），卡片这一行仍显示「已挂载」。
+- 「已加载」走的是 dsh Web 自身的 HTTP 路由，所以这一节需要有 `ctx.webServer` 的组合。dsh Web 与 Electron 桌面端都有（桌面端的页面就是 Host 的 `ctx.webServer` 在本机端口上提供的）；在没有 `ctx.webServer` 的组合里，这一节显示为不可用，其余配置照常。
+- dsh 启动时会做兼容性预检：peer 范围不含当前运行时的插件会被整行禁用（stderr 里打印 `dsh: disabling profile plugin row …`），**此时设置页完全不出现**，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。本包的 peer 范围覆盖 0.1.x 与 0.2.x 运行时，再往后的运行时需要放宽范围或授权。
+- 「已加载」一节只回答「挂载了吗」：服务器挂载成功但自身连不上时，连接错误由 dsh 的 `mcp-client` 自己记日志（`failOnStartupError: false` 时它会持续重连），这一行仍显示「已挂载」。
 - 外部配置文件只在激活时读取一次（本插件自身配置除外）：Codex / Claude Code 那边改了声明，需要重载或重启 dsh。
 - 两边工具的插件市场（如 Codex `plugin.json`）不会展开，只导入服务器声明和技能目录。
 - 真实组合的端到端测试（真装 dsh 启动一次、断言工具与技能可见）留在 dsh 主仓库里跑 —— 它依赖主仓库自带的 profile 启动夹具；本仓库的 CI 跑类型检查、构建与单元/组件测试。

@@ -1,7 +1,7 @@
 {
   "name": "@free-lzj/dsh-agent-import",
   "version": "0.3.1",
-  "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness, with the Web Plugins-page card that configures the import",
+  "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness, with the Settings page that configures the import",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Free-LZJ/free-dsh-plugins.git",
@@ -50,8 +50,7 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-plugin-manager"
+        "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
   },
@@ -62,8 +61,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.3",
-    "@deepseek-ai/dsh-mcp-client": "^0.1.7-alpha.2",
-    "@deepseek-ai/dsh-skill": "^0.1.7-alpha.2"
+    "@deepseek-ai/dsh-mcp-client": ">=0.1.7-alpha.2 <0.3.0-0",
+    "@deepseek-ai/dsh-skill": ">=0.1.7-alpha.2 <0.3.0-0"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.3",
@@ -76,7 +75,6 @@
     "@deepseek-ai/dsh-client-locale": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-client-store": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-client-test-runtime": "^0.1.7-alpha.2",
-    "@deepseek-ai/dsh-client-ui-plugin-manager": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.1.7-alpha.2",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.7-alpha.2",

@@ -10,6 +10,7 @@
 
 /** Class names the installed stylesheet defines, for the card to reference. */
 export const AGENT_IMPORT_CLASS = {
+  page: 'dsh-agent-import-page',
   section: 'dsh-agent-import-section',
   heading: 'dsh-agent-import-heading',
   hint: 'dsh-agent-import-hint',
@@ -48,6 +49,13 @@ const STYLE_ELEMENT_ID = 'dsh-agent-import-card-styles'
 
 /** The card's rules, in the order the card renders. */
 const AGENT_IMPORT_CSS = `
+.${AGENT_IMPORT_CLASS.page} {
+  /* The settings panel's content column constrains no width of its own: each
+     section caps itself (the shipped ones at 720-760px), and the Plugins page
+     this page used to live in capped its cards at 960px. Capping here keeps the
+     page in step with the sections it now sits beside. */
+  max-width: 760px;
+}
 .${AGENT_IMPORT_CLASS.section} {
   min-width: 0;
   padding: 18px 0;

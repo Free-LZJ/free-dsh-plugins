@@ -4,7 +4,7 @@ import type { SettingsFormLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** Locale keys the page renders. */
 export type AgentImportLocaleKey =
-  | 'title' | 'summary'
+  | 'title'
   | 'sources' | 'sourcesHint' | 'sourceCodex' | 'sourceClaudeCode'
   | 'pathsTitle' | 'pathsHint' | 'scopeTitle' | 'scopeHint'
   | 'loadedTitle' | 'loadedHint' | 'loadedSummary' | 'loadedSkills' | 'loadedServers'
@@ -27,7 +27,6 @@ export type AgentImportLocaleKey =
 /** English copy. */
 export const en: Record<AgentImportLocaleKey, string> = {
   title: 'Agent import',
-  summary: 'Import the MCP servers and skills Codex or Claude Code already declares.',
   sources: 'Sources',
   sourcesHint: 'Tools to read, in import precedence order.',
   sourceCodex: 'Codex',
@@ -98,7 +97,6 @@ export const en: Record<AgentImportLocaleKey, string> = {
 /** Simplified Chinese copy. */
 export const zh: Record<AgentImportLocaleKey, string> = {
   title: '代理配置导入',
-  summary: '导入 Codex 或 Claude Code 已经声明的 MCP 服务器与技能。',
   sources: '来源',
   sourcesHint: '要读取的工具，按导入优先级排列。',
   sourceCodex: 'Codex',

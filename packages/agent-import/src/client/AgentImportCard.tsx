@@ -1,5 +1,5 @@
 /**
- * The agent-import settings card: which foreign tools the plugin reads, where
+ * The agent-import settings page: which foreign tools the plugin reads, where
  * each one keeps its files, and how the import is bounded.
  *
  * The form is grouped into titled sections, so the paths one tool needs are
@@ -7,7 +7,7 @@
  */
 
 import { useId, useState, type ReactNode } from 'react'
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
   Button, Checkbox, Input, PathLabel, SegmentedControl, SettingsForm, SettingsValueField, Switch, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -23,9 +23,9 @@ import type {
   AgentImportCardFace, AgentImportPageState, AgentImportReportState, AgentImportSourceState, AgentImportToggleState,
 } from './agent-import-card-controller.ts'
 
-/** Props the renderer binds for the agent-import page. */
+/** Props the renderer binds for the agent-import settings page. */
 export type AgentImportCardProps =
-  PropsRuntime<'plugins.item'>
+  PropsRuntime<'settings.section'>
   & PropsLocale<'settings.agentImport'>
   & InjectFace<AgentImportCardFace>
 
@@ -63,9 +63,10 @@ const SWITCH_FIELDS: readonly ControlField<AgentImportToggleFieldId>[] = [
 ]
 
 /**
- * Render the agent-import card's one-liner or its configuration form, as the Plugins page asks.
- * @param props - the view asked for, locale copy, the form snapshot, and its actions.
- * @returns the one-liner, or the form.
+ * Render the agent-import settings page: its configuration form and what the
+ * current import mounted.
+ * @param props - locale copy, the form snapshot, and its actions.
+ * @returns the page body the settings shell mounts in its content column.
  */
 export function AgentImportCard(props: AgentImportCardProps) {
   const { t } = props
@@ -73,39 +74,40 @@ export function AgentImportCard(props: AgentImportCardProps) {
   const report = props.useAgentImportReport(snapshot => snapshot)
   const view = useId()
   const [tab, setTab] = useState<AgentImportTab>('loaded')
-  if (props.view === 'summary') return t('summary')
   const disabled = !state.writable || state.saving
   const overriddenLabel = t('overridden')
   const resetLabel = t('reset')
   return (
-    <SettingsForm labels={formLabels(t)} state={state} onSave={props.save} onDiscard={props.discard}>
-      <SegmentedControl
-        id={`${view}-view`}
-        value={tab}
-        onChange={setTab}
-        label={t('viewLabel')}
-        className={AGENT_IMPORT_CLASS.tabs}
-        options={[
-          { value: 'loaded', label: t('loadedTitle') },
-          { value: 'config', label: t('configTitle') },
-        ]}
-      />
-      <div
-        role="tabpanel"
-        id={`${view}-view-${tab}-panel`}
-        aria-labelledby={`${view}-view-${tab}`}
-        className={AGENT_IMPORT_CLASS.panel}
-      >
-        {tab === 'loaded'
-          ? (
-            <>
-              <p className={AGENT_IMPORT_CLASS.hint}>{t('loadedHint')}</p>
-              <LoadedItems t={t} report={report} onRefresh={props.refreshReport} />
-            </>
-          )
-          : <ConfigSections {...props} state={state} disabled={disabled} overriddenLabel={overriddenLabel} resetLabel={resetLabel} />}
-      </div>
-    </SettingsForm>
+    <div className={AGENT_IMPORT_CLASS.page}>
+      <SettingsForm labels={formLabels(t)} state={state} onSave={props.save} onDiscard={props.discard}>
+        <SegmentedControl
+          id={`${view}-view`}
+          value={tab}
+          onChange={setTab}
+          label={t('viewLabel')}
+          className={AGENT_IMPORT_CLASS.tabs}
+          options={[
+            { value: 'loaded', label: t('loadedTitle') },
+            { value: 'config', label: t('configTitle') },
+          ]}
+        />
+        <div
+          role="tabpanel"
+          id={`${view}-view-${tab}-panel`}
+          aria-labelledby={`${view}-view-${tab}`}
+          className={AGENT_IMPORT_CLASS.panel}
+        >
+          {tab === 'loaded'
+            ? (
+              <>
+                <p className={AGENT_IMPORT_CLASS.hint}>{t('loadedHint')}</p>
+                <LoadedItems t={t} report={report} onRefresh={props.refreshReport} />
+              </>
+            )
+            : <ConfigSections {...props} state={state} disabled={disabled} overriddenLabel={overriddenLabel} resetLabel={resetLabel} />}
+        </div>
+      </SettingsForm>
+    </div>
   )
 }
 

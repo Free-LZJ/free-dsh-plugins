@@ -15,13 +15,13 @@
 
 ---
 
-> When one machine runs both dsh and Codex or Claude Code, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations, mounts them through dsh's own `mcp-client` and skill catalog, and adds a card to the dsh Web Plugins page that shows what the import actually mounted and which parts of it to read.
+> When one machine runs both dsh and Codex or Claude Code, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations, mounts them through dsh's own `mcp-client` and skill catalog, and adds a page to dsh's Settings page that shows what the import actually mounted and which parts of it to read.
 
 ## What is in here
 
 | Package | In one line |
 |---|---|
-| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host plugin + browser card (a dual-face package): the Host half imports and mounts, the browser half renders the Plugins-page card |
+| [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host plugin + browser half (a dual-face package): the Host half imports and mounts, the browser half renders the Settings page |
 
 One package, one Loader row: the two halves merged in `0.3.0`; they used to be two packages and two rows (see [Upgrading from 0.2.x](#upgrading-from-02x)).
 
@@ -32,15 +32,17 @@ One package, one Loader row: the two halves merged in `0.3.0`; they used to be t
 | **MCP servers** | `[mcp_servers.*]` (Codex `config.toml`) and `mcpServers` (Claude Code `~/.claude.json`, project `.mcp.json`) mount through dsh's `mcp-client` as `mcp__<server>__<tool>` tools |
 | **Skills** | Both tools' `skills/` directories join the skill catalog as one provider, where a same-named dsh skill wins |
 | **One bad entry costs nothing** | A declaration the plugin cannot translate becomes one `agent-import: …` warning and is skipped; the rest still imports |
-| **Live configuration** | The plugin's own configuration is live: saving on the Plugins page re-imports immediately, with no restart |
-| **One card that states the result** | The card has two tabs, **Loaded** and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills it published (source, instruction file) with a **Refresh** button, while Configuration holds every setting |
+| **Live configuration** | The plugin's own configuration is live: saving on the Settings page re-imports immediately, with no restart |
+| **One page that states the result** | The page has two tabs, **Loaded** and **Configuration**: Loaded tabulates the MCP servers this import mounted (status, command or URL, skip reason) and the skills it published (source, instruction file) with a **Refresh** button, while Configuration holds every setting |
 | **Minimal exposure** | The report carries names and locations only: a server's arguments, environment, and headers never appear in it |
 
 ## Install
 
-One package is enough: its Host half serves the settings namespace and its browser half renders the card — the card attaches to whichever Loader row declares `dsh.client`, so it always follows the Host.
+One package is enough: its Host half serves the settings namespace and its browser half renders that Settings page — the page attaches to whichever Loader row declares `dsh.client`, so it always follows the Host.
 
-> **Requirements**: `@deepseek-ai/cordis ^4.0.3`, plus `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `^0.1.7-alpha.2` — peers the dsh runtime provides. The Plugins-page card exists in dsh Web; its Loaded section also needs the composition's `ctx.webServer`.
+> **Requirements**: `@deepseek-ai/cordis ^4.0.3`, plus `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `>=0.1.7-alpha.2 <0.3.0-0` — peers the dsh runtime provides; the range covers the 0.1.x and 0.2.x runtimes from 0.1.7 on, including the one the Desktop app bundles. The page itself appears wherever a settings shell exists; only its Loaded section reads `/agent-import/report`, so that section needs the composition's `ctx.webServer` (dsh Web and Desktop both have one).
+
+> **Why a Settings page, not the Plugins page's Official group.** The browser half registers the Settings page's `settings.section` entry, beside `general` / `models` / `account` / `plugins`. The Plugins page's `plugins.item` slot is by contract the official settings-card seat (its official occupants are `agent-loop` / `shell` / `subagent` / `web-search`); a third-party plugin's own configuration page uses `settings.section`, or `settings.plugins.tab` inside the Plugins section.
 
 ### 1. Install the package
 
@@ -61,9 +63,19 @@ dsh plugin --profile web add "<absolute path>/packages/agent-import"
 
 </details>
 
+### Desktop (Electron)
+
+The Desktop app is not a different client: it runs the same `dsh-web-app` composition with a **bundled** dsh runtime of its own, and serves the page through the Host's own `ctx.webServer` on a local port — so both halves work there too. The difference is the **profile: `desktop`**, not `web`:
+
+```sh
+dsh plugin --profile desktop add @free-lzj/dsh-agent-import
+```
+
+> The version the Desktop bundles is usually **not** the one your global CLI runs. If it falls outside this package's peer range, dsh's compatibility preflight disables the row outright (stderr prints `dsh: disabling profile plugin row "agent-import": …`), and neither the plugin nor its Settings page appears. Two ways out: install a version whose peer range covers that runtime, or grant the exact-version exemption — `dsh plugin --profile desktop allow-version <package@version> --dsh-version <runtime version> --accept-risk` (the Desktop Plugins page offers the same grant for incompatible entries).
+
 ### 2. Declare the one row (required)
 
-Installing only makes the package resolvable; the feature is enabled by declaring this row in the profile. Put it in `$DSH_HOME/profiles/web/cordis.patch.yml`, or boot with an overlay:
+Installing only makes the package resolvable; the feature is enabled by declaring this row in the profile. Put it in `$DSH_HOME/profiles/<profile>/cordis.patch.yml` (`web`, `desktop`, …), or boot with an overlay:
 
 ```yaml
 - insert:
@@ -75,7 +87,7 @@ Installing only makes the package resolvable; the feature is enabled by declarin
 dsh web --patch examples/agent-import.cordis.yml
 ```
 
-> **The id `agent-import` is fixed.** dsh names a row's settings namespace after the row's own entry id, and the Plugins-page card follows that namespace; a different id is a different namespace, and the card never appears.
+> **The id `agent-import` is fixed.** dsh names a row's settings namespace after the row's own entry id, and the Settings page follows that namespace; a different id is a different namespace, and the page never appears.
 
 ### 3. Take effect
 
@@ -90,11 +102,11 @@ dsh plugin --profile web remove @free-lzj/dsh-client-ui-settings-agent-import
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-Then drop the `ui-settings-agent-import` row from the profile, leaving only `id: agent-import` (as in the example above), and restart `dsh web`. The card comes from the package's own `dsh.client` declaration and needs no row of its own.
+Then drop the `ui-settings-agent-import` row from the profile, leaving only `id: agent-import` (as in the example above), and restart `dsh web`. The page comes from the package's own `dsh.client` declaration and needs no row of its own.
 
 ## Configuration
 
-The Plugins-page card covers every field; the equivalent row configuration is:
+The Settings page covers every field; the equivalent row configuration is:
 
 ```yaml
 - id: agent-import
@@ -122,7 +134,7 @@ The Plugins-page card covers every field; the equivalent row configuration is:
 
 ## Where the Loaded section comes from
 
-The Host plugin publishes the current import on `GET /agent-import/report`, and the card reads it with a same-origin `fetch`. That route sits beside dsh's own pages but outside the API gateway's session check, so it answers **same-origin** requests only (`Sec-Fetch-Site` other than `same-origin`/`none`, or an `Origin` naming another host, is refused with 403; anything but GET/HEAD with 405), and it carries names and locations only: a server's arguments, environment, and headers never appear.
+The Host plugin publishes the current import on `GET /agent-import/report`, and its Loaded section reads it with a same-origin `fetch`. That route sits beside dsh's own pages but outside the API gateway's session check, so it answers **same-origin** requests only (`Sec-Fetch-Site` other than `same-origin`/`none`, or an `Origin` naming another host, is refused with 403; anything but GET/HEAD with 405), and it carries names and locations only: a server's arguments, environment, and headers never appear.
 
 The skill list is enumerated **per request**, not captured at activation, so adding or removing a skill in Codex or Claude Code shows up on the next **Refresh**; the server rows describe the current import generation.
 
@@ -155,7 +167,8 @@ npm publish      # prepublishOnly builds first; publishConfig carries access: pu
 ## Known limitations
 
 - The package does not ship in the installed dsh Web composition; a deployment declares the row above.
-- The Plugins-page card reads the import report over dsh Web's own HTTP routes: the Electron desktop loads a `file://` page with no `ctx.webServer`, so that section is absent there (the rest of the card still works). Desktop parity needs a Remote namespace in dsh's own `packages/api/remotes`.
+- The Loaded section reads dsh Web's own HTTP route, so it needs a composition with `ctx.webServer`. dsh Web and the Electron Desktop both have one (the Desktop page is served by the Host's own `ctx.webServer` on a local port); in a composition without `ctx.webServer` the section reports itself unavailable while the rest of the configuration still works.
+- dsh runs a compatibility preflight at startup: a plugin whose peer range excludes the running runtime has its row **disabled outright** (stderr prints `dsh: disabling profile plugin row …`), and **the Settings page then never appears at all**, which reads as "the install did nothing". Grant the exact-version exemption to admit it: `dsh plugin --profile <profile> allow-version <package@version> --dsh-version <runtime version> --accept-risk`. This package's peer range covers the 0.1.x and 0.2.x runtimes; anything later needs a wider range or a grant.
 - The Loaded section answers "did it mount": a server that mounted but cannot connect is logged by dsh's own `mcp-client` (which keeps reconnecting while `failOnStartupError` is `false`), and its row still reads **Mounted**.
 - Foreign files are read at activation only (this plugin's own configuration excepted): editing a Codex or Claude Code declaration takes effect after a reload or restart.
 - Neither tool's plugin marketplaces are expanded (for example Codex `plugin.json`); only server declarations and skill directories are imported.

@@ -1,12 +1,17 @@
 /**
- * The Plugins-page card, browser half of this package: what the Host half reads
- * from Codex and Claude Code, and how the import is bounded. The card registers
- * into the Plugins page's `plugins.item` slot while the Host serves the
+ * The Settings page, browser half of this package: what the Host half reads
+ * from Codex and Claude Code, and how the import is bounded. The page registers
+ * into the settings shell's `settings.section` slot while the Host serves the
  * `agent-import` settings namespace — the namespace of the Loader row that
- * mounts this package — so it appears as a card of its own and a deployment
- * that never loaded the row shows no trace of it.
+ * mounts this package — so it appears as a first-class Settings section of its
+ * own and a deployment that never loaded the row shows no trace of it.
  *
- * The card carries two hooks: the configuration the Host serves, and the import
+ * `settings.section` is the seat a third-party plugin takes for a page of its
+ * own, alongside the shipped sections (`general`, `models`, `account`, `plugins`).
+ * The official-plugin card slot (`plugins.item`) is the other one, and it renders
+ * in the Plugins page's Official group — reserved for the shipped settings cards.
+ *
+ * The page carries two hooks: the configuration the Host serves, and the import
  * report the Host answers on its own route. The report is read through a
  * same-origin request, so it needs no cooperation from the Host page.
  *
@@ -17,11 +22,10 @@
 
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-// Type-only: the ctx.configForms Context merge. Cross-plugin collaboration
-// goes through the service, never a value import (client bundle purity gate).
+// Type-only: the ctx.configForms Context merge and the settings shell's SlotMap
+// merge (the 'settings.section' entry). Cross-plugin collaboration goes through
+// the service, never a value import (client bundle purity gate).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// Type-only: the Plugins page's SlotMap merge (the 'plugins.item' entry).
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { AgentImportCard } from './AgentImportCard.tsx'
@@ -48,7 +52,7 @@ export const NS = 'settings.agentImport'
 export const inject = ['slots', 'locale', 'configForms']
 
 /**
- * Mount the Plugins-page card while the Host serves the row's own settings namespace.
+ * Mount the Settings page while the Host serves the row's own settings namespace.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
@@ -58,7 +62,7 @@ export function apply(ctx: ClientContext): void {
   const card = new AgentImportCardController(ctx.configForms.get(AGENT_IMPORT_NS), loadAgentImportReport)
   ctx.effect(() => () => { card.dispose() }, 'agent-import: form subscription')
   card.refreshReport()
-  ctx.effect(() => ctx.configForms.whileServed([AGENT_IMPORT_NS], () => ctx.slots.inject('plugins.item', () => ctx.slots.register({
-    name: 'plugins.item', id: 'agent-import', order: 50, label: () => t('title'), locale: NS, inject: () => card.inject(),
+  ctx.effect(() => ctx.configForms.whileServed([AGENT_IMPORT_NS], () => ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'agent-import', order: 50, label: () => t('title'), locale: NS, inject: () => card.inject(),
   }, AgentImportCard))), 'agent-import: page')
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** The agent-import settings card as the Plugins page renders it. */
+/** The agent-import settings page as the settings shell renders it. */
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -112,7 +112,7 @@ describe('AgentImportCard', () => {
     const actions = cardActions()
     const props = {
       ...actions,
-      view: 'page',
+      close: () => {},
       t,
       useAgentImportCard: bindSnapshotSelector(store),
       useAgentImportReport: reportHook(loaded),
@@ -122,21 +122,6 @@ describe('AgentImportCard', () => {
     if (tab === 'config' && page.available) openConfig()
     return actions
   }
-
-  it('renders its one-liner alone in the summary view', () => {
-    const store = createSnapshotStore<AgentImportPageState>({ ...settled, ...servedPage })
-    const props = {
-      ...cardActions(),
-      view: 'summary',
-      t,
-      useAgentImportCard: bindSnapshotSelector(store),
-      useAgentImportReport: reportHook({ phase: 'loading' }),
-    } as AgentImportCardProps
-    render(<AgentImportCard {...props} />)
-
-    expect(document.body.textContent).toBe(en.summary)
-    expect(screen.queryByLabelText(en.codexHome)).toBeNull()
-  })
 
   it('renders every field the Host serves, with its resolved value', () => {
     renderCard()
