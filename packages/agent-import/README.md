@@ -90,11 +90,11 @@ dsh plugin --profile web add @free-lzj/dsh-agent-import
 - **同名裁决**：一条技能有多个来源时按 rank 自动选一个：项目级 dsh（100–199）< 用户级 dsh 400 < `~/.agents/skills` 450 < 项目级外来根（470+）< 各用户级外来根（500+）。选中项被**符号链接**到 `~/.dsh/skills/<name>`（Windows 用 junction，不需要管理员权限，也不需要开发者模式），dsh 的 filesystem 技能 provider 会穿透链接把它当本地技能加载；源目录一个字节都不改写。冲突会在设置页显式提示，并可改选另一个来源（改选即重建链接）。
 - **只写用户级**：自动导入只在 `~/.dsh/skills` 下建链接，绝不写项目仓库；项目级技能根只读，用于展示与裁决。
 - **不动本地技能**：`~/.dsh/skills` 里手工放的**真实目录或文件**永不被覆盖、替换或删除，设置页把它们标为「本地」；「移除」只对链接生效。
-- **移除是一个决定，会被记住**：如果移除只删链接，激活时的自动导入下一次就会把它补回来——看起来像没生效。插件因此把自己的决定写在 `$DSH_HOME/agent-import/state.json`（默认 `~/.dsh/agent-import/state.json`）：里面只有被移除的技能名，不含技能内容；自动导入不再碰这些名字，在设置页重新导入即清除该记录。删掉这个文件等同于撤销所有移除决定，下次激活会重新补链。
+- **移除是一个决定，会被记住**：如果移除只删链接，激活时的自动导入下一次就会把它补回来——看起来像没生效。插件因此把自己的决定写在 `$DSH_HOME/agent-import/state.json`（默认 `~/.dsh/agent-import/state.json`）：里面只有被移除的技能名，不含技能内容；自动导入不再碰这些名字，设置页把它们显示为**已停用**（与「从没导入过」区分开），在那里重新导入即清除该记录。删掉这个文件等同于撤销所有移除决定，下次激活会重新补链。
 - **失败处理**：读不懂的声明变成一条 `agent-import: …` 警告并跳过，激活照常成功；只有导入的服务器启动失败且 `failOnStartupError: true` 时才会拒绝激活。
 - **重导入窗口**：重新导入时先卸载上一代再挂载下一代，因此中间有一瞬间两代都不在；那一瞬发出的报告与技能目录请求会答成空的。
 - **导入报告**：`GET /agent-import/report` 返回当前这一代的结果——`importedAt`、`sources`、`skills`（名字、描述、来源、`SKILL.md` 路径）、`servers`（名字、dsh 命名空间、传输方式、命令或 URL、来源、`mounted`/`skipped` 与原因）、`notes`。`skills` 说的是 **dsh 自己技能目录里现在有什么**（导入的链接与手工放的真实技能），因为那才是 dsh 真正加载的东西。这条路由要求伪装成 dsh 自己页面的同源请求，且不含参数、环境变量与请求头。
-- **技能路由**：`GET /agent-import/skills` 答整份目录（每条技能的名字、描述、状态 `available`/`linked`/`local`/`broken`、冲突标记、各来源候选及其 `SKILL.md` 路径）；`GET /agent-import/skills/content?name=&source=` 答一条技能的正文给详情视图（不带 `source` 时读已导入的那份，超过 256 KiB 拒绝显示）；`POST /agent-import/skills/import`（`{name, source?, replace?}`）与 `POST /agent-import/skills/remove`（`{name}`）执行单项导入与移除。两个写路由除同源外还要求 `x-dsh-agent-import: 1` 与 `content-type: application/json`——跨站表单发不出这个自定义头，这是浏览器侧可靠的写保护；body 上限 64 KiB。
+- **技能路由**：`GET /agent-import/skills` 答整份目录（每条技能的名字、描述、状态 `available`/`linked`/`local`/`broken`/`disabled`、冲突标记、各来源候选及其 `SKILL.md` 路径）；`GET /agent-import/skills/content?name=&source=` 答一条技能的正文给详情视图（不带 `source` 时读已导入的那份，超过 256 KiB 拒绝显示）；`POST /agent-import/skills/import`（`{name, source?, replace?}`）与 `POST /agent-import/skills/remove`（`{name}`）执行单项导入与移除。两个写路由除同源外还要求 `x-dsh-agent-import: 1` 与 `content-type: application/json`——跨站表单发不出这个自定义头，这是浏览器侧可靠的写保护；body 上限 64 KiB。`disabled` 是「有移除记录且当前没有链接」，读取目录时会带上状态文件，因此页面能把开关关掉过的名字和从未导入过的名字分开显示。
 
 ## 设置页
 
@@ -109,11 +109,12 @@ dsh plugin --profile web add @free-lzj/dsh-agent-import
 页面是一个 `SegmentedControl` 标签页，三个 tab：
 
 - **已加载**（只读，默认打开）：当前这次导入的结果——技能与 MCP 服务器的条数摘要、**两张表格**（技能：名称 / 来源 / 指令文件；MCP 服务器：名称 / 状态 / 命令或 URL / 说明，说明列只在有行需要时出现）、导入提示，以及一个 **刷新** 按钮。路径与命令用等宽字体并截断显示，悬停可见全路径。数据来自 Host 的 `GET /agent-import/report`（同源 `fetch`），Host 没回答时显示原因而不是空白。
-- **技能**：技能管理器本身——搜索（名字、描述、来源）、按状态与来源浏览、每条显示名字 / 描述 / 来源 / 状态（**可导入** / **已导入** / **本地** / **链接失效**），同名多源时显式提示还有哪些来源并可就地改选（改选即重建链接），每条可 **导入**、**移除**、**查看正文**（正文在面板里只读展示，附解析出的指令文件路径）。真实本地技能不提供「移除」，只说明它归本地所有。数据来自 `GET /agent-import/skills`，写入走 `POST /agent-import/skills/import` 与 `/skills/remove`，写完重新拉一次目录并把跳过的原因显示出来；`skills` 开关关闭时这一栏显示说明而不是空列表。**没勾进「技能来源」的工具的技能同样会列出**（扫描始终覆盖全部来源），可以直接在这一栏里逐个导入。
-- **配置**：字段按四节分组——
-  - **来源**：两组多选——**MCP 来源**（Codex / Claude Code，即 `sources`）与**技能来源**（`skillSources`，22 个已知来源的勾选列表）；后者决定**自动导入**谁，未勾选的来源仍然会出现在「技能」栏里、可逐个手动导入；
-  - **路径**：`projectRoot`、Codex 主目录与配置文件、Claude Code 目录与配置文件，留空即沿用文档中的回退（`$CODEX_HOME`、`~/.claude` 等）；
-  - **导入范围**：导入 MCP 服务器、导入技能、**自动导入技能**（`skillAutoImport`）、包含 Codex 自带技能、服务器启动失败即报错五个开关，以及 `maxServers`、`maxSkills` 两个数值（只接受 0 或更大的整数，留空表示使用默认值）；
+- **技能**：技能管理器本身——搜索（名字、描述、来源）、按状态与来源浏览，顶部一行统计（`N 个技能 · N 个已启用 · N 个已停用`）。每条显示名字 / 描述 / 来源 / 状态（**可导入** / **已导入** / **本地** / **链接失效** / **已停用**），右侧一个**开关**就是启停：打开 = 立即导入（取胜出来的来源，同时撤销停用记录），关闭 = 删掉 dsh 里的链接并记下这次停用（自动导入不会再补回来）。真实本地技能的开关锁定为开，只说明它归本地所有——本插件不改动不是自己建的技能。同名多源时显式提示还有哪些来源并可就地改选（改选即重建链接，只在确实有链接时才 `replace`）。每条还可 **查看正文**（正文在面板里只读展示，附解析出的指令文件路径）。数据来自 `GET /agent-import/skills`，写入走 `POST /agent-import/skills/import` 与 `/skills/remove`，写完重新拉一次目录并把跳过的原因显示出来；**写入进行中所有开关都会禁用**，避免连点造成「导入后又立刻移除」。`skills` 开关关闭时这一栏显示说明而不是空列表。**没勾进「技能来源」的工具的技能同样会列出**（扫描始终覆盖全部来源），可以直接在这一栏里逐个导入。
+- **配置**：字段按四节分组，两个来源列表都是**一行一个来源、开关在右侧、明细可折叠**（对齐参考实现的行式布局）——
+  - **MCP 来源**：Codex / Claude Code 各一行，右侧开关即 `sources`；展开后是该工具的目录项（`codex.home` / `codex.configPath`、`claudeCode.configDir` / `claudeCode.configPath`）。只要该工具在 MCP 或技能任一侧启用，这一行就可展开，因此不存在「关了 MCP 导入就改不了技能路径」的死角；两侧都关时连展开箭头都不显示。
+  - **技能来源**：22 个已知来源各一行，右侧开关决定是否**自动导入**它（`skillSources`）；只有 Codex 行展开后有内容（`codex.includeSystemSkills`），其余 21 行只有名字与开关。未勾选的来源仍然会出现在「技能」栏里、可逐个手动导入。
+  - **路径**：只剩 `projectRoot`（本次导入的作用范围 / 工作区），留空即取进程工作目录；
+  - **导入范围**：导入 MCP 服务器（`mcp`）、导入技能（`skills`）、**自动导入技能**（`skillAutoImport`）、服务器启动失败即报错（`failOnStartupError`）四个开关，以及 `maxServers`、`maxSkills` 两个数值（只接受 0 或更大的整数，留空表示使用默认值）；
   - **跳过的服务器**：`serverDenyList` 一行一个，可增删。
 
 切换 tab 不会丢草稿（草稿在控制器里，不在组件里）；用户层显式设过的字段标 **已覆盖** 并提供 **恢复默认**；只有 **保存** 会写入，且一次性写全部暂存修改，离开页面丢弃草稿。

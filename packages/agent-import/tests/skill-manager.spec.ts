@@ -98,6 +98,27 @@ describe('buildSkillCatalog', () => {
     const catalog = await buildSkillCatalog(rootsFor(home), { maxSkills: 1 })
     expect(catalog.notes.some(note => note.includes('stopped after 1'))).toBe(true)
   })
+  it('reports a name the user switched off as disabled, not as one never imported', async () => {
+    const home = await tempHome()
+    await writeSkill(join(home, '.codex', 'skills'), 'alpha')
+    await writeSkill(join(home, '.codex', 'skills'), 'beta')
+    const roots = rootsFor(home)
+    const statePath = skillStatePathFor(roots) ?? ''
+    const options = { maxSkills: 200, statePath }
+    await syncSkills(roots, options)
+    await removeSkill(roots, options, 'alpha')
+
+    const off = await buildSkillCatalog(roots, options)
+    // The page has to tell a switch that was turned off from a skill that was
+    // never in, or the switch reads as having done nothing.
+    expect(row(off, 'alpha').state).toBe('disabled')
+    expect(row(off, 'beta').state).toBe('linked')
+    // A caller that keeps no decisions has no removal to report.
+    expect(row(await buildSkillCatalog(roots, OPTIONS), 'alpha').state).toBe('available')
+
+    await importSkill(roots, options, { name: 'alpha' })
+    expect(row(await buildSkillCatalog(roots, options), 'alpha').state).toBe('linked')
+  })
 })
 
 describe('syncSkills', () => {

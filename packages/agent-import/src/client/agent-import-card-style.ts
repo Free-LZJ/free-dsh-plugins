@@ -14,8 +14,11 @@ export const AGENT_IMPORT_CLASS = {
   section: 'dsh-agent-import-section',
   heading: 'dsh-agent-import-heading',
   hint: 'dsh-agent-import-hint',
-  choices: 'dsh-agent-import-choices',
-  choice: 'dsh-agent-import-choice',
+  sourceRows: 'dsh-agent-import-source-rows',
+  sourceRow: 'dsh-agent-import-source-row',
+  sourceRowTitle: 'dsh-agent-import-source-row-title',
+  sourceRowSwitch: 'dsh-agent-import-source-row-switch',
+  sourceRowBody: 'dsh-agent-import-source-row-body',
   field: 'dsh-agent-import-field',
   toggles: 'dsh-agent-import-toggles',
   toggle: 'dsh-agent-import-toggle',
@@ -94,11 +97,40 @@ const AGENT_IMPORT_CSS = `
   line-height: 1.6;
   color: var(--dsw-alias-label-tertiary);
 }
-.${AGENT_IMPORT_CLASS.choices} {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 24px;
+.${AGENT_IMPORT_CLASS.sourceRows} {
+  display: grid;
+  gap: 0;
   margin-top: 10px;
+}
+.${AGENT_IMPORT_CLASS.sourceRow} {
+  min-width: 0;
+  padding: 5px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.${AGENT_IMPORT_CLASS.sourceRow}:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+/* The disclosure title only takes the room it needs, so the switch would sit
+   beside it rather than on the row's right edge; growing it puts the switch
+   where every other row in the shell keeps its own control. */
+.${AGENT_IMPORT_CLASS.sourceRow} .${AGENT_IMPORT_CLASS.sourceRowTitle} {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+.${AGENT_IMPORT_CLASS.sourceRowSwitch} {
+  margin-left: 10px;
+}
+/* Indented to the title's edge: the disclosure's 16px leading plus its 6px gap. */
+.${AGENT_IMPORT_CLASS.sourceRowBody} {
+  display: grid;
+  gap: 10px;
+  padding: 6px 0 4px 22px;
 }
 .${AGENT_IMPORT_CLASS.field} {
   display: grid;

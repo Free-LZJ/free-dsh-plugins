@@ -109,19 +109,51 @@ function reportHook(state: AgentImportReportState) {
   return bindSnapshotSelector(createSnapshotStore<AgentImportReportState>(state))
 }
 
-/** The switch the page renders for one field. */
+/** The switch the page renders for one configuration field. */
 function toggle(name: string) {
   return screen.getByRole('switch', { name })
 }
 
-/** The MCP source choices, which the page groups apart from the skill sources. */
+/** The MCP source rows, which the page groups apart from the skill source rows. */
 function mcpSources() {
   return within(screen.getByRole('group', { name: en.sources }))
 }
 
-/** The skill source choices, which name many of the same tools. */
+/** The skill source rows, which name many of the same tools. */
 function skillSources() {
   return within(screen.getByRole('group', { name: en.skillSources }))
+}
+
+/** One MCP source row's switch, by the name the page gives what it reads. */
+function mcpSwitch(label: string) {
+  return mcpSources().getByRole('switch', { name: t('sourceSwitch', { source: label }) })
+}
+
+/** One skill source row's switch, by the name the page gives what it links. */
+function skillSourceSwitch(label: string) {
+  return skillSources().getByRole('switch', { name: t('skillSourceSwitch', { source: label }) })
+}
+
+/** One skill row's switch, by the name the page gives what it loads. */
+function skillSwitch(name: string) {
+  return screen.getByRole('switch', { name: t('skillSwitch', { name }) })
+}
+
+/**
+ * Open the fields one source row reveals.
+ *
+ * The row is the shell's disclosure chrome: its own control is the leading
+ * chevron, which carries `aria-expanded` and nothing else this page names.
+ */
+function expandRow(control: HTMLElement): void {
+  const row = control.closest('[data-disclosure-row]')
+  fireEvent.click(within(row as HTMLElement).getByRole('button', { expanded: false }))
+}
+
+/** Whether one source row offers a disclosure at all. */
+function expandable(control: HTMLElement): boolean {
+  const row = control.closest('[data-disclosure-row]')
+  return row !== null && within(row as HTMLElement).queryByRole('button', { expanded: false }) !== null
 }
 
 /** One snapshot selector bound to a store that never changes under the test. */
@@ -192,14 +224,24 @@ describe('AgentImportCard', () => {
     renderCard()
 
     expect(screen.getByLabelText(en.projectRoot)).toHaveProperty('value', '')
-    expect(screen.getByLabelText(en.codexHome)).toHaveProperty('value', '/home/u/.codex')
-    expect(screen.getByLabelText(en.claudeCodeConfigPath)).toHaveProperty('value', '/home/u/.claude.json')
     expect(screen.getByLabelText(en.maxServers)).toHaveProperty('value', '64')
     expect(screen.getByLabelText(en.maxSkills)).toHaveProperty('value', '200')
     expect(toggle(en.mcp).getAttribute('aria-checked')).toBe('true')
-    expect(toggle(en.codexIncludeSystemSkills).getAttribute('aria-checked')).toBe('false')
-    expect(mcpSources().getByLabelText(en.sourceCodex)).toHaveProperty('checked', true)
     expect(screen.getByLabelText('Server name 1')).toHaveProperty('value', '')
+    // A tool's own directories live in its source row, so they are rendered once
+    // that row is open rather than beside the workspace root.
+    expect(screen.queryByLabelText(en.codexHome)).toBeNull()
+    expandRow(mcpSwitch(en.sourceCodex))
+    expect(screen.getByLabelText(en.codexHome)).toHaveProperty('value', '/home/u/.codex')
+    expect(screen.getByLabelText(en.codexConfigPath)).toHaveProperty('value', '/home/u/.codex/config.toml')
+    expandRow(mcpSwitch(en.sourceClaudeCode))
+    expect(screen.getByLabelText(en.claudeCodeConfigDir)).toHaveProperty('value', '/home/u/.claude')
+    expect(screen.getByLabelText(en.claudeCodeConfigPath)).toHaveProperty('value', '/home/u/.claude.json')
+    // Codex's own system skills are a property of reading Codex skills, so they
+    // live in the Codex row of the skill sources rather than in the import scope.
+    expect(screen.queryByRole('switch', { name: en.codexIncludeSystemSkills })).toBeNull()
+    expandRow(skillSourceSwitch(en.skillSourceCodex))
+    expect(toggle(en.codexIncludeSystemSkills).getAttribute('aria-checked')).toBe('false')
   })
 
   it('groups the controls under titled sections', () => {
@@ -209,20 +251,25 @@ describe('AgentImportCard', () => {
     expect(headings).toEqual([en.sources, en.pathsTitle, en.scopeTitle, en.serverDenyList])
   })
 
-  it('renders the skill sources beside the MCP sources, and the automatic import switch', () => {
+  it('gives every source one row, switched on and expandable, and the automatic import switch', () => {
     const actions = renderCard()
 
     expect(screen.getByRole('heading', { level: 4, name: en.skillSources })).toBeTruthy()
     expect(screen.getByText(en.skillSourcesHint)).toBeTruthy()
-    // A source the row reads is checked; one it does not is left clear. dsh's own
-    // root is read whether or not it is named, so it is offered but unchecked.
-    expect(skillSources().getByLabelText(en.skillSourceCodex)).toHaveProperty('checked', true)
-    expect(skillSources().getByLabelText(en.skillSourceDsh)).toHaveProperty('checked', false)
-    expect(skillSources().getByLabelText(en.skillSourceCursor)).toHaveProperty('checked', false)
+    // A source the row reads is switched on; one it does not is left off. dsh's own
+    // root is read whether or not it is named, so its row is offered but off.
+    expect(mcpSwitch(en.sourceCodex).getAttribute('aria-checked')).toBe('true')
+    expect(mcpSwitch(en.sourceClaudeCode).getAttribute('aria-checked')).toBe('true')
+    expect(skillSourceSwitch(en.skillSourceCodex).getAttribute('aria-checked')).toBe('true')
+    expect(skillSourceSwitch(en.skillSourceDsh).getAttribute('aria-checked')).toBe('false')
+    expect(skillSourceSwitch(en.skillSourceCursor).getAttribute('aria-checked')).toBe('false')
     expect(toggle(en.skillAutoImport).getAttribute('aria-checked')).toBe('true')
 
-    fireEvent.click(skillSources().getByLabelText(en.skillSourceCursor))
+    fireEvent.click(skillSourceSwitch(en.skillSourceCursor))
     expect(actions.setChoices).toHaveBeenCalledWith('skillSources', ['codex', 'claude-code', 'cursor'])
+
+    fireEvent.click(mcpSwitch(en.sourceCodex))
+    expect(actions.setChoices).toHaveBeenCalledWith('sources', ['claude-code'])
 
     fireEvent.click(toggle(en.skillAutoImport))
     expect(actions.setToggle).toHaveBeenCalledWith('skillAutoImport', false)
@@ -234,9 +281,11 @@ describe('AgentImportCard', () => {
     const tabs = screen.getAllByRole('tab').map(tab => tab.textContent)
     expect(tabs).toEqual([en.loadedTitle, en.skillsTitle, en.configTitle])
     expect(screen.getByRole('tab', { name: en.loadedTitle }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.queryByLabelText(en.codexHome)).toBeNull()
+    expect(screen.queryByLabelText(en.projectRoot)).toBeNull()
 
     openConfig()
+    expect(screen.getByLabelText(en.projectRoot)).toHaveProperty('value', '')
+    expandRow(mcpSwitch(en.sourceCodex))
     expect(screen.getByLabelText(en.codexHome)).toHaveProperty('value', '/home/u/.codex')
   })
 
@@ -301,8 +350,10 @@ describe('AgentImportCard', () => {
     expect(actions.refreshReport).toHaveBeenCalledTimes(1)
   })
 
-  it('stages the text and number drafts a user types', () => {    const actions = renderCard()
+  it('stages the text and number drafts a user types', () => {
+    const actions = renderCard()
 
+    expandRow(mcpSwitch(en.sourceCodex))
     fireEvent.change(screen.getByLabelText(en.codexHome), { target: { value: 'D:/codex' } })
     fireEvent.change(screen.getByLabelText(en.maxSkills), { target: { value: '150' } })
 
@@ -313,7 +364,7 @@ describe('AgentImportCard', () => {
     const actions = renderCard()
 
     fireEvent.click(toggle(en.failOnStartupError))
-    fireEvent.click(mcpSources().getByLabelText(en.sourceClaudeCode))
+    fireEvent.click(mcpSwitch(en.sourceClaudeCode))
     fireEvent.change(screen.getByLabelText('Server name 1'), { target: { value: 'fs' } })
     fireEvent.click(screen.getByRole('button', { name: en.addDenyEntry }))
 
@@ -325,12 +376,51 @@ describe('AgentImportCard', () => {
     ])
   })
 
-  it('stages a source checked back on in import precedence order', () => {
+  it('stages a source switched back on in import precedence order', () => {
     const actions = renderCard({ sources: { choices: choices('claude-code'), overridden: true } })
 
-    fireEvent.click(mcpSources().getByLabelText(en.sourceCodex))
+    fireEvent.click(mcpSwitch(en.sourceCodex))
 
     expect(actions.setChoices.mock.calls).toEqual([['sources', ['codex', 'claude-code']]])
+  })
+
+  it('renders a source row as a plain row when it reveals nothing', () => {
+    renderCard()
+
+    // Cursor is a switch and nothing else, so its row offers no disclosure; the
+    // tools with directories of their own do.
+    expect(expandable(skillSourceSwitch(en.skillSourceCursor))).toBe(false)
+    expect(expandable(mcpSwitch(en.sourceCodex))).toBe(true)
+  })
+
+  it('reveals a tool\u2019s directories while either half of that tool is in use', () => {
+    // Codex reads no MCP servers, but its skills are auto-imported, and those same
+    // directories decide where its skills come from: the paths stay reachable.
+    renderCard({
+      sources: { choices: choices('claude-code'), overridden: true },
+      skillSources: { choices: skillChoices('codex'), overridden: true },
+    })
+
+    expect(mcpSwitch(en.sourceCodex).getAttribute('aria-checked')).toBe('false')
+    expandRow(mcpSwitch(en.sourceCodex))
+    expect(screen.getByLabelText(en.codexHome)).toHaveProperty('value', '/home/u/.codex')
+  })
+
+  it('leaves a tool no half of the import uses with no row to open', () => {
+    renderCard({
+      sources: { choices: choices(), overridden: true },
+      skillSources: { choices: skillChoices(), overridden: true },
+    })
+
+    expect(expandable(mcpSwitch(en.sourceCodex))).toBe(false)
+    expect(screen.queryByLabelText(en.codexHome)).toBeNull()
+  })
+
+  it('shows the Codex system-skills switch only once Codex skills are auto-imported', () => {
+    renderCard({ skillSources: { choices: skillChoices('claude-code'), overridden: true } })
+
+    expect(expandable(skillSourceSwitch(en.skillSourceCodex))).toBe(false)
+    expect(screen.queryByRole('switch', { name: en.codexIncludeSystemSkills })).toBeNull()
   })
 
   it('stages one edited denied server and leaves the other rows alone', () => {
@@ -357,12 +447,15 @@ describe('AgentImportCard', () => {
       values: { ...servedPage.values, 'codex.home': field('/custom/.codex', { overridden: true }) },
       switches: { ...servedPage.switches, mcp: { checked: true, overridden: true } },
     })
+    // A field's own reset is inside the row that holds it, so the row is opened
+    // the way a user would open it before the control exists at all.
+    expandRow(mcpSwitch(en.sourceCodex))
 
     const resets = screen.getAllByRole('button', { name: en.reset })
     expect(resets).toHaveLength(5)
     for (const reset of resets) fireEvent.click(reset)
 
-    expect(actions.clear.mock.calls).toEqual([['sources'], ['skillSources'], ['codex.home'], ['mcp'], ['serverDenyList']])
+    expect(actions.clear.mock.calls).toEqual([['codex.home'], ['sources'], ['skillSources'], ['mcp'], ['serverDenyList']])
   })
 
   it('shows an invalid draft in place of the hint and blocks the save', () => {
@@ -381,10 +474,10 @@ describe('AgentImportCard', () => {
     renderCard({ writable: false })
 
     expect(screen.getByText(en.readOnly)).toBeTruthy()
-    expect(screen.getByLabelText(en.codexHome)).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText(en.projectRoot)).toHaveProperty('disabled', true)
     expect(toggle(en.mcp)).toHaveProperty('disabled', true)
-    expect(mcpSources().getByLabelText(en.sourceCodex)).toHaveProperty('disabled', true)
-    expect(skillSources().getByLabelText(en.skillSourceCodex)).toHaveProperty('disabled', true)
+    expect(mcpSwitch(en.sourceCodex)).toHaveProperty('disabled', true)
+    expect(skillSourceSwitch(en.skillSourceCodex)).toHaveProperty('disabled', true)
     expect(screen.getByLabelText('Server name 1')).toHaveProperty('disabled', true)
     expect(screen.getByRole('button', { name: en.addDenyEntry })).toHaveProperty('disabled', true)
   })
@@ -393,7 +486,7 @@ describe('AgentImportCard', () => {
     renderCard({ available: false, ...blankPage() })
 
     expect(screen.getByText(en.unavailable)).toBeTruthy()
-    expect(screen.queryByLabelText(en.codexHome)).toBeNull()
+    expect(screen.queryByLabelText(en.projectRoot)).toBeNull()
   })
 
   it('disables every control and reports the save in flight while one crosses the wire', () => {
@@ -402,7 +495,7 @@ describe('AgentImportCard', () => {
     expect(screen.getByRole('button', { name: en.saving })).toHaveProperty('disabled', true)
     expect(screen.getByLabelText(en.maxServers)).toHaveProperty('disabled', true)
     expect(toggle(en.skills)).toHaveProperty('disabled', true)
-    expect(mcpSources().getByLabelText(en.sourceCodex)).toHaveProperty('disabled', true)
+    expect(mcpSwitch(en.sourceCodex)).toHaveProperty('disabled', true)
   })
 
   it('drops every staged edit when the page leaves it', () => {
@@ -427,7 +520,7 @@ describe('AgentImportCard, on the Skills tab', () => {
     expect(screen.getByText(en.skillsLoading)).toBeTruthy()
   })
 
-  it('lists each skill with its state, its source, and what can be done with it', () => {
+  it('lists each skill with its state, its source, and one switch that loads it', () => {
     renderSkills({
       phase: 'ready',
       catalog: skillCatalog({
@@ -445,6 +538,7 @@ describe('AgentImportCard, on the Skills tab', () => {
     })
 
     expect(screen.getByText('2 of 2')).toBeTruthy()
+    expect(screen.getByText('2 skills · 1 on · 0 disabled')).toBeTruthy()
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
     expect(screen.getByText('drawio-generator')).toBeTruthy()
     expect(screen.getByText('Draws diagrams.')).toBeTruthy()
@@ -452,6 +546,87 @@ describe('AgentImportCard, on the Skills tab', () => {
     expect(screen.getByText(en.skillStateLinked)).toBeTruthy()
     expect(screen.getByText('Imported from Cursor')).toBeTruthy()
     expect(screen.getByTitle('/home/u/.dsh/skills/linked-one')).toBeTruthy()
+    // The switch states what dsh loads, which is the whole action a row offers.
+    expect(skillSwitch('drawio-generator').getAttribute('aria-checked')).toBe('false')
+    expect(skillSwitch('linked-one').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('switches a name that is not imported on, and one that is imported off', () => {
+    const actions = renderSkills({
+      phase: 'ready',
+      catalog: skillCatalog({ skills: [skillReport(), skillReport({ name: 'linked-one', state: 'linked' })] }),
+    })
+
+    fireEvent.click(skillSwitch('demo'))
+    expect(actions.importSkill).toHaveBeenCalledWith({ name: 'demo' })
+
+    fireEvent.click(skillSwitch('linked-one'))
+    expect(actions.removeSkill).toHaveBeenCalledWith('linked-one')
+  })
+
+  it('counts the names dsh loads, and the names the user switched off', () => {
+    renderSkills({
+      phase: 'ready',
+      catalog: skillCatalog({
+        skills: [
+          skillReport({ name: 'available-one' }),
+          skillReport({ name: 'off-one', state: 'disabled' }),
+          skillReport({ name: 'linked-one', state: 'linked' }),
+          skillReport({ name: 'local-one', state: 'local' }),
+          skillReport({ name: 'broken-one', state: 'broken' }),
+        ],
+      }),
+    })
+
+    expect(screen.getByText('5 skills · 3 on · 1 disabled')).toBeTruthy()
+  })
+
+  it('states why a name the user switched off is not loaded, and imports it again', () => {
+    const actions = renderSkills({
+      phase: 'ready',
+      catalog: skillCatalog({ skills: [skillReport({ name: 'off-one', state: 'disabled' })] }),
+    })
+
+    expect(screen.getByText(en.skillStateDisabled)).toBeTruthy()
+    expect(screen.getByText(en.skillDisabled)).toBeTruthy()
+    // Nothing is installed, but the row is not the untouched one either.
+    expect(screen.queryByText(en.skillManual)).toBeNull()
+    expect(skillSwitch('off-one').getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.click(skillSwitch('off-one'))
+    expect(actions.importSkill).toHaveBeenCalledWith({ name: 'off-one' })
+  })
+
+  it('refuses a second press while one write is still in flight', () => {
+    renderSkills(
+      { phase: 'ready', catalog: skillCatalog({ skills: [skillReport({ name: 'demo' })] }) },
+      { action: { phase: 'busy', name: 'demo' } },
+    )
+
+    // The first press already asked for the opposite of what a second one would.
+    expect(skillSwitch('demo')).toHaveProperty('disabled', true)
+  })
+
+  it('offers a switched-off name its sources without a replacement', () => {
+    const actions = renderSkills({
+      phase: 'ready',
+      catalog: skillCatalog({
+        skills: [skillReport({
+          name: 'off-one',
+          state: 'disabled',
+          conflict: true,
+          candidates: [
+            skillCandidate({ source: 'codex', label: 'Codex', winner: true }),
+            skillCandidate({ source: 'cursor', label: 'Cursor', winner: false }),
+          ],
+        })],
+      }),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Cursor' }))
+
+    // Nothing is linked yet, so there is no link to replace.
+    expect(actions.importSkill).toHaveBeenCalledWith({ name: 'off-one', source: 'cursor' })
   })
 
   it('flags a skill whose every offering sits outside the automatic set', () => {
@@ -521,7 +696,7 @@ describe('AgentImportCard, on the Skills tab', () => {
     expect(actions.importSkill).toHaveBeenCalledWith({ name: 'demo', source: 'cursor' })
   })
 
-  it('explains a name a real local directory owns, and offers neither action', () => {
+  it('explains a name a real local directory owns, and refuses to switch it off', () => {
     renderSkills({
       phase: 'ready',
       catalog: skillCatalog({
@@ -531,21 +706,11 @@ describe('AgentImportCard, on the Skills tab', () => {
 
     expect(screen.getByText(en.skillStateLocal)).toBeTruthy()
     expect(screen.getByText(en.skillLocal)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: en.skillImport })).toBeNull()
-    expect(screen.queryByRole('button', { name: en.remove })).toBeNull()
-  })
-
-  it('imports the winning copy, and removes an import by name', () => {
-    const actions = renderSkills({
-      phase: 'ready',
-      catalog: skillCatalog({ skills: [skillReport(), skillReport({ name: 'linked-one', state: 'linked' })] }),
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: en.skillImport }))
-    expect(actions.importSkill).toHaveBeenCalledWith({ name: 'demo' })
-
-    fireEvent.click(screen.getByRole('button', { name: en.remove }))
-    expect(actions.removeSkill).toHaveBeenCalledWith('linked-one')
+    // The switch states that dsh loads the name, and says why it cannot be turned
+    // off; nothing on the row can remove or replace a real local directory.
+    expect(skillSwitch('handwritten').getAttribute('aria-checked')).toBe('true')
+    expect(skillSwitch('handwritten')).toHaveProperty('disabled', true)
+    expect(skillSwitch('handwritten').getAttribute('title')).toBe(en.skillLocal)
   })
 
   it('asks for the copy a row points at when its instructions are opened', () => {
@@ -578,8 +743,8 @@ describe('AgentImportCard, on the Skills tab', () => {
     expect(body.textContent).toBe('# Demo\n\nBody.\n')
     expect(screen.getByTitle('/home/u/.codex/skills/demo/SKILL.md')).toBeTruthy()
     expect(screen.getByText(en.skillSourceCodex)).toBeTruthy()
-    // The body stands in place of the list, so no row action is on screen.
-    expect(screen.queryByRole('button', { name: en.skillImport })).toBeNull()
+    // The body stands in place of the list, so no row switch is on screen.
+    expect(screen.queryByRole('switch')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: en.skillBack }))
     expect(actions.closeSkill).toHaveBeenCalledTimes(1)

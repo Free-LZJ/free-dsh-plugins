@@ -299,9 +299,19 @@ function isSkipReason(value: unknown): value is SkillSkipReason {
     || value === 'removed'
 }
 
-/** Whether a value is one of the four states a catalog row can be in. */
+/**
+ * Whether a value is one of the states a catalog row can be in.
+ *
+ * `disabled` is a state this page renders differently from `available`, so a
+ * payload carrying it must be admitted here: refusing it would hide the whole
+ * catalog over a row the user switched off themselves.
+ */
 function isState(value: unknown): value is SkillState {
-  return value === 'available' || value === 'linked' || value === 'local' || value === 'broken'
+  return value === 'available'
+    || value === 'linked'
+    || value === 'local'
+    || value === 'broken'
+    || value === 'disabled'
 }
 
 /** Whether a value is a list of strings. */

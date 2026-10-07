@@ -428,5 +428,14 @@ describe('the routes against the real operations', () => {
     await expect(readFile(join(home, 'agent-import', 'state.json'), 'utf8')).resolves.toContain('"demo"')
     // The workspace is left without so much as the directory.
     await expect(lstat(join(project, '.dsh'))).rejects.toThrow()
+
+    // The page reads the decision back as a state of its own: the row has to be
+    // able to say the switch was turned off rather than never turned on.
+    const catalog = response()
+    await createSkillsHandler(ops)(request(), catalog.res)
+    expect(catalog.answer()).toMatchObject({
+      status: 200,
+      body: { skills: [expect.objectContaining({ name: 'demo', state: 'disabled' })] },
+    })
   })
 })

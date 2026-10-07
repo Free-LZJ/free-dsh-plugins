@@ -6,7 +6,7 @@ import {
   loadSkillCatalog, loadSkillContent, sendSkillImport, sendSkillRemoval, SKILL_CONTENT_PATH, SKILL_IMPORT_PATH,
   SKILL_REMOVE_PATH, SKILLS_PATH,
 } from '../src/client/agent-import-skills.ts'
-import { skillCatalog, skillOutcome } from './support/skills.ts'
+import { skillCatalog, skillOutcome, skillReport } from './support/skills.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -63,6 +63,25 @@ describe('loadSkillCatalog', () => {
 
   it('refuses a payload the tab cannot render', async () => {
     stubFetch({ ok: true, status: 200, body: { skills: [{ name: 'demo' }], notes: [] } })
+
+    expect(await loadSkillCatalog()).toEqual({ phase: 'unavailable', reason: 'unexpected catalog payload' })
+  })
+
+  it('accepts a row the user switched off, which the tab states in its own way', async () => {
+    // Refusing the whole payload over a row the user switched off themselves
+    // would hide every other skill with it.
+    const catalog = skillCatalog({ skills: [skillReport({ name: 'off-one', state: 'disabled' })] })
+    stubFetch({ ok: true, status: 200, body: catalog })
+
+    expect(await loadSkillCatalog()).toEqual({ phase: 'ready', catalog })
+  })
+
+  it('refuses a row whose state has no copy to render', async () => {
+    stubFetch({
+      ok: true,
+      status: 200,
+      body: { skills: [{ ...skillReport(), state: 'gone' }], notes: [] },
+    })
 
     expect(await loadSkillCatalog()).toEqual({ phase: 'unavailable', reason: 'unexpected catalog payload' })
   })

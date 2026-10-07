@@ -9,7 +9,7 @@
 import { useId, useState, type ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
-  Button, Checkbox, Input, PathLabel, SegmentedControl, SettingsForm, SettingsValueField, Switch, Tag,
+  Button, DisclosureRow, Input, PathLabel, SegmentedControl, SettingsForm, SettingsValueField, Switch, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
@@ -40,14 +40,28 @@ interface ControlField<Field extends string> {
   readonly hintKey: AgentImportLocaleKey
 }
 
-/** The directory and file fields, in render order. */
+/** The directory and file fields of the whole import, in render order. */
 const PATH_FIELDS: readonly ControlField<AgentImportInputFieldId>[] = [
   { field: 'projectRoot', labelKey: 'projectRoot', hintKey: 'projectRootHint' },
-  { field: 'codex.home', labelKey: 'codexHome', hintKey: 'codexHomeHint' },
-  { field: 'codex.configPath', labelKey: 'codexConfigPath', hintKey: 'codexConfigPathHint' },
-  { field: 'claudeCode.configDir', labelKey: 'claudeCodeConfigDir', hintKey: 'claudeCodeConfigDirHint' },
-  { field: 'claudeCode.configPath', labelKey: 'claudeCodeConfigPath', hintKey: 'claudeCodeConfigPathHint' },
 ]
+
+/**
+ * The directory fields one MCP source row reveals, by source.
+ *
+ * They live in the row rather than in the locations section because they are that
+ * tool's own directories: they are read wherever the tool's skills are scanned
+ * from, so the row that owns the tool is the place that can explain them.
+ */
+const SOURCE_FIELDS: Readonly<Record<ForeignSource, readonly ControlField<AgentImportInputFieldId>[]>> = {
+  codex: [
+    { field: 'codex.home', labelKey: 'codexHome', hintKey: 'codexHomeHint' },
+    { field: 'codex.configPath', labelKey: 'codexConfigPath', hintKey: 'codexConfigPathHint' },
+  ],
+  'claude-code': [
+    { field: 'claudeCode.configDir', labelKey: 'claudeCodeConfigDir', hintKey: 'claudeCodeConfigDirHint' },
+    { field: 'claudeCode.configPath', labelKey: 'claudeCodeConfigPath', hintKey: 'claudeCodeConfigPathHint' },
+  ],
+}
 
 /** The bounds on what one import reads, in render order. */
 const COUNT_FIELDS: readonly ControlField<AgentImportInputFieldId>[] = [
@@ -55,12 +69,11 @@ const COUNT_FIELDS: readonly ControlField<AgentImportInputFieldId>[] = [
   { field: 'maxSkills', labelKey: 'maxSkills', hintKey: 'maxSkillsHint' },
 ]
 
-/** The switches, in render order. */
+/** The switches that bound the import, in render order. */
 const SWITCH_FIELDS: readonly ControlField<AgentImportToggleFieldId>[] = [
   { field: 'mcp', labelKey: 'mcp', hintKey: 'mcpHint' },
   { field: 'skills', labelKey: 'skills', hintKey: 'skillsHint' },
   { field: 'skillAutoImport', labelKey: 'skillAutoImport', hintKey: 'skillAutoImportHint' },
-  { field: 'codex.includeSystemSkills', labelKey: 'codexIncludeSystemSkills', hintKey: 'codexIncludeSystemSkillsHint' },
   { field: 'failOnStartupError', labelKey: 'failOnStartupError', hintKey: 'failOnStartupErrorHint' },
 ]
 
@@ -158,19 +171,42 @@ function ConfigSections(
   },
 ) {
   const { t, state, disabled, overriddenLabel, resetLabel } = props
+  /** The sources the skill half names, which keep a tool's directories reachable. */
+  const skillSourceIds = selectedValues(state.skillSources.choices)
+  /** One directory field of a source row, with the overrides every field carries. */
+  const valueField = (item: ControlField<AgentImportInputFieldId>) => (
+    <ValueField
+      key={item.field}
+      item={item}
+      state={state.values[item.field]}
+      t={t}
+      overriddenLabel={overriddenLabel}
+      resetLabel={resetLabel}
+      disabled={disabled}
+      onEdit={text => { props.edit(item.field, text) }}
+      onReset={() => { props.clear(item.field) }}
+    />
+  )
   return (
     <>
       <Section id="sources" title={t('sources')} hint={t('sourcesHint')}>
-        {/* Two groups of checkboxes name the same tools, so each one carries its own name. */}
-        <div className={AGENT_IMPORT_CLASS.choices} role="group" aria-label={t('sources')}>
+        {/* One row per tool, so the switch that reads it and the directories it
+            needs are one control rather than a grid plus a distant path field. */}
+        <div className={AGENT_IMPORT_CLASS.sourceRows} role="group" aria-label={t('sources')}>
           {state.sources.choices.map(choice => (
-            <Checkbox
+            <SourceRow
               key={choice.value}
+              label={sourceLabel(t, choice.value)}
+              switchLabel={t('sourceSwitch', { source: sourceLabel(t, choice.value) })}
               checked={choice.checked}
               disabled={disabled}
-              label={sourceLabel(t, choice.value)}
-              onChange={(next) => { props.setChoices('sources', selectionAfter(state.sources.choices, choice.value, next)) }}
-            />
+              // The tool's directories decide where its skills are read from too,
+              // so they stay reachable while either half of the tool is in use.
+              expandable={choice.checked || skillSourceIds.includes(choice.value)}
+              onToggle={(next) => { props.setChoices('sources', selectionAfter(state.sources.choices, choice.value, next)) }}
+            >
+              {SOURCE_FIELDS[choice.value].map(valueField)}
+            </SourceRow>
           ))}
         </div>
         {state.sources.overridden
@@ -185,15 +221,34 @@ function ConfigSections(
           : null}
         <h4 className={AGENT_IMPORT_CLASS.subheading}>{t('skillSources')}</h4>
         <p className={AGENT_IMPORT_CLASS.hint}>{t('skillSourcesHint')}</p>
-        <div className={AGENT_IMPORT_CLASS.choices} role="group" aria-label={t('skillSources')}>
+        <div className={AGENT_IMPORT_CLASS.sourceRows} role="group" aria-label={t('skillSources')}>
           {state.skillSources.choices.map(choice => (
-            <Checkbox
+            <SourceRow
               key={choice.value}
+              label={skillSourceLabel(t, choice.value, choice.value)}
+              switchLabel={t('skillSourceSwitch', { source: skillSourceLabel(t, choice.value, choice.value) })}
               checked={choice.checked}
               disabled={disabled}
-              label={skillSourceLabel(t, choice.value, choice.value)}
-              onChange={(next) => { props.setChoices('skillSources', selectionAfter(state.skillSources.choices, choice.value, next)) }}
-            />
+              // Only Codex carries a setting of its own here; every other source
+              // is the switch and nothing else, so it renders as a plain row.
+              expandable={choice.checked && choice.value === 'codex'}
+              onToggle={(next) => { props.setChoices('skillSources', selectionAfter(state.skillSources.choices, choice.value, next)) }}
+            >
+              {choice.value === 'codex'
+                ? (
+                  <ToggleField
+                    label={t('codexIncludeSystemSkills')}
+                    hint={t('codexIncludeSystemSkillsHint')}
+                    state={state.switches['codex.includeSystemSkills']}
+                    overriddenLabel={overriddenLabel}
+                    resetLabel={resetLabel}
+                    disabled={disabled}
+                    onChange={(next) => { props.setToggle('codex.includeSystemSkills', next) }}
+                    onReset={() => { props.clear('codex.includeSystemSkills') }}
+                  />
+                )
+                : null}
+            </SourceRow>
           ))}
         </div>
         {state.skillSources.overridden
@@ -209,19 +264,7 @@ function ConfigSections(
       </Section>
       <Section id="paths" title={t('pathsTitle')} hint={t('pathsHint')}>
         <div className={AGENT_IMPORT_CLASS.field}>
-          {PATH_FIELDS.map(item => (
-            <ValueField
-              key={item.field}
-              item={item}
-              state={state.values[item.field]}
-              t={t}
-              overriddenLabel={overriddenLabel}
-              resetLabel={resetLabel}
-              disabled={disabled}
-              onEdit={text => { props.edit(item.field, text) }}
-              onReset={() => { props.clear(item.field) }}
-            />
-          ))}
+          {PATH_FIELDS.map(valueField)}
         </div>
       </Section>
       <Section id="scope" title={t('scopeTitle')} hint={t('scopeHint')}>
@@ -241,19 +284,7 @@ function ConfigSections(
           ))}
         </div>
         <div className={AGENT_IMPORT_CLASS.field}>
-          {COUNT_FIELDS.map(item => (
-            <ValueField
-              key={item.field}
-              item={item}
-              state={state.values[item.field]}
-              t={t}
-              overriddenLabel={overriddenLabel}
-              resetLabel={resetLabel}
-              disabled={disabled}
-              onEdit={text => { props.edit(item.field, text) }}
-              onReset={() => { props.clear(item.field) }}
-            />
-          ))}
+          {COUNT_FIELDS.map(valueField)}
         </div>
       </Section>
       <Section id="serverDenyList" title={t('serverDenyList')} hint={t('serverDenyListHint')}>
@@ -413,6 +444,60 @@ function LoadedLists(props: { t: AgentImportCardProps['t']; report: AgentImportR
   )
 }
 
+/**
+ * One selectable source as a row: its name on the left, the switch that turns it
+ * on the right, and the fields it needs once it is on.
+ *
+ * The switch rides in `collapsedContent` so it stays on the right whether the row
+ * is open or closed, which is the layout the shell's own disclosure rows use. A
+ * row that reveals nothing renders without a disclosure at all, so a source that
+ * is merely on or off does not offer a chevron that opens an empty body.
+ */
+function SourceRow(props: {
+  /** Visible name of the source. */
+  label: string
+  /** Accessible name of the switch, which says what turning it on reads. */
+  switchLabel: string
+  /** Whether the source is on. */
+  checked: boolean
+  /** Whether the deployment or a write in flight locks every control. */
+  disabled: boolean
+  /** Whether this source has fields to reveal, so the row is a disclosure. */
+  expandable: boolean
+  /** The fields revealed while the source is in use. */
+  children?: ReactNode
+  /** Stage the source's new state. */
+  onToggle: (next: boolean) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  // Nothing is rendered while the source is unused: its fields appear with the
+  // switch, collapsed, so a row states its own scope before it can be edited.
+  const open = props.expandable && expanded
+  return (
+    <DisclosureRow
+      icon={null}
+      title={props.label}
+      open={open}
+      expandable={props.expandable}
+      onToggle={() => { setExpanded(!expanded) }}
+      keepContentWhenOpen
+      className={AGENT_IMPORT_CLASS.sourceRow}
+      titleClassName={AGENT_IMPORT_CLASS.sourceRowTitle}
+      collapsedContent={(
+        <Switch
+          checked={props.checked}
+          disabled={props.disabled}
+          label={props.switchLabel}
+          className={AGENT_IMPORT_CLASS.sourceRowSwitch}
+          onChange={props.onToggle}
+        />
+      )}
+    >
+      <div className={AGENT_IMPORT_CLASS.sourceRowBody}>{props.children}</div>
+    </DisclosureRow>
+  )
+}
+
 /** One titled group of controls, with the page's own heading level and spacing. */
 function Section(props: { id: string; title: string; hint: string; children: ReactNode }) {
   const headingId = useId()
@@ -516,7 +601,18 @@ function reportedSourceLabel(t: AgentImportCardProps['t'], source: string): stri
 }
 
 /**
- * The source selection after one checkbox changes.
+ * The values one selection currently names.
+ * @param choices - one selection's choices.
+ * @returns the values it names, in the order they are offered.
+ */
+function selectedValues<Value extends string>(
+  choices: readonly AgentImportChoiceState<Value>[],
+): readonly Value[] {
+  return choices.filter(choice => choice.checked).map(choice => choice.value)
+}
+
+/**
+ * The source selection after one row's switch changes.
  * @param choices - the current choices.
  * @param value - the choice that changed.
  * @param checked - the state it changed to.

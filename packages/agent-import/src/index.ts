@@ -329,7 +329,9 @@ async function readReport(record: GenerationRecord | undefined): Promise<AgentIm
 async function readCatalog(record: GenerationRecord | undefined): Promise<SkillCatalog> {
   if (record === undefined) return { skills: [], notes: [] }
   if (!record.skills) return { skills: [], notes: ['skill management is disabled by the skills setting'] }
-  return await buildSkillCatalog(record.skillRoots, { maxSkills: record.maxSkills })
+  // The same options the mutations run with, so a name the user removed reads as
+  // removed here too rather than looking like one that was never imported.
+  return await buildSkillCatalog(record.skillRoots, skillOptions(record.skillRoots, record.maxSkills))
 }
 
 /** Run one skill mutation against the live generation, refusing while skills are disabled. */

@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { stubConfigForm } from './support/runtime.ts'
-import { skillCatalog, skillOutcome } from './support/skills.ts'
+import { skillCatalog, skillOutcome, skillReport } from './support/skills.ts'
 import { AgentImportCardController } from '../src/client/agent-import-card-controller.ts'
 import type { AgentImportSkillsPort } from '../src/client/agent-import-card-controller.ts'
 import type {
@@ -287,6 +287,33 @@ describe('AgentImportCardController, on the Skills tab', () => {
     })
     expect(port.removeSkill).toHaveBeenCalledWith('demo')
     expect(port.loadCatalog).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a catalog holding a name the user switched off, and re-reads it once it is on again', async () => {
+    const port = skillsPort()
+    const off = skillCatalog({ skills: [skillReport({ name: 'off-one', state: 'disabled' })] })
+    const back = skillCatalog({ skills: [skillReport({ name: 'off-one', state: 'linked' })] })
+    port.loadCatalog.mockResolvedValueOnce({ phase: 'ready', catalog: off })
+      .mockResolvedValueOnce({ phase: 'ready', catalog: back })
+    port.importSkill.mockResolvedValue({ phase: 'ready', outcome: skillOutcome({ imported: ['off-one'] }) })
+    const controller = new AgentImportCardController(served().scope, unread, port)
+    const { hooks, ...face } = controller.inject()
+
+    face.refreshSkills()
+    // The state travels to the tab unchanged: it is the tab that decides how a
+    // switched-off name reads and what its switch does.
+    await vi.waitFor(() => {
+      expect(hooks.agentImportSkills.getSnapshot()).toEqual({ phase: 'ready', catalog: off })
+    })
+
+    face.importSkill({ name: 'off-one' })
+
+    await vi.waitFor(() => {
+      expect(hooks.agentImportSkills.getSnapshot()).toEqual({ phase: 'ready', catalog: back })
+    })
+    // Switching the name back on is importing the winning copy again, which is
+    // also what withdraws the Host's remembered removal.
+    expect(port.importSkill).toHaveBeenCalledWith({ name: 'off-one' })
   })
 
   it('reports a mutation the Host refused, and reads the catalog anyway', async () => {

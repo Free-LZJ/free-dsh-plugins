@@ -8,8 +8,8 @@ import type { SkillSourceId } from '../skill-roots.ts'
 /** Locale keys the page renders. */
 export type AgentImportLocaleKey =
   | 'title'
-  | 'sources' | 'sourcesHint' | 'sourceCodex' | 'sourceClaudeCode'
-  | 'skillSources' | 'skillSourcesHint' | 'skillAutoImport' | 'skillAutoImportHint'
+  | 'sources' | 'sourcesHint' | 'sourceCodex' | 'sourceClaudeCode' | 'sourceSwitch'
+  | 'skillSources' | 'skillSourcesHint' | 'skillSourceSwitch' | 'skillAutoImport' | 'skillAutoImportHint'
   | 'pathsTitle' | 'pathsHint' | 'scopeTitle' | 'scopeHint'
   | 'loadedTitle' | 'loadedHint' | 'loadedSummary' | 'loadedSkills' | 'loadedServers'
   | 'configTitle' | 'viewLabel'
@@ -29,10 +29,11 @@ export type AgentImportLocaleKey =
   | 'save' | 'saving' | 'saveFailed' | 'invalidNumber'
   | 'skillsTitle' | 'skillsTabHint' | 'skillsLoading' | 'skillsUnavailable' | 'skillsOffline'
   | 'skillsEmpty' | 'skillsNotes' | 'skillSearch' | 'skillSearchHint' | 'skillCount' | 'skillRefresh'
-  | 'skillImport' | 'skillImportFrom' | 'skillView' | 'skillBack'
+  | 'skillImportFrom' | 'skillView' | 'skillBack' | 'skillSwitch' | 'skillStats'
   | 'skillContentLoading' | 'skillContentUnavailable' | 'skillContentOffline'
-  | 'skillLocal' | 'skillConflict' | 'skillConflictSources' | 'skillInstalledFrom' | 'skillOfferedBy' | 'skillManual'
-  | 'skillStateAvailable' | 'skillStateLinked' | 'skillStateLocal' | 'skillStateBroken'
+  | 'skillLocal' | 'skillDisabled' | 'skillConflict' | 'skillConflictSources' | 'skillInstalledFrom'
+  | 'skillOfferedBy' | 'skillManual'
+  | 'skillStateAvailable' | 'skillStateLinked' | 'skillStateLocal' | 'skillStateBroken' | 'skillStateDisabled'
   | 'skipAlreadyInstalled' | 'skipLocalCopy' | 'skipNoSource' | 'skipOccupied'
   | 'skipUnsupported' | 'skipNotALink' | 'skipFailed' | 'skipRemoved'
   | 'skillActionBusy' | 'skillActionImported' | 'skillActionRemoved' | 'skillActionSkipped'
@@ -47,16 +48,18 @@ export type AgentImportLocaleKey =
 /** English copy. */
 export const en: Record<AgentImportLocaleKey, string> = {
   title: 'Agent import',
-  sources: 'Sources',
-  sourcesHint: 'Tools to read, in import precedence order.',
-  skillSources: 'Auto-import sources',
-  skillSourcesHint: "These tools' skills are linked on activation. The Skills tab lists every known source, and a skill from any other source can still be imported one at a time. dsh's own root is always read, and is the only write target.",
+  sources: 'MCP sources',
+  sourcesHint: "Read and mount these tools' MCP servers. A source switches on with one switch; its own directories appear once the tool is in use.",
+  skillSources: 'Skill sources',
+  skillSourcesHint: "Link these sources' skills on activation. The Skills tab lists every known source, and a skill from any other source can still be imported one at a time. dsh's own root is always read, and is the only write target.",
   skillAutoImport: 'Link new skills automatically',
   skillAutoImportHint: 'Links the chosen sources when the plugin activates, and again when that set changes. Turn it off to import every skill by hand.',
+  sourceSwitch: 'Read {source}',
+  skillSourceSwitch: 'Auto-import skills from {source}',
   sourceCodex: 'Codex',
   sourceClaudeCode: 'Claude Code',
   pathsTitle: 'Locations',
-  pathsHint: "Where each tool keeps its files. Leave a field blank to use that tool's own default.",
+  pathsHint: 'The workspace every imported entry is scoped to, blank for the process working directory.',
   scopeTitle: 'Import scope',
   scopeHint: 'What to import, and how much of it.',
   loadedTitle: 'Loaded',
@@ -127,7 +130,8 @@ export const en: Record<AgentImportLocaleKey, string> = {
   skillSearchHint: 'Filters by name, description, or source.',
   skillCount: '{shown} of {total}',
   skillRefresh: 'Read again',
-  skillImport: 'Import',
+  skillSwitch: 'Load {name}',
+  skillStats: '{total} skills · {enabled} on · {disabled} disabled',
   skillImportFrom: 'Import from {source}',
   skillView: 'View instructions',
   skillBack: 'Back to the list',
@@ -135,6 +139,7 @@ export const en: Record<AgentImportLocaleKey, string> = {
   skillContentUnavailable: 'Could not read the body: {reason}',
   skillContentOffline: 'Could not reach the Host to read the body.',
   skillLocal: 'A real directory in a dsh root already owns this name; this page never replaces or removes it.',
+  skillDisabled: 'You switched this import off, so automatic import leaves it alone. Switch it back on to import it again.',
   skillConflict: 'More than one source serves this name.',
   skillConflictSources: 'Also offered by {sources}.',
   skillInstalledFrom: 'Imported from {source}',
@@ -144,6 +149,7 @@ export const en: Record<AgentImportLocaleKey, string> = {
   skillStateLinked: 'Imported',
   skillStateLocal: 'Local',
   skillStateBroken: 'Broken link',
+  skillStateDisabled: 'Disabled',
   skipAlreadyInstalled: 'a link is already in place',
   skipLocalCopy: 'a real local directory owns the name',
   skipNoSource: 'only sources outside the automatic set offer this name',
@@ -186,16 +192,18 @@ export const en: Record<AgentImportLocaleKey, string> = {
 /** Simplified Chinese copy. */
 export const zh: Record<AgentImportLocaleKey, string> = {
   title: '代理配置导入',
-  sources: '来源',
-  sourcesHint: '要读取的工具，按导入优先级排列。',
-  skillSources: '自动导入来源',
-  skillSourcesHint: '激活时把这些工具的技能自动建为链接。技能页会列出所有已知来源的技能，其他来源仍可逐个手动导入。dsh 自己的技能根总是读取，也是唯一的写入目标。',
+  sources: 'MCP 来源',
+  sourcesHint: '读取并挂载这些工具的 MCP 服务器。一行一个开关；该工具被任一用途启用后即可设置它的目录。',
+  skillSources: '技能来源',
+  skillSourcesHint: '激活时把这些来源的技能自动建为链接。技能页会列出所有已知来源的技能，其他来源仍可逐个手动导入。dsh 自己的技能根总是读取，也是唯一的写入目标。',
   skillAutoImport: '自动导入技能',
   skillAutoImportHint: '插件激活时以及自动导入来源变化时，把选中的来源建为链接。关掉后只能逐个手动导入。',
+  sourceSwitch: '读取 {source}',
+  skillSourceSwitch: '自动导入 {source} 的技能',
   sourceCodex: 'Codex',
   sourceClaudeCode: 'Claude Code',
   pathsTitle: '路径',
-  pathsHint: '各工具存放文件的目录；留空表示使用该工具自身的默认值。',
+  pathsHint: '本次导入的作用范围（工作区）；留空表示使用进程工作目录。',
   scopeTitle: '导入范围',
   scopeHint: '导入哪些内容，以及导入多少。',
   loadedTitle: '已加载',
@@ -266,7 +274,8 @@ export const zh: Record<AgentImportLocaleKey, string> = {
   skillSearchHint: '按名称、说明或来源筛选。',
   skillCount: '共 {total} 个，显示 {shown} 个',
   skillRefresh: '重新读取',
-  skillImport: '导入',
+  skillSwitch: '加载 {name}',
+  skillStats: '{total} 个技能 · {enabled} 个已启用 · {disabled} 个已停用',
   skillImportFrom: '从 {source} 导入',
   skillView: '查看正文',
   skillBack: '返回列表',
@@ -274,6 +283,7 @@ export const zh: Record<AgentImportLocaleKey, string> = {
   skillContentUnavailable: '读不到正文：{reason}',
   skillContentOffline: '连接不到 Host，无法读取正文。',
   skillLocal: 'dsh 技能目录里已有同名真实目录，本页不会替换或移除它。',
+  skillDisabled: '你已停用这个导入，自动导入不会再把它带回来；重新打开开关即可再次导入。',
   skillConflict: '多个来源提供这个技能名。',
   skillConflictSources: '另外还由 {sources} 提供。',
   skillInstalledFrom: '已从 {source} 导入',
@@ -283,6 +293,7 @@ export const zh: Record<AgentImportLocaleKey, string> = {
   skillStateLinked: '已导入',
   skillStateLocal: '本地',
   skillStateBroken: '链接失效',
+  skillStateDisabled: '已停用',
   skipAlreadyInstalled: '已经存在链接',
   skipLocalCopy: '本地已有同名真实目录',
   skipNoSource: '只有自动导入来源之外的来源提供这个名字',
@@ -372,6 +383,7 @@ const SKILL_STATE_KEYS: Record<SkillState, AgentImportLocaleKey> = {
   linked: 'skillStateLinked',
   local: 'skillStateLocal',
   broken: 'skillStateBroken',
+  disabled: 'skillStateDisabled',
 }
 
 /** Locale key explaining each reason an operation left a name alone. */

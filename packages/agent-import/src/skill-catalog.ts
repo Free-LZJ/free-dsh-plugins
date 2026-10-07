@@ -16,6 +16,7 @@
  */
 
 import { scanSkillRoots, type InstalledEntry, type SkillEntry, type SkillScanOptions } from './skill-scan.ts'
+import { readSkillState as readSkillDecisions } from './skill-state.ts'
 import type { ResolvedSkillRoot, SkillScope, SkillSourceId } from './skill-roots.ts'
 
 /** What dsh's own roots hold for one skill name. */
@@ -28,6 +29,8 @@ export type SkillState =
   | 'local'
   /** A link whose target is gone, so dsh cannot read the skill at all. */
   | 'broken'
+  /** Nothing is installed because the user removed it, and automatic import leaves it that way. */
+  | 'disabled'
 
 /** One root offering a skill name. */
 export interface SkillCandidate {
@@ -79,16 +82,31 @@ export interface SkillCatalog {
   readonly notes: readonly string[]
 }
 
+/** Bounds one catalog build, and says where its remembered removals are kept. */
+export interface SkillCatalogOptions extends SkillScanOptions {
+  /**
+   * File recording which names the user removed. Absent reports them as
+   * `available`, which is right for a caller that keeps no decisions at all.
+   */
+  readonly statePath?: string
+}
+
 /**
  * Build the merged catalog.
  * @param roots - resolved roots in precedence order, writable ones being dsh's own.
- * @param options - bounds for the underlying scan.
+ * @param options - bounds for the underlying scan, and where removals are recorded.
  * @returns every skill name, its offerings, its installed state, and the scan's notes.
  */
 export async function buildSkillCatalog(
   roots: readonly ResolvedSkillRoot[],
-  options: SkillScanOptions,
+  options: SkillCatalogOptions,
 ): Promise<SkillCatalog> {
+  // A name with no entry in dsh's root is only *available* until a remembered
+  // removal says otherwise: without that, a skill the user switched off would
+  // read exactly like one that was never imported.
+  const removed = options.statePath === undefined
+    ? new Set<string>()
+    : new Set((await readSkillDecisions(options.statePath)).removed)
   const scan = await scanSkillRoots(roots, options)
   const offered = new Map<string, SkillEntry[]>()
   const described = new Map<string, string>()
@@ -115,7 +133,9 @@ export async function buildSkillCatalog(
       name,
       description: described.get(name) ?? '',
       candidates,
-      state: present === undefined ? 'available' : present.broken ? 'broken' : present.linked ? 'linked' : 'local',
+      state: present === undefined
+        ? (removed.has(name) ? 'disabled' : 'available')
+        : present.broken ? 'broken' : present.linked ? 'linked' : 'local',
       ...present === undefined ? {} : { installedPath: present.path },
       ...presentEntry === undefined ? {} : { installedFile: presentEntry.file },
       ...installedTarget === undefined ? {} : { installedTarget },
