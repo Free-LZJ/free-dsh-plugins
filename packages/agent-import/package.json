@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-agent-import",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Imports the MCP servers and skills that Codex or Claude Code already declares into DeepSeek Harness, with the Web Plugins-page card that configures the import",
   "repository": {
     "type": "git",
