@@ -5,10 +5,11 @@
 **Brings the MCP servers and skills Codex or Claude Code already declares into [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh).**
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
 [![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](packages/agent-import/README.md)
 
-[中文](README.md) · [Package docs](packages/agent-import/README.md) · [Example overlay](examples/agent-import.cordis.yml)
+[中文](README.md) · [npm](https://www.npmjs.com/package/@free-lzj/dsh-agent-import) · [Package docs](packages/agent-import/README.md) · [Example overlay](examples/agent-import.cordis.yml)
 
 </div>
 
@@ -44,18 +45,21 @@ One package is enough: its Host half serves the settings namespace and its brows
 ### 1. Install the package
 
 ```sh
-# once published to npm
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
+<details>
+<summary>From this checkout (only when working on the plugin itself)</summary>
+
 ```sh
-# from this checkout, before publication
 pnpm install
 pnpm run build
 
 dsh plugin --profile web add "<absolute path>/packages/agent-import"
 # or run pnpm pack first and install the .tgz file
 ```
+
+</details>
 
 ### 2. Declare the one row (required)
 
@@ -136,6 +140,17 @@ Build before testing: [`tests/package-faces.client.spec.ts`](packages/agent-impo
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on `windows-latest`: the adapter specs assert Windows drive-letter path handling (`C:`, `D:` fixtures for Codex and Claude Code homes), which Linux reads as relative paths.
 
 The browser-half specs need the dsh client packages' Node halves and their module table; [`vitest.config.ts`](vitest.config.ts) and [`packages/agent-import/tests/support/`](packages/agent-import/tests/support) document those two seams (see "How the specs get dsh's client code" in the package README).
+
+### Releasing
+
+```sh
+cd packages/agent-import
+npm publish      # prepublishOnly builds first; publishConfig carries access: public
+```
+
+- The version lives in [`packages/agent-import/package.json`](packages/agent-import/package.json); a version npm already has cannot be published again.
+- With auth-and-writes 2FA on the account, `npm publish` needs an OTP — or a **granular access token with "Bypass 2FA" enabled**; an ordinary token fails with `403 … bypass 2fa enabled is required`.
+- The npm package page renders the README from the tarball, so a README edit after a release reaches npm only with a new version.
 
 ## Known limitations
 

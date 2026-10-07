@@ -5,10 +5,11 @@
 **把 Codex / Claude Code 已经声明好的 MCP 服务器与技能，接进 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）。**
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
 [![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](packages/agent-import/README.md)
 
-[English](README.en.md) · [包文档](packages/agent-import/README.md) · [示例 overlay](examples/agent-import.cordis.yml)
+[English](README.en.md) · [npm](https://www.npmjs.com/package/@free-lzj/dsh-agent-import) · [包文档](packages/agent-import/README.md) · [示例 overlay](examples/agent-import.cordis.yml)
 
 </div>
 
@@ -44,18 +45,21 @@
 ### 1. 装包
 
 ```sh
-# 已发布到 npm 时
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
+<details>
+<summary>从本仓库安装（改插件本身时才需要）</summary>
+
 ```sh
-# 从本仓库装（未发布时）
 pnpm install
 pnpm run build
 
 dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
+
+</details>
 
 ### 2. 声明一行（必须）
 
@@ -136,6 +140,17 @@ pnpm run test        # vitest：16 个 spec 文件 / 250 个测试
 CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）在 `windows-latest` 上跑：adapter 的 spec 断言 Windows 盘符路径（Codex / Claude Code 主目录用 `C:`、`D:` 夹具），在 Linux 上这些夹具会被当成相对路径。
 
 浏览器半边的 spec 需要 dsh 客户端包的 Node 半边与模块表，[`vitest.config.ts`](vitest.config.ts) 与 [`packages/agent-import/tests/support/`](packages/agent-import/tests/support) 说明了这两处接线（见包 README 的「测试如何拿到 dsh 的客户端代码」）。
+
+### 发布
+
+```sh
+cd packages/agent-import
+npm publish      # prepublishOnly 会先 build；--access public 写在 publishConfig 里
+```
+
+- 版本号在 [`packages/agent-import/package.json`](packages/agent-import/package.json)；npm 上已占用的版本不能重发。
+- 账号开了 auth-and-writes 2FA 时，`npm publish` 需要 OTP，或者用**勾了 Bypass 2FA 的 granular access token**：普通 token 会以 `403 … bypass 2fa enabled is required` 失败。
+- npm 包页的 README 取自 tarball，发布之后再改 README 不会同步到 npm，要发一个新版本。
 
 ## 已知限制
 

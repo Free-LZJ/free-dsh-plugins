@@ -5,6 +5,7 @@
 **读取 Codex / Claude Code 已经声明的 MCP 服务器与技能，挂载进 DeepSeek Harness；同一个包还带一张 dsh Web 插件页的「代理配置导入」卡片。**
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](https://github.com/Free-LZJ/free-dsh-plugins/blob/main/LICENSE)
 [![dsh plugin](https://img.shields.io/badge/dsh-plugin-4f46e5.svg)](https://github.com/Free-LZJ/free-dsh-plugins#readme)
 
@@ -21,17 +22,23 @@
 | **Host** | `lib/index.js`（ESM） | `src/index.ts` | Node 进程：Loader 行挂载的插件本体，提供设置命名空间与 `GET /agent-import/report` |
 | **浏览器** | `lib/client.js`（module-table 闭包工厂） | `src/client/index.ts` | 页面：插件页那张卡片，按行 id 索引命名空间后注册 |
 
-## 声明
+## 安装与声明
+
+```sh
+dsh plugin --profile web add @free-lzj/dsh-agent-import
+```
+
+装包只让它可解析，插件要启用还得在 profile 里声明这一行 —— **`id` 不能改名**：设置命名空间与插件页卡片都按这个 id 索引。
 
 ```yaml
-- id: agent-import          # 不能改名：设置命名空间与插件页卡片都按这个 id 索引
+- id: agent-import
   name: '@free-lzj/dsh-agent-import'
   config:
     sources: ['codex', 'claude-code']
     serverDenyList: ['node_repl']
 ```
 
-安装与完整步骤见[仓库根 README](https://github.com/Free-LZJ/free-dsh-plugins#readme)。
+从本仓库安装、用 overlay 启动、以及 0.2.x 的升级步骤，见[仓库根 README](https://github.com/Free-LZJ/free-dsh-plugins#readme)。
 
 ## 配置
 
