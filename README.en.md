@@ -15,7 +15,7 @@
 
 ---
 
-> When one machine runs dsh alongside other agent tools, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations: servers are mounted through dsh's own `mcp-client`, and skills are **linked** (a junction on Windows, so no Administrator is needed) into dsh's own skills directory — nothing is copied, so an edit on either side is the edit the other sees, and removing an import removes only the link. The Settings page it adds shows what the import actually mounted, imports or removes one skill at a time, and edits which parts are read.
+> When one machine runs dsh alongside other agent tools, each MCP server and skill needs to be declared only once. On activation this plugin reads the other tool's declarations: servers are mounted through dsh's own `mcp-client`, and skills are **linked** (a junction on Windows, so no Administrator is needed) into dsh's own skills directory — nothing is copied, so an edit on either side is the edit the other sees, and removing an import removes only the link. The Settings page it adds shows what the import actually mounted, switches each skill on or off from its own row, and edits which sources are read.
 
 ## What is in here
 
@@ -24,6 +24,8 @@
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host plugin + browser half (a dual-face package): the Host half imports and mounts, the browser half renders the Settings page |
 
 One package, one Loader row: the two halves merged in `0.3.0`; they used to be two packages and two rows (see [Upgrading from 0.2.x](#upgrading-from-02x)).
+
+Currently on **`0.3.1`**: skills are switched on and off from their own row (a name you switched off reads as disabled rather than as never imported), and the configuration page gives every source a row whose switch reveals that tool's directories only once it is on. See the [changelog](packages/agent-import/README.md#更新日志).
 
 ## What it does
 

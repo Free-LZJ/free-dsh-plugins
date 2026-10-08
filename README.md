@@ -15,7 +15,7 @@
 
 ---
 
-> 同一台机器上同时用 dsh 和别的 Agent 工具时，MCP 服务器与技能只需要声明一次。插件在激活时读另一侧的声明：服务器挂到 dsh 的 `mcp-client` 上，技能则以**符号链接**（Windows 用 junction，免管理员权限）进入 dsh 自己的技能目录——不复制文件，所以改一处两边同步，移除导入也只删链接、源文件不动。设置页提供一页，用来看这次导入实际挂载了什么、逐项导入或移除技能、以及调整导入范围。
+> 同一台机器上同时用 dsh 和别的 Agent 工具时，MCP 服务器与技能只需要声明一次。插件在激活时读另一侧的声明：服务器挂到 dsh 的 `mcp-client` 上，技能则以**符号链接**（Windows 用 junction，免管理员权限）进入 dsh 自己的技能目录——不复制文件，所以改一处两边同步，移除导入也只删链接、源文件不动。设置页提供一页，用来看这次导入实际挂载了什么、用每行一个开关启停单项技能、以及按来源调整导入范围。
 
 ## 仓库里有什么
 
@@ -24,6 +24,8 @@
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host 插件 + 浏览器半边（双面包）：Host 半边导入并挂载，浏览器半边提供设置页那一页 |
 
 一个包、一条 Loader 行：`0.3.0` 起这两半合并了，此前是两个包、两行（见[从 0.2.x 升级](#从-02x-升级)）。
+
+当前发布 **`0.3.1`**：技能改为逐行开关启停（关掉的名字显示为「已停用」而不是没导入过），配置页的来源改为一行一个开关、明细可折叠，打开后才显示该工具的目录项。明细见[更新日志](packages/agent-import/README.md#更新日志)。
 
 ## 能做什么
 
@@ -119,7 +121,7 @@ dsh plugin --profile web add @free-lzj/dsh-agent-import
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `sources` | `['codex', 'claude-code']` | 要读取 MCP 服务器的工具，按优先级排列 |
-| `skillSources` | `['codex', 'claude-code']` | **自动导入**的来源（22 个可选值见[包 README](packages/agent-import/README.md#配置)）；技能目录始终全部读取并列出，没勾选的来源可以逐个手动导入 |
+| `skillSources` | `['codex', 'claude-code']` | **自动导入**的来源（22 个可选值见[包 README](packages/agent-import/README.md#配置)）；技能目录始终全部读取并列出，没打开的来源可以逐个手动导入 |
 | `skillAutoImport` | `true` | 激活时是否把来源技能自动建为链接 |
 | `codex.home` | `$CODEX_HOME`，否则 `~/.codex` | 存放 Codex `config.toml` 与 `skills/` 的目录 |
 | `codex.configPath` | `<home>/config.toml` | 要读的 Codex 配置文件 |
