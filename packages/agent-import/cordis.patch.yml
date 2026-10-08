@@ -1,0 +1,14 @@
+# dsh bundle patch: installing this package as a bundle makes `dsh plugin add`
+# insert the one Loader row the plugin needs, so it mounts on the next start.
+#
+# The id must stay `agent-import`: dsh keys the plugin's settings namespace by
+# the row's own entry id, and the Settings page follows that namespace.
+#
+# Every option is optional, and these are the defaults.
+- insert:
+    - id: agent-import
+      name: '@free-lzj/dsh-agent-import'
+      # config:
+      #   sources: [codex, claude-code]
+      #   skillSources: [codex, claude-code]
+      #   skillAutoImport: true
