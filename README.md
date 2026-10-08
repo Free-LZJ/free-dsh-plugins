@@ -25,7 +25,7 @@
 
 一个包、一条 Loader 行：`0.3.0` 起这两半合并了，此前是两个包、两行（见[从 0.2.x 升级](#从-02x-升级)）。
 
-当前发布 **`0.3.1`**：技能改为逐行开关启停（关掉的名字显示为「已停用」而不是没导入过），配置页的来源改为一行一个开关、明细可折叠，打开后才显示该工具的目录项。明细见[更新日志](packages/agent-import/README.md#更新日志)。
+当前发布 **`0.3.2`**：声明 `dsh.bundle`，作为 bundle 安装时（`dsh plugin add`）会**自动插入**那一条 Loader 行，不再需要手工声明；peer 范围补上 0.2.0 预发布分支（原范围会静默排除 `0.2.0-rc.*`）。`0.3.1` 的改动是技能改为逐行开关启停（关掉的名字显示为「已停用」而不是没导入过），配置页的来源改为一行一个开关、明细可折叠，打开后才显示该工具的目录项。明细见[更新日志](packages/agent-import/README.md#更新日志)。
 
 ## 能做什么
 
@@ -42,7 +42,7 @@
 
 装一个包就够：Host 半边提供设置命名空间，同一个包的浏览器半边提供设置页那一页 —— 页面挂在声明了 `dsh.client` 的那条 Loader 行上，所以它天然跟着 Host 走。
 
-> **环境要求**：`@deepseek-ai/cordis ^4.0.3`，以及 `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `>=0.1.7-alpha.2 <0.3.0-0`（peer 依赖，由 dsh 运行时提供；范围覆盖 0.1.7 起的 0.1.x 与 0.2.x，包括桌面端自带的运行时）。页面本身只要有设置外壳就出现；只有「已加载」一节读 `/agent-import/report`，所以它需要组合里的 `ctx.webServer`（dsh Web 与桌面端都有）。
+> **环境要求**：`@deepseek-ai/cordis ^4.0.3`，以及 `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `>=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0`（peer 依赖，由 dsh 运行时提供；范围覆盖 0.1.7 起的 0.1.x，以及含预发布在内的 0.2.x，包括桌面端自带的运行时）。页面本身只要有设置外壳就出现；只有「已加载」一节读 `/agent-import/report`，所以它需要组合里的 `ctx.webServer`（dsh Web 与桌面端都有）。
 
 > **为什么是设置页，不是插件页的「官方」分组。** 浏览器半边注册的是设置页的 `settings.section` 分栏，与 `general` / `models` / `account` / `plugins` 并列。插件页那个 `plugins.item` slot 按契约是官方设置卡的位置（官方占用者：`agent-loop` / `shell` / `subagent` / `web-search`）；第三方插件自己的配置页用 `settings.section`，或插件区内的 `settings.plugins.tab`。
 
@@ -77,7 +77,7 @@ dsh plugin --profile desktop add @free-lzj/dsh-agent-import
 
 ### 2. 声明一行（必须）
 
-装包只让它可解析；插件要真正启用，还得在 profile 里声明这一行。可以写进 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`（`web`、`desktop` 等），也可以用 overlay 启动：
+装包只让它可解析；插件要真正启用，还得有这么一行。本包自带 `dsh.bundle`（补丁文件就是包目录里的 `cordis.patch.yml`），所以 `dsh plugin add`（或把包列进 profile 的 `dsh.profile.bundles`）会**自动插入这一行**；从本仓库安装或自己维护 profile 时，照下面手写亦可。可以写进 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`（`web`、`desktop` 等），也可以用 overlay 启动：
 
 ```yaml
 - insert:
@@ -172,7 +172,7 @@ npm publish      # prepublishOnly 会先 build；--access public 写在 publishC
 
 ## 已知限制
 
-- 这个包**不在 dsh 自带 Web 组合里**，必须在 profile 中自行声明上面那一行。
+- 这个包**不在 dsh 自带 Web 组合里**，必须在 profile 中声明上面那一行（本包自带 `dsh.bundle`，作为 bundle 安装时会自动插入，不必手写）。
 - 「已加载」走的是 dsh Web 自身的 HTTP 路由，所以这一节需要有 `ctx.webServer` 的组合。dsh Web 与 Electron 桌面端都有（桌面端的页面就是 Host 的 `ctx.webServer` 在本机端口上提供的）；在没有 `ctx.webServer` 的组合里，这一节显示为不可用，其余配置照常。
 - dsh 启动时会做兼容性预检：peer 范围不含当前运行时的插件会被整行禁用（stderr 里打印 `dsh: disabling profile plugin row …`），**此时设置页完全不出现**，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。本包的 peer 范围覆盖 0.1.x 与 0.2.x 运行时，再往后的运行时需要放宽范围或授权。
 - 「已加载」一节只回答「挂载了吗」：服务器挂载成功但自身连不上时，连接错误由 dsh 的 `mcp-client` 自己记日志（`failOnStartupError: false` 时它会持续重连），这一行仍显示「已挂载」。

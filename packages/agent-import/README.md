@@ -28,11 +28,11 @@
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-装包只让它可解析，插件要启用还得在 profile 里声明这一行 —— **`id` 不能改名**：设置命名空间与设置页都按这个 id 索引。
+装包只让它可解析，插件要启用还得有这么一行。本包自带 `dsh.bundle`（补丁文件就是旁边的 `cordis.patch.yml`），所以 `dsh plugin add`（或把包列进 profile 的 `dsh.profile.bundles`）会**自动插入这一行**；从本仓库安装或自己写 profile 时，照下面示例手写亦可 —— **`id` 不能改名**：设置命名空间与设置页都按这个 id 索引。
 
 > Profile 要选你实际在跑的那个：`dsh web` 用 `web`，**Electron 桌面端用 `desktop`**（桌面端是同一个 `dsh-web-app` 组合加一份自带版本的 dsh 运行时，Profile 不通用）。
 >
-> peer 依赖 `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` 由 dsh 运行时提供，范围是 `>=0.1.7-alpha.2 <0.3.0-0`。运行时版本落在范围外时，dsh 启动的兼容性预检会**整行禁用**这条 Loader 行（stderr 打印 `dsh: disabling profile plugin row "agent-import": …`），插件与设置页都不会出现；用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
+> peer 依赖 `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` 由 dsh 运行时提供，范围是 `>=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0`。运行时版本落在范围外时，dsh 启动的兼容性预检会**整行禁用**这条 Loader 行（stderr 打印 `dsh: disabling profile plugin row "agent-import": …`），插件与设置页都不会出现；用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
 
 ```yaml
 - id: agent-import
@@ -159,6 +159,11 @@ pnpm run test      # 在本仓库根目录运行 vitest
 - **与 `@michengai/dsh-skills-manager` 并存**：那个插件会跳过 `~/.dsh/skills` 下的符号链接，启用/停用状态存在它自己的 `~/.dsh/skills-manager/state.json` 里，因此它既看不到也不管理本插件导入的技能；两者互不感知，同一批技能建议只用其一管理。
 
 ## 更新日志
+
+### 0.3.2
+
+- 声明 `dsh.bundle`，补丁文件 `cordis.patch.yml`：作为 bundle 安装（`dsh plugin add`，或把包列进 profile 的 `dsh.profile.bundles`）时**自动插入** `agent-import` 这一行，不必再手工写 profile；该文件随 npm 包一起发布（已加入 `files`）。
+- peer 依赖范围改为 `>=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0`。原范围 `>=0.1.7-alpha.2 <0.3.0-0` 在 `0.2.0` 元组上没有带预发布标签的比较符，node-semver 会**静默排除** `0.2.0-rc.*`，与文档声称的「覆盖 0.1.x 与 0.2.x」不符。
 
 ### 0.3.1
 

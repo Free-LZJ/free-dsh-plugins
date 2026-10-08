@@ -25,7 +25,7 @@
 
 One package, one Loader row: the two halves merged in `0.3.0`; they used to be two packages and two rows (see [Upgrading from 0.2.x](#upgrading-from-02x)).
 
-Currently on **`0.3.1`**: skills are switched on and off from their own row (a name you switched off reads as disabled rather than as never imported), and the configuration page gives every source a row whose switch reveals that tool's directories only once it is on. See the [changelog](packages/agent-import/README.md#更新日志).
+Currently on **`0.3.2`**: it declares `dsh.bundle`, so installing it as a bundle (`dsh plugin add`) inserts the one Loader row by itself and no hand-written row is needed, and its peer ranges carry an explicit 0.2.0 prerelease branch (the old range silently excluded `0.2.0-rc.*`). `0.3.1` switched each skill on and off from its own row (a name you switched off reads as disabled rather than as never imported) and gave every source a row whose switch reveals that tool's directories only once it is on. See the [changelog](packages/agent-import/README.md#更新日志).
 
 ## What it does
 
@@ -42,7 +42,7 @@ Currently on **`0.3.1`**: skills are switched on and off from their own row (a n
 
 One package is enough: its Host half serves the settings namespace and its browser half renders that Settings page — the page attaches to whichever Loader row declares `dsh.client`, so it always follows the Host.
 
-> **Requirements**: `@deepseek-ai/cordis ^4.0.3`, plus `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `>=0.1.7-alpha.2 <0.3.0-0` — peers the dsh runtime provides; the range covers the 0.1.x and 0.2.x runtimes from 0.1.7 on, including the one the Desktop app bundles. The page itself appears wherever a settings shell exists; only its Loaded section reads `/agent-import/report`, so that section needs the composition's `ctx.webServer` (dsh Web and Desktop both have one).
+> **Requirements**: `@deepseek-ai/cordis ^4.0.3`, plus `@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-skill` `>=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0` — peers the dsh runtime provides; the range covers the 0.1.x runtimes from 0.1.7 on and the 0.2.x runtimes including their prereleases, so it covers the one the Desktop app bundles. The page itself appears wherever a settings shell exists; only its Loaded section reads `/agent-import/report`, so that section needs the composition's `ctx.webServer` (dsh Web and Desktop both have one).
 
 > **Why a Settings page, not the Plugins page's Official group.** The browser half registers the Settings page's `settings.section` entry, beside `general` / `models` / `account` / `plugins`. The Plugins page's `plugins.item` slot is by contract the official settings-card seat (its official occupants are `agent-loop` / `shell` / `subagent` / `web-search`); a third-party plugin's own configuration page uses `settings.section`, or `settings.plugins.tab` inside the Plugins section.
 
@@ -77,7 +77,7 @@ dsh plugin --profile desktop add @free-lzj/dsh-agent-import
 
 ### 2. Declare the one row (required)
 
-Installing only makes the package resolvable; the feature is enabled by declaring this row in the profile. Put it in `$DSH_HOME/profiles/<profile>/cordis.patch.yml` (`web`, `desktop`, …), or boot with an overlay:
+Installing only makes the package resolvable; the feature needs this row to exist. The package declares `dsh.bundle` (its patch file is the `cordis.patch.yml` beside it), so `dsh plugin add` — or listing the package in the profile's `dsh.profile.bundles` — **inserts this row for you**; write it by hand when you install from this repository or keep your own profile. Put it in `$DSH_HOME/profiles/<profile>/cordis.patch.yml` (`web`, `desktop`, …), or boot with an overlay:
 
 ```yaml
 - insert:
