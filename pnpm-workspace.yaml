@@ -1,2 +1,4 @@
 packages:
   - packages/*
+minimumReleaseAgeExclude:
+  - imapflow@2.5.0

@@ -1,0 +1,1153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>邮件</title>
+<style>:root{
+  color-scheme:light;
+  --mail-page:#eef2f7;--mail-surface:#fff;--mail-surface-2:#f7f9fc;
+  --mail-fg:#1f242c;--mail-fg-muted:#6b7684;
+  --mail-line:#e4e9ef;--mail-line-strong:#c9d1db;
+  --mail-accent:#1673c9;--mail-ok:#226647;--mail-warn:#835b10;--mail-danger:#9d3025;--mail-idle:#526172;
+  --mail-hover:color-mix(in srgb,var(--mail-fg) 7%,var(--mail-surface));
+  --mail-selected:color-mix(in srgb,var(--mail-accent) 15%,var(--mail-surface));
+  --mail-accent-strong:color-mix(in srgb,var(--mail-accent) 78%,var(--mail-fg));
+  --mail-danger-weak:color-mix(in srgb,var(--mail-danger) 15%,var(--mail-surface));
+  --mail-warn-weak:color-mix(in srgb,var(--mail-warn) 15%,var(--mail-surface));
+}
+/* 只有在读不到 DSH token 时，才让系统深浅色说话（data-mail-tokens 由桥设置）。 */
+@media (prefers-color-scheme:dark){:root:not([data-mail-tokens]){
+  color-scheme:dark;
+  --mail-page:#16181d;--mail-surface:#1f2228;--mail-surface-2:#24272e;
+  --mail-fg:#e6e8ec;--mail-fg-muted:#98a0ad;
+  --mail-line:#31353d;--mail-line-strong:#454b55;
+  --mail-accent:#63a4ff;--mail-ok:#7ed3a4;--mail-warn:#e0b268;--mail-danger:#f08a7a;--mail-idle:#9aa3b0;
+}}
+html,body{height:100%}
+body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Segoe UI','Microsoft YaHei',sans-serif}</style>
+</head>
+<body>
+<script>
+/* 主题桥：跟随宿主（DSH）当前主题。 */
+(() => {
+  const MAP = {
+    '--mail-page': '--dsw-alias-bg-base',
+    '--mail-surface': '--dsw-alias-bg-layer-1',
+    '--mail-surface-2': '--dsw-alias-bg-layer-2',
+    '--mail-fg': '--dsw-alias-label-primary',
+    '--mail-fg-muted': '--dsw-alias-label-secondary',
+    '--mail-line': '--dsw-alias-border-l1',
+    '--mail-line-strong': '--dsw-alias-border-l2',
+    '--mail-accent': '--dsw-alias-brand-primary',
+    '--mail-ok': '--dsw-alias-state-success-primary',
+    '--mail-warn': '--dsw-alias-state-warn-primary',
+    '--mail-danger': '--dsw-alias-state-error-primary',
+    '--mail-idle': '--dsw-alias-state-idle-primary',
+  };
+  const root = document.documentElement;
+  const shell = () => { try { const h = window.parent;
+    return h && h !== window && h.document && h.document.body ? h : null; } catch { return null; } };
+  const prefersDark = () => typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-color-scheme:dark)').matches;
+  const host = shell();
+  const read = () => {
+    const body = host ? host.document.body : document.body;
+    // DSH 把 token 写成 body 的内联变量；computed 兜底覆盖“主题用样式表/类定义”的写法。
+    const inline = body.style;
+    const computed = (host || window).getComputedStyle(body);
+    let found = 0;
+    for (const ours of Object.keys(MAP)) {
+      const value = (inline.getPropertyValue(MAP[ours]) || computed.getPropertyValue(MAP[ours])).trim();
+      if (value) { root.style.setProperty(ours, value); found++; } else root.style.removeProperty(ours);
+    }
+    // 宿主路径认它自己 body 上的暗色标记；单开路径没有宿主时才问系统偏好。
+    const dark = body.hasAttribute('data-ds-dark-theme') || (!host && prefersDark());
+    root.style.colorScheme = dark ? 'dark' : 'light';
+    root.dataset.mailScheme = dark ? 'dark' : 'light';
+    if (found > 0) root.dataset.mailTokens = ''; else delete root.dataset.mailTokens;
+  };
+  read();
+  if (host) {
+    let queued = false;
+    new MutationObserver(() => { if (queued) return; queued = true;
+      requestAnimationFrame(() => { queued = false; read(); }); })
+      .observe(host.document.body, { attributes: true, attributeFilter: ['style', 'data-ds-dark-theme'] });
+  } else if (typeof window.matchMedia === 'function') {
+    window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', read);
+  }
+})();
+</script>
+<div id="dsh-mail">
+  <style>
+    #dsh-mail{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--mail-surface);color:var(--mail-fg)}
+    #dsh-mail *{box-sizing:border-box}
+    #dsh-mail [hidden]{display:none!important}
+    #dsh-mail button,#dsh-mail input,#dsh-mail select,#dsh-mail textarea{font:inherit;color:inherit}
+    #dsh-mail button{border:1px solid transparent;background:transparent;border-radius:5px;padding:5px 10px;cursor:pointer}
+    #dsh-mail button:hover{background:var(--mail-hover)}
+    #dsh-mail button:disabled{opacity:.4;cursor:default}
+    #dsh-mail button:focus-visible,#dsh-mail input:focus-visible,#dsh-mail select:focus-visible,#dsh-mail textarea:focus-visible{outline:2px solid var(--mail-accent);outline-offset:-2px}
+    #dsh-mail input,#dsh-mail select,#dsh-mail textarea{border:1px solid var(--mail-line-strong);background:var(--mail-surface);border-radius:5px;padding:5px 8px}
+    #dsh-mail textarea{width:100%;resize:vertical;font:13px/1.5 Consolas,'Microsoft YaHei',monospace}
+    #dsh-mail code{font:12px Consolas,monospace;background:var(--mail-surface-2);padding:1px 4px;border-radius:3px}
+    #dsh-mail .m-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:9px 12px;background:var(--mail-surface-2);border-bottom:1px solid var(--mail-line)}
+    #dsh-mail .m-account{display:flex;align-items:center;gap:7px}
+    #dsh-mail .m-status-dot{width:9px;height:9px;border-radius:50%;background:var(--mail-idle);flex:0 0 auto}
+    #dsh-mail .m-status-dot[data-status=connected]{background:var(--mail-ok)}
+    #dsh-mail .m-status-dot[data-status=connecting]{background:var(--mail-warn)}
+    #dsh-mail .m-status-dot[data-status=error]{background:var(--mail-danger)}
+    #dsh-mail .m-account-select{max-width:230px}
+    #dsh-mail .m-search{flex:1;min-width:160px;max-width:420px}
+    #dsh-mail .m-unread{margin-left:auto;color:var(--mail-fg-muted);white-space:nowrap}
+    #dsh-mail .m-status{padding:6px 12px;font-size:12px;color:var(--mail-fg-muted);border-bottom:1px solid var(--mail-line);overflow-wrap:anywhere}
+    #dsh-mail .m-status[data-error=true]{color:var(--mail-danger);background:var(--mail-danger-weak)}
+    #dsh-mail .m-status [data-alert=true]{color:var(--mail-warn)}
+    #dsh-mail .m-status [data-cache=true]{opacity:.8}
+    #dsh-mail .m-status [data-busy=true]{display:inline-block;width:46px;height:6px;border-radius:3px;vertical-align:middle;background:linear-gradient(90deg,transparent,var(--mail-accent),transparent) 0 0/200% 100%;animation:m-busy 1.1s linear infinite}
+    @keyframes m-busy{from{background-position:200% 0}to{background-position:-200% 0}}
+    #dsh-mail .m-body{flex:1;min-height:0;display:flex;position:relative}
+    #dsh-mail .m-folders{width:174px;flex:0 0 auto;overflow:auto;background:var(--mail-surface-2);border-right:1px solid var(--mail-line);padding:8px 6px}
+    #dsh-mail .m-folders button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;margin-bottom:3px}
+    #dsh-mail .m-folders button[aria-pressed=true]{background:var(--mail-selected);color:var(--mail-accent-strong)}
+    #dsh-mail .m-folder-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #dsh-mail .m-count{color:var(--mail-fg-muted);font-size:12px}
+    #dsh-mail .m-list-pane{width:340px;flex:0 0 auto;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--mail-line)}
+    #dsh-mail .m-list{flex:1;min-height:0;overflow:auto}
+    #dsh-mail .m-row{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px;border-radius:0;border-bottom:1px solid var(--mail-line)}
+    #dsh-mail .m-row[aria-current=true]{background:var(--mail-selected)}
+    #dsh-mail .m-unread-dot{width:8px;height:8px;flex:0 0 auto;margin-top:7px;border-radius:50%;background:transparent}
+    #dsh-mail .m-unread-dot[data-unread=true]{background:var(--mail-accent)}
+    #dsh-mail .m-row-main{flex:1;min-width:0}
+    #dsh-mail .m-row-line{display:flex;gap:8px;align-items:baseline}
+    #dsh-mail .m-row-from{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+    #dsh-mail .m-row-time{color:var(--mail-fg-muted);font-size:12px;white-space:nowrap}
+    #dsh-mail .m-row-subject,#dsh-mail .m-row-snippet{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #dsh-mail .m-row-subject{font-size:13px}
+    #dsh-mail .m-row-snippet{color:var(--mail-fg-muted);font-size:12px}
+    #dsh-mail .m-row[data-unread=true] .m-row-subject{font-weight:600}
+    #dsh-mail .m-row-marks{color:var(--mail-fg-muted);white-space:nowrap}
+    #dsh-mail .m-sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+    #dsh-mail .m-empty{flex:1;min-height:0;overflow:auto;padding:22px 18px;color:var(--mail-fg);font-size:13px}
+    #dsh-mail .m-empty h2{margin:0 0 10px;font-size:15px}
+    #dsh-mail .m-empty ul{margin:10px 0;padding-left:20px}
+    #dsh-mail .m-empty li{margin-bottom:10px}
+    #dsh-mail .m-empty p{margin:8px 0}
+    #dsh-mail .m-retry{margin-top:10px;border:1px solid var(--mail-line-strong)}
+    #dsh-mail .m-read{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+    #dsh-mail .m-read-empty{padding:26px 18px;color:var(--mail-fg-muted)}
+    #dsh-mail .m-read-content{flex:1;min-height:0;display:flex;flex-direction:column}
+    #dsh-mail .m-read-head{padding:14px 16px 8px;border-bottom:1px solid var(--mail-line)}
+    #dsh-mail .m-subject{margin:0 0 6px;font-size:16px;overflow-wrap:anywhere}
+    #dsh-mail .m-meta{display:flex;gap:12px;flex-wrap:wrap;color:var(--mail-fg-muted);font-size:12px}
+    #dsh-mail .m-addresses{color:var(--mail-fg-muted);font-size:12px;margin-top:4px;overflow-wrap:anywhere}
+    #dsh-mail .m-read-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--mail-line);background:var(--mail-surface-2);font-size:12px}
+    #dsh-mail .m-read-bar button{border:1px solid var(--mail-line-strong)}
+    #dsh-mail .m-act-result{color:var(--mail-fg-muted);overflow-wrap:anywhere}
+    #dsh-mail .m-act-result[data-error=true]{color:var(--mail-danger)}
+    #dsh-mail .m-read-body{flex:1;min-height:0;overflow:auto}
+    #dsh-mail .m-read-body[data-mode=html]{overflow:hidden;display:flex}
+    #dsh-mail .m-text{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:14px 16px;font:13px/1.7 Consolas,'Microsoft YaHei',monospace}
+    #dsh-mail .m-html-frame{display:block;width:100%;height:100%;min-height:60vh;border:0;background:#fff}
+    #dsh-mail .m-attachments{border-top:1px solid var(--mail-line);padding:10px 16px;font-size:13px}
+    #dsh-mail .m-attachments a{margin-right:14px}
+    #dsh-mail .m-truncated{padding:6px 16px;color:var(--mail-warn);background:var(--mail-warn-weak);font-size:12px}
+    #dsh-mail .m-drawer{position:absolute;top:0;right:0;bottom:0;width:min(560px,100%);display:flex;flex-direction:column;background:var(--mail-surface);border-left:1px solid var(--mail-line-strong);box-shadow:-8px 0 24px #0000001a;z-index:2}
+    #dsh-mail .m-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--mail-line);background:var(--mail-surface-2)}
+    #dsh-mail .m-drawer-body{flex:1;min-height:0;overflow:auto;padding:12px}
+    #dsh-mail .m-card{border:1px solid var(--mail-line);border-radius:9px;padding:12px;margin-bottom:12px}
+    #dsh-mail .m-card h3{margin:0 0 10px;font-size:14px}
+    #dsh-mail .m-card label{display:block;margin-bottom:9px}
+    #dsh-mail .m-card label input:not([type=checkbox]),#dsh-mail .m-card label select{display:block;width:100%;margin-top:3px}
+    #dsh-mail .m-card fieldset{border:1px solid var(--mail-line);border-radius:7px;padding:9px;margin:0 0 10px}
+    #dsh-mail .m-card legend{padding:0 5px;color:var(--mail-fg-muted);font-size:12px}
+    #dsh-mail .m-account-list{list-style:none;margin:0 0 10px;padding:0}
+    #dsh-mail .m-account-list li{display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--mail-line)}
+    #dsh-mail .m-account-copy{flex:1;min-width:0}
+    #dsh-mail .m-account-copy small{display:block;color:var(--mail-fg-muted)}
+    #dsh-mail .m-row-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    #dsh-mail .m-hint{color:var(--mail-fg-muted);font-size:12px;margin:4px 0 8px}
+    #dsh-mail .m-form-result,#dsh-mail .m-trigger-result{color:var(--mail-fg-muted);font-size:12px;margin:6px 0 0;overflow-wrap:anywhere}
+    #dsh-mail .m-form-result[data-error=true],#dsh-mail .m-trigger-result[data-error=true]{color:var(--mail-danger)}
+    @media(max-width:760px){#dsh-mail .m-folders{display:none}#dsh-mail .m-list-pane{width:270px}}
+  </style>
+
+  <header class="m-top">
+    <label class="m-account">
+      <span class="m-status-dot" data-status="idle" title="未连接" aria-hidden="true"></span>
+      <select class="m-account-select" aria-label="账号"></select>
+    </label>
+    <input class="m-search" type="search" placeholder="搜索发件人、主题或摘要" aria-label="搜索邮件">
+    <span class="m-unread" aria-live="polite">未读 —</span>
+    <button class="m-refresh" type="button">刷新</button>
+    <button class="m-settings" type="button" aria-expanded="false">⚙ 设置</button>
+  </header>
+  <div class="m-status" role="status">正在读取邮件…</div>
+
+  <div class="m-body">
+    <nav class="m-folders" aria-label="文件夹"></nav>
+
+    <section class="m-list-pane">
+      <div class="m-list" role="list" aria-label="邮件列表"></div>
+      <div class="m-empty" hidden></div>
+    </section>
+
+    <section class="m-read" aria-label="正文">
+      <div class="m-read-empty">在左侧选择一封邮件查看正文。</div>
+      <div class="m-read-content" hidden>
+        <div class="m-read-head">
+          <h2 class="m-subject"></h2>
+          <div class="m-meta"><span class="m-date"></span><span class="m-from"></span></div>
+          <div class="m-addresses"></div>
+        </div>
+        <div class="m-read-bar">
+          <button class="m-act-seen" type="button" data-op="markRead">标为已读</button>
+          <button class="m-act-flag" type="button" data-op="flag">加星标</button>
+          <label>移动到 <select class="m-move-target" aria-label="目标文件夹"></select></label>
+          <button class="m-act-move" type="button">移动</button>
+          <button class="m-act-delete" type="button">删除</button>
+          <button class="m-show-images" type="button" hidden>显示图片</button>
+          <span class="m-act-result" role="status"></span>
+        </div>
+        <div class="m-read-body"></div>
+        <div class="m-truncated" hidden>正文过长，已按服务端上限截断。</div>
+        <div class="m-attachments" hidden></div>
+      </div>
+    </section>
+
+    <aside class="m-drawer" hidden aria-label="设置">
+      <div class="m-drawer-head">
+        <strong>设置</strong>
+        <button class="m-drawer-close" type="button">关闭</button>
+      </div>
+      <div class="m-drawer-body">
+        <section class="m-card">
+          <h3>邮箱账号</h3>
+          <ul class="m-account-list"></ul>
+          <div class="m-row-actions"><button class="m-account-new" type="button">新增账号</button></div>
+          <div class="m-account-form" hidden>
+            <label>显示名 <input name="name" type="text" placeholder="我的 QQ 邮箱"></label>
+            <label>邮箱地址 <input name="address" type="text" placeholder="you@qq.com"></label>
+            <label>服务商
+              <select name="provider">
+                <option value="qq">QQ 邮箱</option>
+                <option value="gmail">Gmail</option>
+                <option value="custom">其他（自有 IMAP）</option>
+              </select>
+            </label>
+            <label>IMAP 主机 <input name="imapHost" type="text" placeholder="imap.qq.com"></label>
+            <label>端口 <input name="imapPort" type="number" min="1" max="65535" value="993"></label>
+            <label><input name="secure" type="checkbox" checked> 使用 SSL/TLS</label>
+            <label>授权码 / 应用专用密码 <input name="password" type="password" autocomplete="off" placeholder="留空表示不修改"></label>
+            <p class="m-hint" data-provider-hint></p>
+            <div class="m-row-actions">
+              <button class="m-account-save" type="button">保存</button>
+              <button class="m-account-test" type="button">测试连接</button>
+              <button class="m-account-cancel" type="button">取消</button>
+            </div>
+            <p class="m-form-result" role="status"></p>
+          </div>
+        </section>
+
+        <section class="m-card">
+          <h3>收到新邮件时</h3>
+          <label>账号 <select class="m-trigger-account"></select></label>
+          <label>行为
+            <select class="m-trigger-mode">
+              <option value="panel">只在面板标记（不打扰 agent）</option>
+              <option value="session">新建 agent 会话处理</option>
+              <option value="notify">投递到指定会话提醒</option>
+            </select>
+          </label>
+          <p class="m-hint m-trigger-availability" hidden></p>
+          <div class="m-trigger-session" hidden>
+            <label>工作目录（绝对路径） <input class="m-trigger-workspace" type="text" placeholder="D:\work"></label>
+            <label>Agent preset（留空用部署默认） <input class="m-trigger-preset" type="text"></label>
+            <label>权限 preset（留空用部署默认） <input class="m-trigger-permission" type="text"></label>
+            <label>会话标题模板 <input class="m-trigger-title" type="text" placeholder="邮件：{subject}"></label>
+          </div>
+          <div class="m-trigger-notify" hidden>
+            <label>目标会话 id <input class="m-trigger-sessionid" type="text"></label>
+          </div>
+          <fieldset>
+            <legend>过滤规则（组之间同时满足，一行一个值）</legend>
+            <label>发件人包含 <textarea class="m-trigger-from" rows="2"></textarea></label>
+            <label>主题包含 <textarea class="m-trigger-subject" rows="2"></textarea></label>
+            <label>关键词（匹配主题或正文） <textarea class="m-trigger-keywords" rows="2"></textarea></label>
+            <label><input class="m-trigger-unread" type="checkbox" checked> 仅处理未读邮件</label>
+          </fieldset>
+          <div class="m-row-actions"><button class="m-trigger-save" type="button">保存触发配置</button></div>
+          <p class="m-trigger-result" role="status"></p>
+        </section>
+      </div>
+    </aside>
+  </div>
+</div>
+<script>
+/* 邮件面板：只读 /dsh-mail/state、/dsh-mail/message，写 /dsh-mail/action、/dsh-mail/config。 */
+(() => {
+  const root = document.getElementById('dsh-mail');
+  if (!root) return;
+  // 服务端现在会把 flags/删除**推**过来（常驻连接 SELECT 着收件箱），所以轮询只是
+  // 兜底：它负责显示服务端已经知道的变化，以及 IDLE 断掉时重新发现。2 秒一次对
+  // 本地 HTTP 是免费的，而 10 秒会让人以为"同步坏了"。
+  const POLL_MS = 2000;
+  // 被阻止的远程图片换成 1×1 透明 GIF：默认渲染里连原地址都不出现。
+  const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const SPECIAL = {
+    '\\Inbox': '收件箱', '\\Sent': '已发送', '\\Drafts': '草稿', '\\Trash': '已删除',
+    '\\Junk': '垃圾邮件', '\\Archive': '归档', '\\All': '全部邮件', '\\Flagged': '已加星标',
+  };
+  const STATUS_TEXT = { connected: '已连接', connecting: '连接中', error: '连接失败', idle: '未连接' };
+
+  const el = {};
+  for (const [name, selector] of Object.entries({
+    statusDot: '.m-status-dot', accountSelect: '.m-account-select', search: '.m-search',
+    unread: '.m-unread', refresh: '.m-refresh', settings: '.m-settings', status: '.m-status',
+    folders: '.m-folders', list: '.m-list', empty: '.m-empty',
+    readEmpty: '.m-read-empty', readContent: '.m-read-content', subject: '.m-subject',
+    date: '.m-date', from: '.m-from', addresses: '.m-addresses', readBar: '.m-read-bar',
+    actSeen: '.m-act-seen', actFlag: '.m-act-flag', moveTarget: '.m-move-target',
+    actResult: '.m-act-result', showImages: '.m-show-images', readBody: '.m-read-body',
+    truncated: '.m-truncated', attachments: '.m-attachments',
+    drawer: '.m-drawer', drawerClose: '.m-drawer-close', accountList: '.m-account-list',
+    accountNew: '.m-account-new', accountForm: '.m-account-form', formResult: '.m-form-result',
+    triggerAccount: '.m-trigger-account', triggerMode: '.m-trigger-mode',
+    triggerSession: '.m-trigger-session', triggerNotify: '.m-trigger-notify',
+    triggerUnread: '.m-trigger-unread',
+    triggerResult: '.m-trigger-result',
+  })) el[name] = root.querySelector(selector);
+
+  const view = {
+    data: null, loaded: false, error: '',
+    accountId: '', folder: '', query: '',
+    open: null, detail: null, detailError: '', showImages: false,
+    editing: null, formOpen: false, drawerSignature: '',
+  };
+  // 最近一次渲染的邮件行，按 `data-i` 下标索引（下标不会被 HTML 属性转义弄坏）。
+  let rows = [];
+
+  const esc = (value) => String(value == null ? '' : value)
+    .replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const text = (value) => document.createTextNode(value);
+  const button = (label, className) => {
+    const node = document.createElement('button');
+    node.type = 'button'; node.className = className; node.textContent = label;
+    return node;
+  };
+  const key = (mail) => mail.accountId + '\u0000' + mail.folder + '\u0000' + mail.uid;
+  const message = (error) => (error && error.message) ? String(error.message) : String(error);
+
+  /** 一次请求：非 2xx 与 `{ok:false}` 都抛出可读文案。 */
+  async function request(url, options) {
+    const response = await fetch(url, options);
+    const body = await response.text();
+    let payload = null;
+    try { payload = body ? JSON.parse(body) : null; } catch { payload = null; }
+    if (!response.ok) throw new Error((payload && (payload.message || payload.error)) || ('HTTP ' + response.status));
+    if (payload && payload.ok === false) throw new Error(payload.message || payload.code || '操作未完成');
+    return payload;
+  }
+  const write = (url, payload) => request(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-dsh-mail': '1' },
+    body: JSON.stringify(payload),
+  });
+
+  function fmtDate(iso) {
+    const value = new Date(iso);
+    if (Number.isNaN(value.getTime())) return '';
+    return value.toLocaleString('zh-CN', { hour12: false });
+  }
+  function fmtListDate(iso) {
+    const value = new Date(iso);
+    if (Number.isNaN(value.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    const sameYear = value.getFullYear() === new Date().getFullYear();
+    const stamp = pad(value.getMonth() + 1) + '-' + pad(value.getDate()) + ' ' + pad(value.getHours()) + ':' + pad(value.getMinutes());
+    return sameYear ? stamp : value.getFullYear() + '-' + stamp;
+  }
+  const address = (one) => one ? (one.name ? one.name + ' <' + one.address + '>' : one.address) : '';
+  const folderLabel = (mailbox) => SPECIAL[mailbox.specialUse || ''] || mailbox.path;
+  const accountOf = (id) => (view.data ? view.data.accounts.find((one) => one.id === id) : undefined);
+
+  /** 当前筛选下可见的邮件。 */
+  function visible() {
+    if (!view.data) return [];
+    const needle = view.query.trim().toLowerCase();
+    return view.data.messages.filter((mail) => {
+      if (view.accountId && mail.accountId !== view.accountId) return false;
+      if (view.folder && mail.folder !== view.folder) return false;
+      if (!needle) return true;
+      return [mail.from.name, mail.from.address, mail.subject, mail.snippet]
+        .join(' ').toLowerCase().includes(needle);
+    });
+  }
+
+  /** 服务端上报的同步阶段，翻成给人看的说法。 */
+  const STAGE_TEXT = {
+    starting: '正在准备同步…',
+    credentials: '正在读取授权码…',
+    scanning: '正在拉取邮件…',
+    merging: '正在整理列表…',
+    done: '同步完成',
+    'no-account': '账号未就绪',
+    'no-password': '未配置授权码',
+  };
+
+  /**
+   * 真的刷新一次：让服务端现在就去扫，然后盯着它报到哪一步。
+   *
+   * `load()` 只读服务端的内存快照（真正的扫描有 30 秒限流），所以以前点这个
+   * 按钮几乎什么都看不到——那正是"按了没反应"的来源。
+   */
+  async function refresh() {
+    if (view.refreshing) return;
+    view.refreshing = true;
+    view.refreshError = '';
+    renderStatus();
+    try {
+      await write('/dsh-mail/refresh', {});
+    } catch (error) {
+      view.refreshError = message(error);
+      view.refreshing = false;
+      renderStatus();
+      return;
+    }
+    // 扫描在服务端跑，这里只负责把它的阶段画出来；超时就不再装成还在刷新。
+    const deadline = Date.now() + 120_000;
+    try {
+      while (Date.now() < deadline) {
+        await load();
+        const stage = view.data && view.data.accounts[0] ? view.data.accounts[0].stage : undefined;
+        if (stage === 'done' || stage === undefined) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      }
+    } finally {
+      view.refreshing = false;
+      renderStatus();
+    }
+  }
+
+  async function load() {
+    try {
+      view.data = await request('/dsh-mail/state');
+      view.loaded = true;
+      view.error = '';
+      renderAll();
+    } catch (error) {
+      view.error = message(error);
+      renderStatus();
+      renderEmpty();
+      if (!view.loaded) { rows = new Map(); el.list.replaceChildren(); }
+    }
+  }
+
+  function renderStatus() {
+    el.status.replaceChildren();
+    if (view.error) {
+      el.status.dataset.error = 'true';
+      el.status.append(text('读取邮件失败：' + view.error + ' '));
+      el.status.append(button('重试', 'm-retry'));
+    } else {
+      delete el.status.dataset.error;
+      el.status.textContent = view.data ? '最近更新：' + fmtDate(view.data.collectedAt) : '正在读取邮件…';
+      // 刷新中：进度条 + 服务端报的阶段，让"按了按钮"立刻有反馈。
+      el.refresh.disabled = Boolean(view.refreshing);
+      if (view.refreshing) {
+        const stage = view.data && view.data.accounts[0] ? view.data.accounts[0].stage : undefined;
+        const bar = document.createElement('span');
+        bar.dataset.busy = 'true';
+        el.status.append(' ', bar, ' ', text(STAGE_TEXT[stage] || '正在同步…'));
+      }
+      if (view.refreshError) {
+        const failed = document.createElement('span');
+        failed.dataset.alert = 'true';
+        failed.textContent = '（刷新失败：' + view.refreshError + '）';
+        el.status.append(' ', failed);
+      }
+      // 列表可能来自上次退出时存下的快照：说出来，免得把缓存当成刚刚同步的结果。
+      if (view.data && view.data.cacheAt) {
+        const cached = Date.parse(view.data.cacheAt);
+        const fresh = Date.parse(view.data.collectedAt);
+        if (Number.isFinite(cached) && Number.isFinite(fresh) && fresh - cached > 60_000) {
+          // 必须是元素：`text()` 给的是文本节点，没有 dataset。
+          const note = document.createElement('span');
+          note.dataset.cache = 'true';
+          note.textContent = '（列表来自 ' + fmtListDate(view.data.cacheAt) + ' 的缓存，正在刷新）';
+          el.status.append(' ', note);
+        }
+      }
+    }
+    // 服务器 ALERT 必须呈现给用户（RFC 2683 §3.4.11），与状态行并列；
+    // 它讲的是账号本身（配额、停机通知），不是这次读取失败。
+    for (const account of view.data ? view.data.accounts : []) {
+      if (!account.alert) continue;
+      const line = document.createElement('div');
+      line.dataset.alert = 'true';
+      line.textContent = '服务器提示：' + account.alert;
+      el.status.append(line);
+    }
+  }
+
+  function renderTop() {
+    const accounts = view.data ? view.data.accounts : [];
+    const options = ['<option value="">全部账号</option>'].concat(accounts.map((one) =>
+      '<option value="' + esc(one.id) + '">' + esc(one.name || one.address) + '（' + STATUS_TEXT[one.status] + '）</option>'));
+    el.accountSelect.innerHTML = options.join('');
+    el.accountSelect.value = view.accountId;
+
+    const shown = view.accountId ? accounts.filter((one) => one.id === view.accountId) : accounts;
+    const status = shown.some((one) => one.status === 'error') ? 'error'
+      : shown.some((one) => one.status === 'connecting') ? 'connecting'
+        : shown.some((one) => one.status === 'connected') ? 'connected' : 'idle';
+    const failing = shown.find((one) => one.status === 'error');
+    el.statusDot.dataset.status = status;
+    el.statusDot.title = STATUS_TEXT[status] + (failing && failing.lastError ? '：' + failing.lastError : '');
+
+    const unread = visible().filter((mail) => !mail.seen).length;
+    el.unread.textContent = '未读 ' + unread;
+    el.settings.setAttribute('aria-expanded', String(!el.drawer.hidden));
+  }
+
+  function renderFolders() {
+    if (!view.data) { el.folders.replaceChildren(); return; }
+    const boxes = view.data.mailboxes.filter((box) => !view.accountId || box.accountId === view.accountId);
+    const merged = new Map();
+    for (const box of boxes) {
+      const current = merged.get(box.path) || { path: box.path, specialUse: box.specialUse, unseen: 0, total: 0 };
+      current.unseen += box.unseen;
+      current.total += box.total;
+      if (!current.specialUse && box.specialUse) current.specialUse = box.specialUse;
+      merged.set(box.path, current);
+    }
+    const all = view.data.messages.filter((mail) => !view.accountId || mail.accountId === view.accountId);
+    const items = [{
+      path: '', label: '全部邮件',
+      unseen: all.filter((mail) => !mail.seen).length, total: all.length,
+    }].concat([...merged.values()].map((box) => ({
+      path: box.path, label: folderLabel(box), unseen: box.unseen, total: box.total,
+    })));
+    el.folders.innerHTML = '<div class="m-count" style="padding:4px 9px 6px">文件夹</div>' + items.map((item) =>
+      '<button type="button" data-folder="' + esc(item.path) + '" aria-pressed="' + (view.folder === item.path) + '">' +
+      '<span class="m-folder-name">' + esc(item.label) + '</span>' +
+      '<span class="m-count">' + (item.unseen ? item.unseen + ' 未读' : item.total) + '</span></button>').join('');
+  }
+
+  function renderList() {
+    const mails = visible();
+    if (!view.loaded) { rows = []; el.list.replaceChildren(); return; }
+    rows = mails;
+    el.list.innerHTML = mails.map((mail, index) => {
+      const open = view.open && key(view.open) === key(mail);
+      return '<button type="button" class="m-row" role="listitem" data-i="' + index + '"' +
+        ' data-unread="' + String(!mail.seen) + '" aria-current="' + String(Boolean(open)) + '">' +
+        '<span class="m-unread-dot"' + (mail.seen ? '' : ' data-unread="true"') + ' aria-hidden="true"></span>' +
+        (mail.seen ? '' : '<span class="m-sr-only">未读</span>') +
+        '<span class="m-row-main">' +
+        '<span class="m-row-line"><span class="m-row-from">' + esc(mail.from.name || mail.from.address) + '</span>' +
+        '<span class="m-row-time">' + esc(fmtListDate(mail.date)) + '</span></span>' +
+        '<span class="m-row-subject">' + esc(mail.subject || '(无主题)') + '</span>' +
+        '<span class="m-row-snippet">' + esc(mail.snippet || '') + '</span></span>' +
+        '<span class="m-row-marks">' + (mail.flagged ? '<span aria-hidden="true">★</span><span class="m-sr-only">已加星标</span>' : '') +
+        (mail.hasAttachments ? '<span aria-hidden="true">📎</span><span class="m-sr-only">含附件</span>' : '') + '</span></button>';
+    }).join('');
+  }
+
+  function renderEmpty() {
+    if (!view.loaded) {
+      el.empty.hidden = false;
+      el.empty.replaceChildren();
+      if (view.error) {
+        el.empty.append(text('读取邮件失败：' + view.error));
+        el.empty.append(button('重试', 'm-retry'));
+      } else {
+        el.empty.append(text('正在读取邮件…'));
+      }
+      return;
+    }
+    const accounts = view.data.accounts;
+    if (accounts.length === 0) {
+      el.empty.hidden = false;
+      el.empty.innerHTML = '<h2>还没有配置邮箱</h2>' +
+        '<p>点右上角的「设置」添加账号：填 IMAP 主机、端口、邮箱地址和<strong>授权码</strong>，先点「测试连接」确认能连通再保存。</p>' +
+        '<ul>' +
+        '<li><strong>QQ 邮箱</strong>：这里要填<strong>授权码</strong>，不是登录密码。到 QQ 邮箱 →「设置」→「账号」→「POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV 服务」，开启 IMAP/SMTP 服务，按提示验证后拿到 16 位授权码。主机 <code>imap.qq.com</code>，端口 <code>993</code>，勾选 SSL。</li>' +
+        '<li><strong>Gmail</strong>：先在 Google 账号里开启两步验证，再生成一个<strong>应用专用密码</strong>；然后到 Gmail →「设置」→「转发和 POP/IMAP」启用 IMAP。主机 <code>imap.gmail.com</code>，端口 <code>993</code>，勾选 SSL。</li>' +
+        '</ul><p>授权码只写进本机凭据，不会出现在面板、HTTP 响应或日志里。</p>' +
+        '<button type="button" class="m-open-settings">打开设置</button>';
+      return;
+    }
+    const mails = visible();
+    if (mails.length === 0) {
+      el.empty.hidden = false;
+      el.empty.replaceChildren(text(view.query
+        ? '没有匹配「' + view.query + '」的邮件。'
+        : '这个范围里还没有邮件，或者账号还没同步完；点「刷新」再看一次。'));
+      return;
+    }
+    el.empty.hidden = true;
+    el.empty.replaceChildren();
+  }
+
+  function renderAll() {
+    renderStatus();
+    renderTop();
+    renderFolders();
+    renderList();
+    renderEmpty();
+    syncDrawer();
+  }
+
+  /* ───────────────────────────── 正文 ───────────────────────────── */
+
+  /**
+   * 邮件正文里的远程图片一律换成透明像素：默认不发出任何外部请求。
+   * `allowRemote` 为真时只放行 `https:`，其余（http、cid、未知协议）仍然阻止。
+   */
+  function neutralize(html, allowRemote) {
+    let doc;
+    try { doc = new DOMParser().parseFromString(String(html), 'text/html'); } catch { return ''; }
+    if (!doc || !doc.body) return '';
+    for (const image of doc.body.querySelectorAll('img')) {
+      const source = image.getAttribute('src') || '';
+      if (/^data:image\//i.test(source)) continue;
+      if (allowRemote && /^https:\/\//i.test(source)) continue;
+      image.removeAttribute('srcset');
+      image.setAttribute('src', BLANK_PIXEL);
+      if (!image.getAttribute('alt')) image.setAttribute('alt', '已阻止远程图片');
+    }
+    for (const node of doc.body.querySelectorAll('[background]')) node.removeAttribute('background');
+    for (const node of doc.body.querySelectorAll('[style]')) {
+      node.setAttribute('style', (node.getAttribute('style') || '')
+        .replace(/url\(\s*['"]?(?:https?:)?\/\/[^)]*['"]?\s*\)/gi, 'none'));
+    }
+    return doc.body.innerHTML;
+  }
+
+  const hasRemoteImages = (html) =>
+    /<img[^>]+src\s*=\s*["']?https?:/i.test(html) || /url\(\s*['"]?https?:/i.test(html);
+
+  /** 嵌套文档：仍禁脚本，图片按 `allowRemote` 决定是否放行 https。 */
+  function buildSrcdoc(html, allowRemote) {
+    const images = allowRemote ? 'img-src data: https:' : 'img-src data:';
+    const csp = "default-src 'none'; " + images + "; style-src 'unsafe-inline'; font-src data:; object-src 'none'; form-action 'none'";
+    return '<!doctype html><html><head><meta charset="utf-8">' +
+      '<meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
+      '<base target="_blank">' +
+      '<style>body{margin:0;padding:14px 16px;font:14px/1.6 \'Segoe UI\',\'Microsoft YaHei\',sans-serif;color:#20242b;background:#fff;overflow-wrap:anywhere}img{max-width:100%;height:auto}a{color:#1673c9}</style>' +
+      '</head><body>' + neutralize(html, allowRemote) + '</body></html>';
+  }
+
+  function renderRead() {
+    const open = view.open;
+    if (!open) {
+      el.readEmpty.hidden = false;
+      el.readContent.hidden = true;
+      return;
+    }
+    el.readEmpty.hidden = true;
+    el.readContent.hidden = false;
+    const detail = view.detail;
+    el.subject.textContent = (detail || open).subject || '(无主题)';
+    el.from.textContent = address((detail || open).from);
+    el.date.textContent = fmtDate((detail || open).date);
+    el.addresses.textContent = detail
+      ? ['收件人：' + (detail.to.map(address).join('、') || '—')]
+        .concat(detail.cc.length ? ['抄送：' + detail.cc.map(address).join('、')] : []).join('　')
+      : '';
+
+    const seen = detail ? detail.seen : open.seen;
+    const flagged = detail ? detail.flagged : open.flagged;
+    el.actSeen.dataset.op = seen ? 'markUnread' : 'markRead';
+    el.actSeen.textContent = seen ? '标为未读' : '标为已读';
+    el.actFlag.dataset.op = flagged ? 'unflag' : 'flag';
+    el.actFlag.textContent = flagged ? '取消星标' : '加星标';
+    el.moveTarget.innerHTML = (view.data ? view.data.mailboxes : [])
+      .filter((box) => box.accountId === open.accountId && box.path !== open.folder)
+      .map((box) => '<option value="' + esc(box.path) + '">' + esc(folderLabel(box)) + '</option>').join('');
+
+    el.readBody.replaceChildren();
+    el.truncated.hidden = !(detail && detail.truncated);
+    el.attachments.replaceChildren();
+    if (!detail) {
+      delete el.readBody.dataset.mode;
+      el.showImages.hidden = true;
+      el.readBody.append(text(view.detailError ? '读取正文失败：' + view.detailError : '正在读取正文…'));
+      return;
+    }
+    if (detail.html) {
+      el.readBody.dataset.mode = 'html';
+      el.showImages.hidden = view.showImages || !hasRemoteImages(detail.html);
+      const frame = document.createElement('iframe');
+      frame.className = 'm-html-frame';
+      frame.setAttribute('sandbox', '');
+      frame.setAttribute('title', '邮件正文（已隔离，脚本与远程图片默认被阻止）');
+      frame.setAttribute('srcdoc', buildSrcdoc(detail.html, view.showImages));
+      el.readBody.append(frame);
+    } else {
+      delete el.readBody.dataset.mode;
+      el.showImages.hidden = true;
+      const pre = document.createElement('pre');
+      pre.className = 'm-text';
+      pre.textContent = detail.text || '（这封邮件没有可显示的正文）';
+      el.readBody.append(pre);
+    }
+    if (detail.attachments.length) {
+      el.attachments.hidden = false;
+      el.attachments.append(text('附件：'));
+      for (const item of detail.attachments) {
+        const query = new URLSearchParams({
+          accountId: detail.accountId, folder: detail.folder,
+          uid: String(detail.uid), part: item.part, filename: item.filename,
+        });
+        const link = document.createElement('a');
+        link.href = '/dsh-mail/attachment?' + query.toString();
+        link.setAttribute('download', '');
+        link.rel = 'noreferrer';
+        link.textContent = item.filename + '（' + Math.max(1, Math.round(item.size / 1024)) + ' KiB）';
+        el.attachments.append(link);
+      }
+    } else el.attachments.hidden = true;
+  }
+
+  async function openMessage(mail) {
+    view.open = mail;
+    view.detail = null;
+    view.detailError = '';
+    view.showImages = false;
+    el.actResult.textContent = '';
+    delete el.actResult.dataset.error;
+    renderList();
+    renderRead();
+    try {
+      view.detail = await request('/dsh-mail/message?' + new URLSearchParams({
+        accountId: mail.accountId, folder: mail.folder, uid: String(mail.uid),
+      }).toString());
+      // 正文这一次 FETCH 带回的 flags 比列表里的新（可能在别处读过或标过星）。
+      if (view.detail) applyFlags(view.detail);
+    } catch (error) {
+      view.detailError = message(error);
+    }
+    // 标已读必须放在取正文之后：两件事并发时，正文里那份「还没读」的 flags 会把
+    // 刚标上的已读覆盖回去，行就又显示成未读。正文若已显示为已读，就不必再发。
+    if (!mail.seen && !(view.detail && view.detail.seen)) await markOpened(mail);
+    renderList();
+    renderRead();
+    renderTop();
+  }
+
+  /** 把一封未读邮件标为已读；失败只忽略，正文比已读标记重要。 */
+  async function markOpened(mail) {
+    const action = { op: 'markRead', accountId: mail.accountId, folder: mail.folder, uids: [mail.uid] };
+    try {
+      await write('/dsh-mail/action', action);
+      applyLocally(action);
+      renderList();
+      renderTop();
+    } catch {
+      // 服务器暂时拒绝（离线、只读文件夹）不该挡住正文。
+    }
+  }
+
+  /** 用正文里的 flags 纠正列表行，省得为了一个「已读点」等下一轮 /state。 */
+  function applyFlags(detail) {
+    if (!view.data) return;
+    const row = view.data.messages.find((one) => one.accountId === detail.accountId
+      && one.folder === detail.folder && one.uid === detail.uid);
+    if (!row) return;
+    row.seen = detail.seen;
+    row.flagged = detail.flagged;
+  }
+
+  /** 就地改行：成功后不等下一次 /state 就能看到结果。 */
+  function applyLocally(action) {
+    const targets = view.data ? view.data.messages.filter((mail) =>
+      mail.accountId === action.accountId && mail.folder === action.folder && action.uids.includes(mail.uid)) : [];
+    for (const mail of targets) {
+      if (action.op === 'markRead') mail.seen = true;
+      else if (action.op === 'markUnread') mail.seen = false;
+      else if (action.op === 'flag') mail.flagged = true;
+      else if (action.op === 'unflag') mail.flagged = false;
+      else if (action.op === 'move') mail.folder = action.targetFolder;
+    }
+    if (view.data && action.op === 'delete') {
+      view.data.messages = view.data.messages.filter((mail) => !(mail.accountId === action.accountId
+        && mail.folder === action.folder && action.uids.includes(mail.uid)));
+    }
+    if (view.detail && action.accountId === view.detail.accountId && action.uids.includes(view.detail.uid)) {
+      if (action.op === 'markRead') view.detail.seen = true;
+      else if (action.op === 'markUnread') view.detail.seen = false;
+      else if (action.op === 'flag') view.detail.flagged = true;
+      else if (action.op === 'unflag') view.detail.flagged = false;
+    }
+    if (action.op === 'delete' || action.op === 'move') {
+      if (view.open && action.uids.includes(view.open.uid) && action.accountId === view.open.accountId) {
+        if (action.op === 'delete') { view.open = null; view.detail = null; }
+      }
+    }
+  }
+
+  const OP_LABEL = {
+    markRead: '已标为已读', markUnread: '已标为未读', flag: '已加星标',
+    unflag: '已取消星标', move: '已移动', delete: '已删除',
+  };
+
+  async function runAction(action) {
+    el.actResult.textContent = '正在提交…';
+    delete el.actResult.dataset.error;
+    try {
+      const result = await write('/dsh-mail/action', action);
+      applyLocally(action);
+      el.actResult.textContent = OP_LABEL[action.op] +
+        (result && result.applied != null ? '（' + result.applied + ' 封）' : '');
+      renderTop();
+      renderList();
+      renderEmpty();
+      renderRead();
+    } catch (error) {
+      el.actResult.dataset.error = 'true';
+      el.actResult.textContent = message(error);
+    }
+  }
+
+  /* ───────────────────────────── 设置抽屉 ───────────────────────────── */
+
+  const field = (name) => el.accountForm.querySelector('[name="' + name + '"]');
+  const PROVIDER_DEFAULTS = {
+    qq: { imapHost: 'imap.qq.com', imapPort: 993, hint: 'QQ 邮箱要填授权码（不是登录密码）：设置 → 账号 → 开启 IMAP/SMTP 服务后按提示获取。' },
+    gmail: { imapHost: 'imap.gmail.com', imapPort: 993, hint: 'Gmail 要开两步验证后生成应用专用密码，并在 Gmail 设置里启用 IMAP。' },
+    custom: { imapHost: '', imapPort: 993, hint: '自建/其他服务商：填对方给的 IMAP 主机、端口，并确认是否使用 SSL/TLS。' },
+  };
+
+  function fillForm(account) {
+    const values = account || { provider: 'qq', name: '', address: '', imapHost: 'imap.qq.com', imapPort: 993, secure: true };
+    field('name').value = values.name || '';
+    field('address').value = values.address || '';
+    field('provider').value = values.provider || 'qq';
+    field('imapHost').value = values.imapHost || '';
+    field('imapPort').value = String(values.imapPort || 993);
+    field('secure').checked = values.secure !== false;
+    field('password').value = '';
+    el.formResult.textContent = '';
+    delete el.formResult.dataset.error;
+    describeProvider();
+  }
+
+  function describeProvider() {
+    const preset = PROVIDER_DEFAULTS[field('provider').value] || PROVIDER_DEFAULTS.custom;
+    el.accountForm.querySelector('[data-provider-hint]').textContent = preset.hint;
+    if (!field('imapHost').value) field('imapHost').value = preset.imapHost;
+    if (field('provider').value !== 'custom' && !field('imapPort').value) field('imapPort').value = String(preset.imapPort);
+  }
+
+  function accountFromForm() {
+    return {
+      name: field('name').value.trim(),
+      address: field('address').value.trim(),
+      provider: field('provider').value,
+      imapHost: field('imapHost').value.trim(),
+      imapPort: Number(field('imapPort').value),
+      secure: field('secure').checked,
+    };
+  }
+
+  /** 返回错误文案，或 null 表示通过。 */
+  function checkAccount(account) {
+    if (!account.address.includes('@')) return '邮箱地址要包含 @。';
+    if (!account.imapHost) return 'IMAP 主机不能为空。';
+    if (!Number.isInteger(account.imapPort) || account.imapPort < 1 || account.imapPort > 65535) return '端口要是 1–65535 的整数。';
+    return null;
+  }
+
+  function renderAccountList() {
+    const accounts = view.data ? view.data.accounts : [];
+    if (!accounts.length) {
+      el.accountList.innerHTML = '<li><span class="m-account-copy">还没有账号</span></li>';
+      return;
+    }
+    el.accountList.innerHTML = accounts.map((one) => {
+      const config = view.data.config.accounts.find((item) => item.id === one.id);
+      return '<li><span class="m-account-copy"><strong>' + esc(one.name || one.address) + '</strong>' +
+        '<small>' + esc(one.address) + ' · ' + STATUS_TEXT[one.status] +
+        (one.lastError ? ' · ' + esc(one.lastError) : '') + '</small></span>' +
+        '<button type="button" data-edit="' + esc(one.id) + '">编辑</button>' +
+        '<button type="button" data-remove="' + esc(one.id) + '"' + (config ? '' : ' disabled') + '>删除</button></li>';
+    }).join('');
+  }
+
+  function syncTriggerAccounts() {
+    const accounts = view.data ? view.data.config.accounts : [];
+    const previous = el.triggerAccount.value;
+    el.triggerAccount.innerHTML = accounts.map((one) =>
+      '<option value="' + esc(one.id) + '">' + esc(one.name || one.address) + '</option>').join('');
+    if (accounts.some((one) => one.id === previous)) el.triggerAccount.value = previous;
+    return el.triggerAccount.value;
+  }
+
+  const lines = (value) => value.split('\n').map((line) => line.trim()).filter(Boolean);
+
+  function loadTrigger() {
+    const account = (view.data ? view.data.config.accounts : []).find((one) => one.id === el.triggerAccount.value);
+    const trigger = account ? account.trigger : { mode: 'panel', filters: { unreadOnly: true } };
+    el.triggerMode.value = trigger.mode;
+    root.querySelector('.m-trigger-workspace').value = (trigger.session && trigger.session.workspacePath) || '';
+    root.querySelector('.m-trigger-preset').value = (trigger.session && trigger.session.agentPreset) || '';
+    root.querySelector('.m-trigger-permission').value = (trigger.session && trigger.session.permissionPreset) || '';
+    root.querySelector('.m-trigger-title').value = (trigger.session && trigger.session.titleTemplate) || '';
+    root.querySelector('.m-trigger-sessionid').value = (trigger.notify && trigger.notify.sessionId) || '';
+    root.querySelector('.m-trigger-from').value = (trigger.filters.from || []).join('\n');
+    root.querySelector('.m-trigger-subject').value = (trigger.filters.subject || []).join('\n');
+    root.querySelector('.m-trigger-keywords').value = (trigger.filters.keywords || []).join('\n');
+    el.triggerUnread.checked = trigger.filters.unreadOnly !== false;
+    el.triggerResult.textContent = '';
+    delete el.triggerResult.dataset.error;
+    syncTriggerMode();
+  }
+
+  /** 部署缺哪个服务，就把对应模式标灰并说明，而不是等保存时才失败。 */
+  function syncTriggerAvailability() {
+    const availability = (view.data && view.data.config.triggerAvailability) || { session: true, notify: true };
+    const note = root.querySelector('.m-trigger-availability');
+    const missing = [];
+    for (const option of el.triggerMode.querySelectorAll('option')) {
+      const available = option.value === 'panel' || availability[option.value] === true;
+      option.disabled = !available;
+      if (!available) missing.push(option.value === 'session' ? '新建会话' : '投递提醒');
+    }
+    note.hidden = missing.length === 0;
+    note.textContent = missing.length
+      ? '当前 dsh 部署缺少「' + missing.join('」「') + '」需要的服务，这两个模式不可选。'
+      : '';
+  }
+
+  function syncTriggerMode() {
+    el.triggerSession.hidden = el.triggerMode.value !== 'session';
+    el.triggerNotify.hidden = el.triggerMode.value !== 'notify';
+  }
+
+  function triggerFromForm() {
+    const filters = { unreadOnly: el.triggerUnread.checked };
+    const from = lines(root.querySelector('.m-trigger-from').value);
+    const subject = lines(root.querySelector('.m-trigger-subject').value);
+    const keywords = lines(root.querySelector('.m-trigger-keywords').value);
+    if (from.length) filters.from = from;
+    if (subject.length) filters.subject = subject;
+    if (keywords.length) filters.keywords = keywords;
+    const trigger = { mode: el.triggerMode.value, filters };
+    if (trigger.mode === 'session') {
+      const session = { workspacePath: root.querySelector('.m-trigger-workspace').value.trim() };
+      const preset = root.querySelector('.m-trigger-preset').value.trim();
+      const permission = root.querySelector('.m-trigger-permission').value.trim();
+      const title = root.querySelector('.m-trigger-title').value.trim();
+      if (preset) session.agentPreset = preset;
+      if (permission) session.permissionPreset = permission;
+      if (title) session.titleTemplate = title;
+      trigger.session = session;
+    }
+    if (trigger.mode === 'notify') trigger.notify = { sessionId: root.querySelector('.m-trigger-sessionid').value.trim() };
+    return trigger;
+  }
+
+  /** 账号集合变了才重建列表，免得正在输入的表单被轮询清掉。 */
+  function syncDrawer() {
+    if (el.drawer.hidden) return;
+    const signature = (view.data ? view.data.accounts : [])
+      .map((one) => [one.id, one.name, one.status, one.lastError, one.address].join(':')).join('|');
+    if (signature === view.drawerSignature) return;
+    view.drawerSignature = signature;
+    renderAccountList();
+    syncTriggerAccounts();
+    loadTrigger();
+    syncTriggerAvailability();
+  }
+
+  function openDrawer(open) {
+    el.drawer.hidden = !open;
+    el.settings.setAttribute('aria-expanded', String(open));
+    if (open) { view.drawerSignature = ''; syncDrawer(); }
+  }
+
+  async function saveAccount() {
+    const account = accountFromForm();
+    const invalid = checkAccount(account);
+    if (invalid) { el.formResult.dataset.error = 'true'; el.formResult.textContent = invalid; return; }
+    const password = field('password').value;
+    const payload = view.editing
+      ? { op: 'updateAccount', account: Object.assign({ id: view.editing.id, trigger: view.editing.trigger }, account) }
+      : { op: 'addAccount', account: account };
+    if (password) payload.password = password;
+    el.formResult.textContent = '正在保存…';
+    delete el.formResult.dataset.error;
+    try {
+      await write('/dsh-mail/config', payload);
+      view.formOpen = false;
+      view.editing = null;
+      el.accountForm.hidden = true;
+      el.formResult.textContent = '';
+      view.drawerSignature = '';
+      await load();
+      syncDrawer();
+    } catch (error) {
+      el.formResult.dataset.error = 'true';
+      el.formResult.textContent = message(error);
+    }
+  }
+
+  async function testAccount() {
+    const account = accountFromForm();
+    const invalid = checkAccount(account);
+    if (invalid) { el.formResult.dataset.error = 'true'; el.formResult.textContent = invalid; return; }
+    const password = field('password').value;
+    const payload = password || !view.editing
+      ? { op: 'testAccount', draft: Object.assign({ password: password }, account) }
+      : { op: 'testAccount', accountId: view.editing.id };
+    el.formResult.textContent = '正在连接…';
+    delete el.formResult.dataset.error;
+    try {
+      const result = await write('/dsh-mail/config', payload);
+      el.formResult.textContent = result && result.mailboxes != null
+        ? '连接成功，发现 ' + result.mailboxes + ' 个文件夹。'
+        : '连接成功。';
+    } catch (error) {
+      el.formResult.dataset.error = 'true';
+      el.formResult.textContent = message(error);
+    }
+  }
+
+  async function saveTrigger() {
+    if (!el.triggerAccount.value) return;
+    const trigger = triggerFromForm();
+    if (trigger.mode === 'session' && !trigger.session.workspacePath) {
+      el.triggerResult.dataset.error = 'true';
+      el.triggerResult.textContent = '新建会话必须填工作目录（绝对路径）。';
+      return;
+    }
+    if (trigger.mode === 'notify' && !trigger.notify.sessionId) {
+      el.triggerResult.dataset.error = 'true';
+      el.triggerResult.textContent = '投递提醒必须填目标会话 id。';
+      return;
+    }
+    el.triggerResult.textContent = '正在保存…';
+    delete el.triggerResult.dataset.error;
+    try {
+      await write('/dsh-mail/config', { op: 'setTrigger', accountId: el.triggerAccount.value, trigger: trigger });
+      el.triggerResult.textContent = '已保存。';
+      view.drawerSignature = '';
+      await load();
+    } catch (error) {
+      el.triggerResult.dataset.error = 'true';
+      el.triggerResult.textContent = message(error);
+    }
+  }
+
+  /* ───────────────────────────── 事件 ───────────────────────────── */
+
+  el.status.addEventListener('click', (event) => { if (event.target.closest('.m-retry')) load(); });
+  el.empty.addEventListener('click', (event) => {
+    if (event.target.closest('.m-retry')) load();
+    if (event.target.closest('.m-open-settings')) openDrawer(true);
+  });
+  el.refresh.addEventListener('click', () => { void refresh(); });
+  el.settings.addEventListener('click', () => openDrawer(el.drawer.hidden));
+  el.drawerClose.addEventListener('click', () => openDrawer(false));
+  el.accountSelect.addEventListener('change', () => {
+    view.accountId = el.accountSelect.value;
+    view.folder = '';
+    renderAll();
+  });
+  el.search.addEventListener('input', () => { view.query = el.search.value; renderList(); renderEmpty(); renderTop(); });
+  el.folders.addEventListener('click', (event) => {
+    const node = event.target.closest('[data-folder]');
+    if (!node) return;
+    view.folder = node.dataset.folder;
+    renderFolders();
+    renderList();
+    renderEmpty();
+    renderTop();
+  });
+  el.list.addEventListener('click', (event) => {
+    const node = event.target.closest('[data-i]');
+    if (!node) return;
+    const mail = rows[Number(node.dataset.i)];
+    if (mail) openMessage(mail);
+  });
+  el.readBar.addEventListener('click', (event) => {
+    const node = event.target.closest('button[data-op]');
+    if (!node || !view.open) return;
+    runAction({ op: node.dataset.op, accountId: view.open.accountId, folder: view.open.folder, uids: [view.open.uid] });
+  });
+  root.querySelector('.m-act-move').addEventListener('click', () => {
+    if (!view.open) return;
+    const target = el.moveTarget.value;
+    if (!target) return;
+    runAction({ op: 'move', accountId: view.open.accountId, folder: view.open.folder, uids: [view.open.uid], targetFolder: target });
+  });
+  root.querySelector('.m-act-delete').addEventListener('click', () => {
+    if (!view.open) return;
+    if (!window.confirm('删除这封邮件？是否可恢复取决于邮箱服务商。')) return;
+    runAction({ op: 'delete', accountId: view.open.accountId, folder: view.open.folder, uids: [view.open.uid] });
+  });
+  el.showImages.addEventListener('click', () => { view.showImages = true; renderRead(); });
+  el.accountNew.addEventListener('click', () => {
+    view.editing = null;
+    view.formOpen = true;
+    el.accountForm.hidden = false;
+    fillForm(null);
+  });
+  el.accountList.addEventListener('click', async (event) => {
+    const edit = event.target.closest('[data-edit]');
+    const remove = event.target.closest('[data-remove]');
+    if (edit) {
+      const account = view.data.config.accounts.find((one) => one.id === edit.dataset.edit);
+      if (!account) return;
+      view.editing = account;
+      view.formOpen = true;
+      el.accountForm.hidden = false;
+      fillForm(account);
+      return;
+    }
+    if (remove) {
+      const account = view.data.config.accounts.find((one) => one.id === remove.dataset.remove);
+      if (!account || !window.confirm('删除账号「' + (account.name || account.address) + '」？凭据也会一起删掉。')) return;
+      el.formResult.textContent = '正在删除…';
+      try {
+        await write('/dsh-mail/config', { op: 'removeAccount', accountId: account.id });
+        view.formOpen = false;
+        view.editing = null;
+        el.accountForm.hidden = true;
+        el.formResult.textContent = '';
+        view.drawerSignature = '';
+        await load();
+      } catch (error) {
+        el.formResult.dataset.error = 'true';
+        el.formResult.textContent = message(error);
+      }
+    }
+  });
+  field('provider').addEventListener('change', () => {
+    const preset = PROVIDER_DEFAULTS[field('provider').value] || PROVIDER_DEFAULTS.custom;
+    field('imapHost').value = preset.imapHost;
+    field('imapPort').value = String(preset.imapPort);
+    describeProvider();
+  });
+  root.querySelector('.m-account-save').addEventListener('click', saveAccount);
+  root.querySelector('.m-account-test').addEventListener('click', testAccount);
+  root.querySelector('.m-account-cancel').addEventListener('click', () => {
+    view.formOpen = false;
+    view.editing = null;
+    el.accountForm.hidden = true;
+  });
+  el.triggerAccount.addEventListener('change', loadTrigger);
+  el.triggerMode.addEventListener('change', syncTriggerMode);
+  root.querySelector('.m-trigger-save').addEventListener('click', saveTrigger);
+
+  // 面板切走时整个文档连同这个定时器一起销毁；隐藏时跳过，避免后台空转。
+  window.setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  load();
+})();
+</script>
+</body>
+</html>

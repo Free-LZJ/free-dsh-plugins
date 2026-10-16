@@ -1,0 +1,8 @@
+# dsh bundle patch: installing this package as a bundle makes `dsh plugin add`
+# insert the one Loader row the plugin needs, so it mounts on the next start.
+#
+# The id doubles as the route namespace the Host half serves and the panel id the
+# browser half registers, so it must stay `mail`.
+- insert:
+    - id: mail
+      name: '@free-lzj/dsh-mail'

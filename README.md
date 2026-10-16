@@ -22,6 +22,7 @@
 | 包 | 一句话 |
 |---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host 插件 + 浏览器半边（双面包）：Host 半边导入并挂载，浏览器半边提供设置页那一页 |
+| [`@free-lzj/dsh-mail`](packages/mail/README.md) | Host 插件 + 浏览器半边（双面包）：侧边栏邮件面板（读 / 搜 / 标已读 / 星标 / 移动 / 删除，**不发信**），新邮件按账号配置新建 agent 会话、投递到指定会话或只高亮 |
 
 一个包、一条 Loader 行：`0.3.0` 起这两半合并了，此前是两个包、两行（见[从 0.2.x 升级](#从-02x-升级)）。
 

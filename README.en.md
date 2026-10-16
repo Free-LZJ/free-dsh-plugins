@@ -22,6 +22,7 @@
 | Package | In one line |
 |---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host plugin + browser half (a dual-face package): the Host half imports and mounts, the browser half renders the Settings page |
+| [`@free-lzj/dsh-mail`](packages/mail/README.md) | Host plugin + browser half (a dual-face package): a sidebar mail panel over IMAP (read / search / flag / move / delete, **no sending**) that hands a matching new message to a new agent session, into an existing one, or just flags it in the panel |
 
 One package, one Loader row: the two halves merged in `0.3.0`; they used to be two packages and two rows (see [Upgrading from 0.2.x](#upgrading-from-02x)).
 
