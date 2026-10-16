@@ -293,8 +293,17 @@ export function registerRoutes(ctx: Context, host: RouteHost): void {
       }
     }, 'panel'), 'mail.panel-route')
 
-    register(STATE_PATH, guard((_req, res) => {
-      respond(res, 200, host.state())
+    register(STATE_PATH, guard((req, res) => {
+      const state = host.state()
+      // Polling is what keeps the panel live, so the common case has to be cheap:
+      // when the caller already holds this revision there is nothing to send but
+      // the fact that nothing changed.
+      const since = Number(queryOf(req).get('since'))
+      if (Number.isSafeInteger(since) && since === state.revision) {
+        respond(res, 200, { unchanged: true, revision: state.revision })
+        return
+      }
+      respond(res, 200, state)
     }, 'reading state'), 'mail.state-route')
 
     register(MESSAGE_PATH, guard(async (req, res) => {

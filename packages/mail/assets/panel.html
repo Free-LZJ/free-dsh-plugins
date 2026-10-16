@@ -432,9 +432,20 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
 
   async function load() {
     try {
-      view.data = await request('/dsh-mail/state');
+      // 带上已有的 revision：服务端没变化时只回几十字节，不必重传整个列表。
+      const suffix = view.revision === null || view.revision === undefined
+        ? ''
+        : '?since=' + String(view.revision);
+      const next = await request('/dsh-mail/state' + suffix);
       view.loaded = true;
       view.error = '';
+      if (next && next.unchanged) {
+        // 这次只有状态行的时间戳要动。
+        renderStatus();
+        return;
+      }
+      view.data = next;
+      view.revision = next && typeof next.revision === 'number' ? next.revision : null;
       renderAll();
     } catch (error) {
       view.error = message(error);

@@ -198,6 +198,15 @@ export interface MailConfigView {
 /** `GET /dsh-mail/state`. */
 export interface MailState {
   readonly version: 1
+  /**
+   * Bumped whenever anything the panel draws changes.
+   *
+   * The panel polls this route every couple of seconds. Without a cheap way to say
+   * "nothing moved", every poll re-serialises the whole list — 35 KB for a hundred
+   * rows, and it grows with the window. A caller that passes the revision it
+   * already has gets `{ unchanged: true }` instead.
+   */
+  readonly revision: number
   readonly collectedAt: string
   /**
    * When the rows in `messages` were read from the mailbox.

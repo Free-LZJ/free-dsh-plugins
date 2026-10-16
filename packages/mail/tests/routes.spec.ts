@@ -115,6 +115,7 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
   return {
     state: (): MailState => ({
       version: 1,
+      revision: 1,
       collectedAt: '2026-01-01T00:00:00.000Z',
       accounts: [],
       mailboxes: [],
@@ -216,6 +217,25 @@ describe('the registered routes', () => {
       refused as unknown as ServerResponse,
     )
     expect(refused.status).toBe(403)
+  })
+
+  it('answers a poll that already holds the revision with a stub, not the list', async () => {
+    const { call } = mounted()
+
+    const fresh = new RecordedResponse()
+    await call(STATE_PATH, request({ url: STATE_PATH }), fresh as unknown as ServerResponse)
+    expect((JSON.parse(fresh.text) as MailState).revision).toBe(1)
+
+    // The panel re-asks every couple of seconds; saying "unchanged" is what keeps
+    // that from re-serialising the whole list each time.
+    const repeated = new RecordedResponse()
+    await call(STATE_PATH, request({ url: `${STATE_PATH}?since=1` }), repeated as unknown as ServerResponse)
+    expect(JSON.parse(repeated.text)).toEqual({ unchanged: true, revision: 1 })
+
+    // A stale revision still gets everything.
+    const stale = new RecordedResponse()
+    await call(STATE_PATH, request({ url: `${STATE_PATH}?since=0` }), stale as unknown as ServerResponse)
+    expect((JSON.parse(stale.text) as MailState).messages).toBeDefined()
   })
 
   it('answers state as JSON without caching', async () => {

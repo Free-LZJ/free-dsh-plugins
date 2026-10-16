@@ -64,6 +64,7 @@ const ACCOUNT: MailConfigView['accounts'][number] = {
 
 const EMPTY_STATE: MailState = {
   version: 1,
+  revision: 1,
   collectedAt: '2026-08-12T09:31:00.000Z',
   accounts: [],
   mailboxes: [],
@@ -83,6 +84,7 @@ const ACCOUNT_VIEW: MailState['accounts'][number] = {
 /** The state a configured account produces: two messages, one unread with an attachment. */
 const STATE: MailState = {
   version: 1,
+  revision: 1,
   collectedAt: '2026-08-12T09:31:00.000Z',
   accounts: [ACCOUNT_VIEW],
   mailboxes: [

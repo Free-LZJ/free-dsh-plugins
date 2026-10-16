@@ -27,8 +27,15 @@ import type {
 /** Bottom-of-the-barrel rescan interval, in seconds. */
 export const DEFAULT_FALLBACK_SCAN_SECONDS = 300
 
-/** How many recent messages `/dsh-mail/state` carries. */
-export const DEFAULT_MAX_LIST_MESSAGES = 100
+/**
+ * How many recent messages `/dsh-mail/state` carries.
+ *
+ * Size only matters on the pass that actually changes something and on the first
+ * draw after a start: the panel hands back the revision it holds, so an unchanged
+ * list costs a few dozen bytes however large this is. Anything older than this
+ * window needs paging, not a bigger number.
+ */
+export const DEFAULT_MAX_LIST_MESSAGES = 300
 
 /** Abort an IMAP command after this many seconds. */
 export const DEFAULT_IMAP_TIMEOUT_SECONDS = 30

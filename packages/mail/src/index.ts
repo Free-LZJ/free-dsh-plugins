@@ -162,9 +162,24 @@ export function apply(ctx: Context): void {
       timeoutSeconds,
     )
 
+  /**
+   * Bumped whenever anything the panel draws changes.
+   *
+   * The panel polls `/state` every couple of seconds and hands back the revision
+   * it already holds; when this has not moved, the route answers with a few dozen
+   * bytes instead of re-serialising the whole list.
+   */
+  let revision = 0
+
+  /** Note that the panel's view changed. */
+  function touch(): void {
+    revision += 1
+  }
+
   /** Remember what an account's connection is doing. */
   function setStatus(accountId: string, status: AccountStatus, error?: string): void {
     statuses.set(accountId, error === undefined ? { status } : { status, error })
+    touch()
   }
 
   /** Fold freshly scanned messages into the snapshot, newest first. */
@@ -176,6 +191,7 @@ export function apply(ctx: Context): void {
       accountId,
       [...byUid.values()].sort((left, right) => right.uid - left.uid).slice(0, SNAPSHOT_LIMIT),
     )
+    touch()
   }
 
   /**
@@ -193,6 +209,7 @@ export function apply(ctx: Context): void {
       const update = byUid.get(message.uid)
       return update === undefined ? message : { ...message, seen: update.seen, flagged: update.flagged }
     }))
+    touch()
   }
 
   /**
@@ -208,6 +225,7 @@ export function apply(ctx: Context): void {
     if (vanished.length === 0) return
     const gone = new Set(vanished)
     snapshots.set(accountId, (snapshots.get(accountId) ?? []).filter(message => !gone.has(message.uid)))
+    touch()
   }
 
   /**
@@ -228,6 +246,7 @@ export function apply(ctx: Context): void {
     mailboxes.set(accountId, current.map(box => (box.path === folder
       ? { ...box, unseen: counters.unseen, total: counters.total }
       : box)))
+    touch()
   }
 
   /**
@@ -282,6 +301,7 @@ export function apply(ctx: Context): void {
     try {
       await connection.start()
       mailboxes.set(account.id, [...(await connection.listMailboxes())])
+      touch()
       // Start the first pass now instead of waiting for an `exists` event (the
       // connection stays idle until a mailbox is selected) or the fallback sweep:
       // the panel may already be open, and it draws whatever the snapshot holds.
@@ -451,6 +471,9 @@ export function apply(ctx: Context): void {
     const touched = new Set(action.uids)
     if (action.op === 'delete' || action.op === 'move') {
       snapshots.set(action.accountId, current.filter(message => !touched.has(message.uid)))
+      // Without this the panel's next poll would be told "nothing changed" and the
+      // row the user just acted on would stay on screen.
+      touch()
       return
     }
     snapshots.set(action.accountId, current.map((message) => {
@@ -463,6 +486,7 @@ export function apply(ctx: Context): void {
         default: return message
       }
     }))
+    touch()
   }
 
   /** Replace one account's trigger and persist the whole list. */
@@ -533,6 +557,7 @@ export function apply(ctx: Context): void {
       for (const account of accounts) requestScan(account.id)
       return {
         version: 1,
+        revision,
         collectedAt: new Date().toISOString(),
         // The oldest account's capture time: the panel says "from HH:MM" only
         // when the whole list is that old.
