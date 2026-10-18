@@ -6,3 +6,5 @@ lib/
 .DS_Store
 /.idea/
 /.dsh-work/
+/output/
+/.playwright-cli/
