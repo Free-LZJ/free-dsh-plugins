@@ -22,10 +22,9 @@
 | 包 | 一句话 |
 |---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | Host 插件 + 浏览器半边（双面包）：Host 半边导入并挂载，浏览器半边提供设置页那一页 |
-| [`@free-lzj/dsh-directory-guide`](packages/directory-guide/README.md) | Host 插件 + 浏览器半边（双面包）：Host 半边只读走一遍 `~/.dsh` 并在进程内脱敏，浏览器半边把它做成侧边栏的一级面板（排在上下文洞察之后） |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | Host 插件 + 浏览器半边（双面包）：侧边栏邮件面板（读 / 搜 / 标已读 / 星标 / 移动 / 删除，**不发信**），新邮件按账号配置新建 agent 会话、投递到指定会话或只高亮 |
 
-每个包都是「Host + 浏览器」一块双面包、一条 Loader 行：`@free-lzj/dsh-agent-import` 自 `0.3.0` 起两半合并（此前是两个包、两行，见[从 0.2.x 升级](#从-02x-升级)），`@free-lzj/dsh-directory-guide` 一开始就是一个包。
+每个包都是「Host + 浏览器」一块双面包、一条 Loader 行：`@free-lzj/dsh-agent-import` 自 `0.3.0` 起两半合并（此前是两个包、两行，见[从 0.2.x 升级](#从-02x-升级)）。
 
 当前发布 **`0.3.2`**：声明 `dsh.bundle`，作为 bundle 安装时（`dsh plugin add`）会**自动插入**那一条 Loader 行，不再需要手工声明；peer 范围补上 0.2.0 预发布分支（原范围会静默排除 `0.2.0-rc.*`）。`0.3.1` 的改动是技能改为逐行开关启停（关掉的名字显示为「已停用」而不是没导入过），配置页的来源改为一行一个开关、明细可折叠，打开后才显示该工具的目录项。明细见[更新日志](packages/agent-import/README.md#更新日志)。
 
