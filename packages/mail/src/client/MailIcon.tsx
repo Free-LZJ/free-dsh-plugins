@@ -4,10 +4,10 @@
  * Hand-drawn rather than imported, deliberately: the shell's icon set
  * (`@deepseek-ai/dsh-client-ui-primitives`) ships no mail, envelope, inbox or
  * letter glyph. The nearest name is `IconDeliverDocRegular`, and it draws a
- * sheet of paper being handed over — next to the directory guide's folder that
- * reads as "file", which is exactly the wrong affordance for the one entry that
- * means "your inbox". A dozen lines of inline SVG cost less than that
- * confusion, and adding an icon dependency for one glyph costs more than both.
+ * sheet of paper being handed over, which reads as "file" — the wrong
+ * affordance for the one entry that means "your inbox". A dozen lines of inline
+ * SVG cost less than that confusion, and adding an icon dependency for one
+ * glyph costs more than both.
  *
  * The sidebar owns the accessible label, so the glyph stays `aria-hidden`.
  *

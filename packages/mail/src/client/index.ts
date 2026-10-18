@@ -7,8 +7,8 @@
  * connections and serves both the panel document and the inbox state it reads.
  *
  * `order: 40` places the entry after the shipped panels (Plugins at 0,
- * Automation tasks at 10), after the Context Insights entry a third-party context
- * plugin registers at 20, and after the directory guide at 30.
+ * Automation tasks at 10) and after the Context Insights entry a third-party
+ * context plugin registers at 20.
  *
  * @module @free-lzj/dsh-mail/client
  */
