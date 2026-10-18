@@ -300,16 +300,6 @@ export interface ScanOutcome {
    * was instead of skipping mail.
    */
   readonly maxUid: number
-  /**
-   * The mailbox's next UID as this pass saw it, the value RFC 3501 §2.3.1.1
-   * defines for exactly this question: "is there anything since last time?".
-   *
-   * On the same discipline as {@link maxUid}, a pass that could not search
-   * answers `maxUid + 1` rather than the server's number, so recording it can
-   * never skip the mail the failed command never listed. A server that reports
-   * no UIDNEXT falls back to `maxUid + 1` for the same reason.
-   */
-  readonly uidNext: number
   /** True when the server's SEARCH looked unreliable and we fell back to a client-side filter. */
   readonly searchUnreliable: boolean
   /** Re-read flags for the UIDs the caller asked to refresh, in the same pass. */
@@ -500,11 +490,16 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
   // caller had before it computed `from`.
   const unadvanced = from - 1
 
-  // The SELECT this connection holds has already answered both questions about
-  // the folder: which generation it is (UIDVALIDITY) and which UID it will hand
-  // out next (UIDNEXT — RFC 3501 §2.3.1.1 defines it for exactly this, "is
-  // there anything since last time?").
-  const uidNext = client.mailbox?.uidNext
+  // The SELECT this connection holds has already answered which generation the
+  // folder is (UIDVALIDITY). Its UIDNEXT is deliberately not used to decide
+  // whether anything arrived: imapflow only advances that number on a SELECT, a
+  // STATUS or a FETCH that carries a UID, while the EXISTS a new message sends to
+  // an idling session moves `exists` and leaves `uidNext` where it was (imapflow
+  // `tools.js`, `case 'uid'`). Trusting the stale value is not a missed
+  // optimisation but a missed message: a connection that has been open since
+  // before the mail arrived would gate every pass away, and the refresh button
+  // rides the same connection.
+  //
   // imapflow hands UIDVALIDITY back as a BigInt; everything downstream stores
   // plain numbers, and a BigInt reaching JSON.stringify fails the whole response.
   const uidValidity = asCount(client.mailbox?.uidValidity) ?? options.knownUidValidity
@@ -538,27 +533,18 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
     const refreshed = refresh?.updated ?? []
     const vanished = refresh?.vanished ?? []
 
-    // RFC 4549 §4.3.1: say nothing to the server while its UIDNEXT has not moved
-    // past the cursor. This one comparison replaces a SEARCH whose answer needed
-    // a client-side filter to be read at all — `UID SEARCH 559:*` matches the
-    // last message of any non-empty mailbox (RFC 3501 §6.4.8 Note), so "did
-    // anything come back" was never the question, and deleting that filter would
-    // have turned this into "forever new mail".
-    if (uidNext !== undefined && from >= uidNext) {
-      return { messages: [], uidValidity, maxUid: unadvanced, searchUnreliable: false, refreshed, vanished, counters, uidNext }
-    }
-
-    // Bounded to the UIDs that can exist: `UIDNEXT - 1` is the highest UID the
-    // server has handed out. `*` would mean "the last message" rather than "the
-    // last UID" (RFC 3501 §9), which is the trap above; only a server that
-    // reported no UIDNEXT leaves the range open, and the `uid >= from` filter
-    // below still guards the answer.
-    const range = uidNext === undefined ? `${String(from)}:*` : `${String(from)}:${String(uidNext - 1)}`
+    // The range is open-ended because that is the only bound the server can be
+    // held to: `*` means "the last message" rather than "the last UID"
+    // (RFC 3501 §9), so a mailbox whose highest UID is below `from` answers with
+    // that last message too — the `uid >= from` filter below is what reads the
+    // answer, and without it this becomes "forever new mail" (RFC 3501 §6.4.8
+    // Note). One SEARCH per pass is the price of a cursor the server agrees with.
+    const range = `${String(from)}:*`
     const found = await client.search({ uid: range }, { uid: true })
     if (found === false || found === undefined) {
-      // `uidNext: from` for the same reason `maxUid` is `fromUid - 1`: the
-      // command listed nothing, so nothing may be recorded as seen.
-      return { messages: [], uidValidity, maxUid: unadvanced, searchUnreliable: false, refreshed, vanished, counters, uidNext: unadvanced + 1 }
+      // `maxUid: fromUid - 1`: the command listed nothing, so nothing may be
+      // recorded as seen.
+      return { messages: [], uidValidity, maxUid: unadvanced, searchUnreliable: false, refreshed, vanished, counters }
     }
 
     let searchUnreliable = false
@@ -588,7 +574,7 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
         .sort((a, b) => a - b)
         .slice(-limit)
     if (batch.length === 0) {
-      return { messages: [], uidValidity, maxUid: unadvanced, searchUnreliable, refreshed, vanished, counters, uidNext: uidNext ?? unadvanced + 1 }
+      return { messages: [], uidValidity, maxUid: unadvanced, searchUnreliable, refreshed, vanished, counters }
     }
 
     const messages: NormalizedMessage[] = []
@@ -612,7 +598,7 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
       messages.push({ summary, preview: summary.snippet })
       if (message.uid > maxUid) maxUid = message.uid
     }
-    return { messages, uidValidity, maxUid, searchUnreliable, refreshed, vanished, counters, uidNext: uidNext ?? maxUid + 1 }
+    return { messages, uidValidity, maxUid, searchUnreliable, refreshed, vanished, counters }
   } finally {
     // The lock is this pass's own — it is released even when the pass throws,
     // because the connection outlives the pass and must be left SELECTed.

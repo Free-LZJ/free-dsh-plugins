@@ -32,9 +32,12 @@ interface FakeScript {
   /** Every UID the mailbox holds, ascending. Defaults to 1..3. */
   readonly mailbox?: readonly number[]
   /**
-   * What the session's own SELECT view reports, which is where a scan now reads
-   * the counters, the generation and the next UID from. `exists` defaults to the
-   * size of `mailbox`; `uidValidity` and `uidNext` are absent unless scripted.
+   * What the session's own SELECT view reports, which is where a scan reads the
+   * counters and the generation from. `exists` defaults to the size of
+   * `mailbox`; `uidValidity` and `uidNext` are absent unless scripted.
+   *
+   * `uidNext` is scripted to the value a long-lived connection would be holding:
+   * a snapshot from its last SELECT, not the server's current number.
    *
    * `uidValidity` accepts a bigint because that is what imapflow reports for it.
    */
@@ -275,23 +278,39 @@ describe('scanFolder', () => {
     expect(outcome.messages[0]?.preview).toBe(outcome.messages[0]?.summary.snippet)
   })
 
-  it('asks the server nothing when UIDNEXT says the mailbox has nothing new', async () => {
+  it('sees mail the session UIDNEXT has not caught up with', async () => {
+    // The bug this pass exists for: a connection that has been open since before
+    // the mail arrived holds a UIDNEXT from its last SELECT. imapflow only
+    // advances that number on a SELECT, a STATUS or a FETCH that carries a UID,
+    // and the EXISTS a new message sends to an idling session does none of those
+    // — so gating on it (or bounding the SEARCH with it) hides exactly the mail
+    // the pass is looking for.
+    const fake = makeFake({ mailbox: [10, 11], mailboxState: { uidNext: 11, exists: 2, uidValidity: 7 } })
+    const outcome = await scanFolder(fake.factory({}), scanOptions({ fromUid: 11, knownUidValidity: 7 }))
+
+    const newMail = callsTo(fake, 'search').find(one => (one.args[0] as { uid?: unknown }).uid !== undefined)
+    expect(newMail?.args[0]).toEqual({ uid: '11:*' })
+    expect(outcome.messages.map(message => message.summary.uid)).toEqual([11])
+    expect(outcome.maxUid).toBe(11)
+  })
+
+  it('reads the open range and fetches nothing when no UID is at the cursor', async () => {
     const fake = makeFake({
       mailbox: [1, 2, 3, 4, 5, 6, 7, 8, 9],
       mailboxState: { uidNext: 10, exists: 9, uidValidity: 7 },
     })
     const outcome = await scanFolder(fake.factory({}), scanOptions({ fromUid: 10, knownUidValidity: 7 }))
 
-    // `UID SEARCH 10:*` would always match the last message of a non-empty
-    // mailbox (RFC 3501 §6.4.8 Note), so "did it answer" was never the question.
-    // UIDNEXT answers it without a command (RFC 4549 §4.3.1).
+    // `UID SEARCH 10:*` always matches the last message of a non-empty mailbox
+    // (RFC 3501 §6.4.8 Note), so the search is sent and its answer is read
+    // through the `uid >= from` filter rather than through its emptiness.
     const newMail = callsTo(fake, 'search').filter(one => (one.args[0] as { uid?: unknown }).uid !== undefined)
-    expect(newMail).toEqual([])
+    expect(newMail).toHaveLength(1)
+    expect(newMail[0]?.args[0]).toEqual({ uid: '10:*' })
     expect(callsTo(fake, 'fetch')).toHaveLength(0)
     expect(outcome.messages).toEqual([])
     // The cursor may not advance: 10 means "start at 10", and nothing was read.
     expect(outcome.maxUid).toBe(9)
-    expect(outcome.uidNext).toBe(10)
     // The rest of the answer still comes back, counters included, or the folder
     // tree would go blank on every quiet poll.
     expect(outcome.counters).toEqual({ total: 9, unseen: 9 })
@@ -299,15 +318,18 @@ describe('scanFolder', () => {
     expect(callsTo(fake, 'release')).toHaveLength(1)
   })
 
-  it('bounds the new-mail search by UIDNEXT instead of an open range', async () => {
-    const fake = makeFake({ mailbox: [5, 6, 7, 8, 9], mailboxState: { uidNext: 10, exists: 5, uidValidity: 7 } })
+  it('filters the open range down to the UIDs at or above the cursor', async () => {
+    // 3 and 4 sit below the cursor: the open range hands them back, and the
+    // client-side filter is what keeps them out of the batch.
+    const fake = makeFake({ mailbox: [3, 4, 5, 6, 7, 8, 9], mailboxState: { exists: 7, uidValidity: 7 } })
     const outcome = await scanFolder(fake.factory({}), scanOptions({ fromUid: 5, knownUidValidity: 7 }))
 
     const newMail = callsTo(fake, 'search').find(one => (one.args[0] as { uid?: unknown }).uid !== undefined)
-    // `5:9`, not `5:*`: the highest UID the server has handed out is UIDNEXT - 1.
-    expect(newMail?.args[0]).toEqual({ uid: '5:9' })
+    // `5:*`, not `5:9`: only the server knows where its UID space ends, and the
+    // UIDNEXT this session holds is a snapshot, not that number.
+    expect(newMail?.args[0]).toEqual({ uid: '5:*' })
     expect(outcome.maxUid).toBe(9)
-    expect(outcome.uidNext).toBe(10)
+    expect(callsTo(fake, 'fetch')[0]?.args[0]).toEqual([5, 6, 7, 8, 9])
   })
 
   it('leaves the cursor alone when SEARCH fails', async () => {
@@ -318,8 +340,6 @@ describe('scanFolder', () => {
     expect(outcome.messages).toEqual([])
     // 11 means "start at 11"; a failed SEARCH must not claim 11 was processed.
     expect(outcome.maxUid).toBe(10)
-    // Nor may the UIDNEXT watermark advance past what the SEARCH listed.
-    expect(outcome.uidNext).toBe(11)
     expect(outcome.searchUnreliable).toBe(false)
     expect(outcome.uidValidity).toBe(7)
     expect(callsTo(fake, 'fetch')).toHaveLength(0)
