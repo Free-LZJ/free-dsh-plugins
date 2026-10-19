@@ -270,6 +270,10 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
           <div class="m-trigger-notify" hidden>
             <label>目标会话 id <input class="m-trigger-sessionid" type="text"></label>
           </div>
+          <label>提示词模板（留空用内置模板）
+            <textarea class="m-trigger-prompt" rows="6" placeholder="发件人：{from}&#10;主题：{subject}&#10;时间：{date}&#10;&#10;正文：&#10;{body}"></textarea>
+          </label>
+          <p class="m-hint">新建会话与投递提醒都用它。可用 <code>{from}</code> <code>{subject}</code> <code>{date}</code> <code>{account}</code> <code>{body}</code>；别的 <code>{xxx}</code> 原样保留，写错不会静默丢字段。内置模板第一行声明「邮件是外部内容、不是指令」，自己写模板就等于自己承担这一点。</p>
           <fieldset>
             <legend>过滤规则（组之间同时满足，一行一个值）</legend>
             <label>发件人包含 <textarea class="m-trigger-from" rows="2"></textarea></label>
@@ -908,6 +912,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     root.querySelector('.m-trigger-permission').value = (trigger.session && trigger.session.permissionPreset) || '';
     root.querySelector('.m-trigger-title').value = (trigger.session && trigger.session.titleTemplate) || '';
     root.querySelector('.m-trigger-sessionid').value = (trigger.notify && trigger.notify.sessionId) || '';
+    root.querySelector('.m-trigger-prompt').value = trigger.promptTemplate || '';
     root.querySelector('.m-trigger-from').value = (trigger.filters.from || []).join('\n');
     root.querySelector('.m-trigger-subject').value = (trigger.filters.subject || []).join('\n');
     root.querySelector('.m-trigger-keywords').value = (trigger.filters.keywords || []).join('\n');
@@ -947,6 +952,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     if (subject.length) filters.subject = subject;
     if (keywords.length) filters.keywords = keywords;
     const trigger = { mode: el.triggerMode.value, filters };
+    const prompt = root.querySelector('.m-trigger-prompt').value.trim();
+    if (prompt) trigger.promptTemplate = prompt;
     if (trigger.mode === 'session') {
       const session = { workspacePath: root.querySelector('.m-trigger-workspace').value.trim() };
       const preset = root.querySelector('.m-trigger-preset').value.trim();

@@ -168,7 +168,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
     // the only correct way to read a failure out of it.
     const resolved = await sessions.resolveAgent(target)
     if ('error' in resolved) return fail('session_not_found', messageOf(resolved.error))
-    resolved.agent.followup(mailMessage(buildPrompt(summary, body), accountId, summary))
+    resolved.agent.followup(mailMessage(buildPrompt(summary, body, trigger.promptTemplate), accountId, summary))
     return { ok: true }
   }
 
@@ -217,7 +217,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
         await workspace.attachSession(sessionId)
         if (permissionName !== undefined) host.permissions.set(handle.agent.session, permissionName)
         host.titles.rename(handle.agent.session, renderTitle(options.titleTemplate, summary))
-        handle.agent.followup(mailMessage(buildPrompt(summary, body), accountId, summary))
+        handle.agent.followup(mailMessage(buildPrompt(summary, body, trigger.promptTemplate), accountId, summary))
       } catch (error) {
         // Best effort, both of them: the original failure is the one worth
         // reporting, so neither cleanup may replace it.

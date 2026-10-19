@@ -69,6 +69,25 @@ describe('normalizeTrigger', () => {
       .toEqual({ mode: 'notify', notify: { sessionId: 's-1' }, filters: {} })
   })
 
+  it('keeps a prompt template, and drops one that carries nothing', () => {
+    expect(normalizeTrigger({ promptTemplate: '  {subject}\n{body}  ' }))
+      .toEqual({ mode: 'panel', filters: {}, promptTemplate: '{subject}\n{body}' })
+    // Absent means "use the built-in template", which an empty string is not.
+    expect(normalizeTrigger({ promptTemplate: '   ' })).toEqual(PANEL)
+    expect(normalizeTrigger({ promptTemplate: 7 })).toEqual(PANEL)
+  })
+
+  it('carries the prompt template through both modes that post to a session', () => {
+    expect(normalizeTrigger({ mode: 'notify', notify: { sessionId: 's-1' }, promptTemplate: '{body}' }))
+      .toEqual({ mode: 'notify', notify: { sessionId: 's-1' }, filters: {}, promptTemplate: '{body}' })
+    expect(normalizeTrigger({ mode: 'session', session: { workspacePath: '/ws' }, promptTemplate: '{body}' }))
+      .toEqual({ mode: 'session', session: { workspacePath: '/ws' }, filters: {}, promptTemplate: '{body}' })
+    // A mode that fell back to panel still keeps it: the drawer's other fields
+    // should not be thrown away because one of them was not usable.
+    expect(normalizeTrigger({ mode: 'session', promptTemplate: '{body}' }))
+      .toEqual({ mode: 'panel', filters: {}, promptTemplate: '{body}' })
+  })
+
   it('cleans each filter group and believes unreadOnly only when it is a boolean', () => {
     expect(normalizeTrigger({
       filters: { from: [' a@x.com ', '', 7, null, 'b@x.com'], subject: 'not an array', keywords: ['  '] },

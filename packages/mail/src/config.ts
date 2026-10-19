@@ -143,17 +143,21 @@ export function normalizeTrigger(input: unknown): TriggerConfig {
   const source = isRecord(input) ? input : {}
   const mode: TriggerMode = named(source.mode, TRIGGER_MODES) ?? 'panel'
   const filters = normalizeFilters(source.filters)
+  // Only carried when the account wrote one: an absent field means "use the
+  // built-in template", which is not the same as an empty one.
+  const promptTemplate = text(source.promptTemplate)
+  const prompt = promptTemplate === undefined ? {} : { promptTemplate }
   if (mode === 'session') {
     const session = normalizeSession(source.session)
-    if (session === undefined) return { mode: 'panel', filters }
-    return { mode, session, filters }
+    if (session === undefined) return { mode: 'panel', filters, ...prompt }
+    return { mode, session, filters, ...prompt }
   }
   if (mode === 'notify') {
     const sessionId = text(isRecord(source.notify) ? source.notify.sessionId : undefined)
-    if (sessionId === undefined) return { mode: 'panel', filters }
-    return { mode, notify: { sessionId }, filters }
+    if (sessionId === undefined) return { mode: 'panel', filters, ...prompt }
+    return { mode, notify: { sessionId }, filters, ...prompt }
   }
-  return { mode, filters }
+  return { mode, filters, ...prompt }
 }
 
 /**

@@ -68,6 +68,15 @@ export interface TriggerConfig {
   readonly mode: TriggerMode
   readonly session?: SessionTriggerOptions
   readonly notify?: NotifyTriggerOptions
+  /**
+   * The text posted into the session when a message matches.
+   *
+   * `{from}`, `{subject}`, `{date}`, `{account}` and `{body}` are substituted;
+   * any other `{name}` is left as written. Omitted = the built-in template,
+   * which opens by saying the mail is external content rather than
+   * instructions — an account that writes its own template takes that over.
+   */
+  readonly promptTemplate?: string
   readonly filters: TriggerFilters
 }
 

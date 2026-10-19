@@ -337,6 +337,22 @@ describe('the mail panel document', () => {
     expect(root.dataset.mailScheme).toBe('dark')
   })
 
+  it('sends the prompt template the drawer was given', async () => {
+    const { window, writes } = await renderPanel({ state: { body: STATE } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    const prompt = doc.querySelector<HTMLTextAreaElement>('.m-trigger-prompt')
+    expect(prompt).toBeTruthy()
+    if (prompt) prompt.value = '{subject}\n\n{body}'
+    doc.querySelector<HTMLElement>('.m-trigger-save')?.click()
+    await settle(window, 80)
+
+    const config = writes.find((one) => one.url === '/dsh-mail/config')
+    expect(config?.body).toMatchObject({ op: 'setTrigger', trigger: { promptTemplate: '{subject}\n\n{body}' } })
+  })
+
   it('marks the trigger modes the Host half cannot offer', async () => {
     const state: MailState = {
       ...STATE,
