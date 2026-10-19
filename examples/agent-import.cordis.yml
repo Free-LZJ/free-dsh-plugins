@@ -9,6 +9,14 @@
 # whose skills are imported as links into `~/.dsh/skills` (dsh's own roots are
 # always read); `skillAutoImport` imports from those sources on activation, and
 # the Skills page can still import or remove one skill at a time.
+#
+# This overlay is for the package NOT being listed in the profile's
+# `dsh.profile.bundles` (nor installed with `dsh plugin add`, which applies the
+# package's own bundle patch): in either of those cases the bundle layer already
+# inserts this same id, and adding it here again leaves two rows with one id —
+# the plugin market's preflight then reports `duplicate loader entry id` and
+# rolls the install back. To configure an already-bundled row, patch it by id
+# with a `- id: agent-import` + `config:` entry and no `insert`.
 - insert:
     - id: agent-import
       name: '@free-lzj/dsh-agent-import'

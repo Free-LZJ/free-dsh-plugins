@@ -21,8 +21,28 @@
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.2` | 把 Codex / Claude Code 已经声明好的 MCP 服务器挂进 dsh，并把各 Agent 工具的技能以**符号链接**导入 dsh 自己的技能目录统一管理；同一个包在设置页里带一页「代理配置导入」 |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.1.0` | 侧边栏里的邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**），新邮件按账号配置新建 agent 会话、投递到指定会话或只高亮 |
+| [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
 
-每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是两个包共有的约定，以及本仓库自身的开发说明。
+每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是这些包共有的约定，以及本仓库自身的开发说明。
+
+## 搜索走账号，聊天不动
+
+dsh 自带的搜索只在**会话本身跑在 `deepseek-account` 路由**时才借用账号凭据，一旦把聊天钉到别的 provider，搜索就退回去要一个独立 API key。`web-search-account` 把对话从这条依赖里摘出去：它直接向账号服务要一个搜索端点的令牌，用该路由认的头发出去。
+
+`web-search-account` 自带 `dsh.bundle`，所以 `dsh plugin add` 已经插入了 `web-search-account` 那一行，profile 补丁里**不要再写**同 id 的 `- insert:`（规则见下节）；要覆盖它的配置就写一行同 id 的 override：
+
+```yaml
+- id: web
+  config:
+    searchProvider: deepseek-account   # 指向本插件注册的 id
+- id: web-search-deepseek
+  disabled: true                        # 关掉自带那个，避免两个都自称可用
+- id: web-search-account                 # 无 insert：覆盖 bundle 插入的那一行
+  config:
+    model: deepseek-v4-flash
+```
+
+它不注册任何模型 provider、不改 `agent-default-model`，所以**只换搜索怎么被回答**，不影响谁来回复。
 
 ## 每个包都是双面包
 
@@ -33,13 +53,17 @@
 | **Host** | `lib/index.js`（ESM） | Node 进程：Loader 行挂载的插件本体——长连接、路由与设置命名空间 |
 | **浏览器** | `lib/client.js` | 页面：侧边栏面板或设置页那一栏，跟随 Host 的命名空间出现 |
 
-两个包都声明了 `dsh.bundle`（补丁文件就是包目录里的 `cordis.patch.yml`），所以 `dsh plugin add`（或把包列进 profile 的 `dsh.profile.bundles`）会**自动插入那一行**。自己写 profile 时就是下面这个形状，**`id` 不能改名**——dsh 用行自身的条目 id 命名设置命名空间，页面跟随的正是它：
+每个包都声明了 `dsh.bundle`（补丁文件就是包目录里的 `cordis.patch.yml`），所以 `dsh plugin add`（或把包列进 profile 的 `dsh.profile.bundles`）会**自动插入那一行**。
+
+**这样装过之后就不要再手写同 id 的 `- insert:` 行**：bundle 层已经插过一行，手写会变成同一个 id 的第二个条目，插件市场预检直接判 `duplicate loader entry id "agent-import" (2 rows)`，并把这次安装或更新整个回滚。要给这一行传配置，写一行**同 id 的 override**（无 `insert`）：
 
 ```yaml
-- insert:
-    - id: agent-import            # 邮件包是 id: mail
-      name: '@free-lzj/dsh-agent-import'
+- id: agent-import                # 邮件包是 id: mail
+  config:
+    sources: [codex, claude-code]
 ```
+
+**`id` 不能改名**——dsh 用行自身的条目 id 命名设置命名空间，页面跟随的正是它。只有包**没进** `dsh.profile.bundles`、纯手工组织 profile，或 `dsh web --patch` overlay 场景，才写 `- insert:`（见 [`examples/agent-import.cordis.yml`](examples/agent-import.cordis.yml)）。
 
 ## 安装
 
@@ -69,6 +93,7 @@ pnpm run build
 
 dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/mail"
+dsh plugin --profile web add "<本仓库绝对路径>/packages/web-search-account"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
 
@@ -89,7 +114,7 @@ dsh plugin --profile web remove @free-lzj/dsh-client-ui-settings-agent-import
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-然后把 profile 里那两条 `insert` 行删掉 `ui-settings-agent-import` 那条，只留 `id: agent-import`（内容与上面示例一致），重启 `dsh web`。设置页来自包自身的 `dsh.client` 声明，不需要再单独声明。
+然后把 profile 补丁里 `ui-settings-agent-import` 那一行删掉，只留 `id: agent-import` 那一行（配置形态与上面示例一致），重启 `dsh web`。设置页来自包自身的 `dsh.client` 声明，不需要再单独声明。
 
 ## 本仓库开发
 
@@ -99,12 +124,13 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 |---|---|
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import`（MCP 服务器 + 技能导入） |
 | [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（侧边栏邮箱） |
+| [`packages/web-search-account`](packages/web-search-account) | `@free-lzj/dsh-web-search-account`（搜索走已登录账号，仅 Host 半边） |
 
 ```sh
 pnpm install
 pnpm run typecheck   # 每个包，两个半边一起
 pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js（Node 半边）、lib/client.js（浏览器半边）
-pnpm run test        # vitest：31 个 spec 文件 / 515 个测试
+pnpm run test        # vitest：32 个 spec 文件 / 548 个测试
 ```
 
 先 `build` 再 `test`：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口没有向 Host 半边取值），没有 `lib/` 时其中一条会显示为 skipped。

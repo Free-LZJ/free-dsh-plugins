@@ -33,13 +33,17 @@ Both halves come out of **one build** and ride **one Loader row**, attached by t
 | **Host** | `lib/index.js` (ESM) | The Node process: the plugin body the Loader row mounts — long-lived connections, routes, and the settings namespace |
 | **Browser** | `lib/client.js` | The page: a sidebar panel or a Settings section, appearing with the Host's namespace |
 
-Both packages declare `dsh.bundle` (its patch file is the `cordis.patch.yml` beside it), so `dsh plugin add` — or listing the package in the profile's `dsh.profile.bundles` — **inserts that row for you**. Written by hand, the row looks like this, and **its `id` is fixed**: dsh names a row's settings namespace after the row's own entry id, and the page follows that namespace.
+Every package declares `dsh.bundle` (its patch file is the `cordis.patch.yml` beside it), so `dsh plugin add` — or listing the package in the profile's `dsh.profile.bundles` — **inserts that row for you**.
+
+**Once it has been installed that way, do not hand-write an `- insert:` row with the same id**: the bundle layer already inserted one, and a second row with the same id makes the plugin market's preflight fail with `duplicate loader entry id "agent-import" (2 rows)` and roll the whole install or update back. To configure that row, write a same-id **override** (no `insert`):
 
 ```yaml
-- insert:
-    - id: agent-import            # the mail package is id: mail
-      name: '@free-lzj/dsh-agent-import'
+- id: agent-import                # the mail package is id: mail
+  config:
+    sources: [codex, claude-code]
 ```
+
+**The `id` is fixed** — dsh names a row's settings namespace after the row's own entry id, and the page follows that namespace. Write `- insert:` only when the package is *not* in `dsh.profile.bundles` and you are assembling the profile by hand, or in a `dsh web --patch` overlay (see [`examples/agent-import.cordis.yml`](examples/agent-import.cordis.yml)).
 
 ## Install
 

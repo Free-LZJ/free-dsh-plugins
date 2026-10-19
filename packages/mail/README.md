@@ -38,6 +38,8 @@ dsh plugin --profile web add @free-lzj/dsh-mail
 dsh plugin --profile desktop add @free-lzj/dsh-mail
 ```
 
+本包自带 `dsh.bundle`，`dsh plugin add` 已经插入了 `mail` 这一行，所以 profile 补丁里**不用也不要**再手写同 id 的 `- insert:` 行（同一个 id 两行 → 插件市场预检报 `duplicate loader entry id` 并回滚安装）；要覆盖这一行的配置，写一行同 id 的 override（`- id: mail` + `config:`，**不带** `insert`）。
+
 <details>
 <summary>从本仓库安装（改插件本身时才需要）</summary>
 

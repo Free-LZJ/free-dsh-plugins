@@ -28,7 +28,7 @@
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 ```
 
-装包只让它可解析，插件要启用还得有这么一行。本包自带 `dsh.bundle`（补丁文件就是旁边的 `cordis.patch.yml`），所以 `dsh plugin add`（或把包列进 profile 的 `dsh.profile.bundles`）会**自动插入这一行**；从本仓库安装或自己写 profile 时，照下面示例手写亦可 —— **`id` 不能改名**：设置命名空间与设置页都按这个 id 索引。
+装包只让它可解析，插件要启用还得有这么一行。本包自带 `dsh.bundle`（补丁文件就是旁边的 `cordis.patch.yml`），所以 `dsh plugin add`（或把包列进 profile 的 `dsh.profile.bundles`）会**自动插入这一行**——这样装过之后就**不要**再在 profile 补丁里手写同 id 的 `- insert:` 行：同一个 id 两行，插件市场预检会报 `duplicate loader entry id "agent-import" (2 rows)` 并把安装/更新回滚。下面这一行是**同 id 的 override**（无 `insert`），给 bundle 插入的那一行传配置；**`id` 不能改名**：设置命名空间与设置页都按这个 id 索引。
 
 > Profile 要选你实际在跑的那个：`dsh web` 用 `web`，**Electron 桌面端用 `desktop`**（桌面端是同一个 `dsh-web-app` 组合加一份自带版本的 dsh 运行时，Profile 不通用）。
 >

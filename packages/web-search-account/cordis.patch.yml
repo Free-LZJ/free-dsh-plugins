@@ -1,0 +1,19 @@
+# dsh bundle patch: installing this package as a bundle makes `dsh plugin add`
+# insert the one Loader row the plugin needs, so it mounts on the next start.
+#
+# The row id must stay `web-search-account`: it is also the settings namespace
+# this plugin's configuration is stored under.
+#
+# `web` selects one search provider by id. This package registers that id, so
+# the row below is what actually routes searches here; without it the built-in
+# `deepseek-official` provider keeps winning and nothing changes.
+- id: web
+  config:
+    searchProvider: deepseek-account
+
+- insert:
+    - id: web-search-account
+      name: '@free-lzj/dsh-web-search-account'
+      # config:
+      #   baseURL: https://api.deepseek.com/anthropic/v1
+      #   model: deepseek-v4-flash
