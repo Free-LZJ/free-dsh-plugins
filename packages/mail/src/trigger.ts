@@ -14,8 +14,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { buildPrompt, renderTitle, triggerReadiness, type TriggerAvailability } from './rules.ts'
-import type { MailSummary, RouteResult, TriggerConfig } from './types.ts'
+import { buildPrompt, matchesFilters, renderTitle, triggerReadiness, type TriggerAvailability } from './rules.ts'
+import type { MailSummary, RouteResult, TriggerConfig, TriggerRule } from './types.ts'
 
 /** Everything the trigger needs from the host. Injected so tests never touch cordis. */
 export interface TriggerHost {
@@ -124,6 +124,60 @@ export function triggerAvailability(host: Partial<TriggerHost>): { session: bool
       wired(host.defaultModel, 'currentSelection'),
     notify: wired(host.sessions, 'resolveAgent'),
   }
+}
+
+/**
+ * The action one message takes, decided against the account's rules.
+ *
+ * First match wins, in the order the drawer lists them — the only ordering a
+ * person can predict from a form, and the same one Gmail's filter list settles
+ * on. A message no rule claims stays in the panel: making the account's own
+ * `mode` a catch-all would mean a rule list also silently fires for everything
+ * it did not name, which is how one over-broad rule starts a session per mail.
+ * An account that really wants "everything, except these" can end its list with
+ * a rule that has no conditions.
+ *
+ * `readBody` is a callback rather than a string because only a `keywords`
+ * condition needs one: reading a body for messages that are about to be skipped
+ * is exactly what the 2 KB list preview exists to avoid. It is paid for at most
+ * once, and only after every cheap group has already matched.
+ * @param trigger - the account's trigger configuration.
+ * @param summary - the message to place.
+ * @param readBody - how to read the message's text, when a rule needs it.
+ * @returns the trigger to hand to `fire`; `panel` means "leave it in the list".
+ */
+export async function resolveTrigger(
+  trigger: TriggerConfig,
+  summary: MailSummary,
+  readBody: () => Promise<string>,
+): Promise<TriggerConfig> {
+  const rules: readonly TriggerRule[] = trigger.rules ?? [{ when: trigger.filters, action: trigger.mode }]
+  let body: string | undefined
+  for (const rule of rules) {
+    // The cheap pass first: everything except the group that may need the body.
+    // Dropping the group entirely is what makes this the same predicate the
+    // filter would be without its expensive half.
+    const { keywords, ...cheap } = rule.when
+    if (!matchesFilters(summary, cheap)) continue
+    if ((keywords ?? []).length > 0) {
+      body ??= await readBody()
+      if (!matchesFilters(summary, rule.when, body)) continue
+    }
+    // A rule that names no session/notify/template options inherits the
+    // account's: one workspace for the whole list is the normal case, and
+    // repeating it per rule is what makes a list unreadable.
+    const session = rule.session ?? trigger.session
+    const notify = rule.notify ?? trigger.notify
+    const promptTemplate = rule.promptTemplate ?? trigger.promptTemplate
+    return {
+      mode: rule.action,
+      ...(session === undefined ? {} : { session }),
+      ...(notify === undefined ? {} : { notify }),
+      ...(promptTemplate === undefined ? {} : { promptTemplate }),
+      filters: {},
+    }
+  }
+  return { mode: 'panel', filters: {} }
 }
 
 /** One account's trigger, wired to the host it was created with. */

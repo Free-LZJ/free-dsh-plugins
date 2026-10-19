@@ -88,6 +88,35 @@ describe('normalizeTrigger', () => {
       .toEqual({ mode: 'panel', filters: {}, promptTemplate: '{body}' })
   })
 
+  it('carries a rule list, dropping the rules it could not act on', () => {
+    const parsed = normalizeTrigger({
+      mode: 'panel',
+      rules: [
+        { name: ' ci ', when: { from: ['github'], unreadOnly: false }, action: 'session' },
+        // No workspace of its own: inherits the account's, so it stays.
+        { when: { subject: ['build'] }, action: 'session' },
+        // A session action with a relative workspace is unusable; dropping the
+        // rule is honest, downgrading it to panel would run nothing silently.
+        { when: { subject: ['x'] }, action: 'session', session: { workspacePath: 'relative' } },
+        { when: { keywords: ['refund'] }, action: 'notify', notify: { sessionId: 's-1' } },
+        { when: {}, action: 'bogus' },
+        'not a rule',
+      ],
+    })
+    expect(parsed.rules).toHaveLength(4)
+    expect(parsed.rules?.[0]).toEqual({ name: 'ci', when: { from: ['github'], unreadOnly: false }, action: 'session' })
+    expect(parsed.rules?.[1]).toEqual({ when: { subject: ['build'] }, action: 'session' })
+    expect(parsed.rules?.[2]).toEqual({ when: { keywords: ['refund'] }, action: 'notify', notify: { sessionId: 's-1' } })
+    // `bogus` is not a mode, so that rule becomes "panel" rather than vanishing.
+    expect(parsed.rules?.[3]?.action).toBe('panel')
+  })
+
+  it('leaves rules out entirely when the list is empty or not a list', () => {
+    for (const input of [{ rules: [] }, { rules: 'nope' }, { rules: [7, null] }]) {
+      expect(normalizeTrigger(input)).toEqual(PANEL)
+    }
+  })
+
   it('cleans each filter group and believes unreadOnly only when it is a boolean', () => {
     expect(normalizeTrigger({
       filters: { from: [' a@x.com ', '', 7, null, 'b@x.com'], subject: 'not an array', keywords: ['  '] },

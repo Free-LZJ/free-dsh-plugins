@@ -63,11 +63,45 @@ export interface NotifyTriggerOptions {
   readonly sessionId: string
 }
 
+/**
+ * One rule: which messages it claims, and what happens to them.
+ *
+ * Conditions are the same shape as {@link TriggerFilters} — groups are AND-ed,
+ * values inside a group are OR-ed — because that is the model the drawer already
+ * draws and the one every mail client has converged on (Gmail's criteria,
+ * Thunderbird's matchAll, Sieve's `allof`). Nesting is deliberately absent: a
+ * flat conjunction covers the real cases, and a tree nobody can read in a form
+ * is a worse editor than one nobody needs.
+ */
+export interface TriggerRule {
+  /** Shown in the drawer so a list of rules can be told apart. */
+  readonly name?: string
+  /** Everything must hold; an absent group is unrestricted. */
+  readonly when: TriggerFilters
+  /** What this rule does with a message it claims. */
+  readonly action: TriggerMode
+  /** Parameters for `action: 'session'`; falls back to the account's own. */
+  readonly session?: SessionTriggerOptions
+  /** Parameters for `action: 'notify'`; falls back to the account's own. */
+  readonly notify?: NotifyTriggerOptions
+  /** Overrides the account's prompt template for messages this rule claims. */
+  readonly promptTemplate?: string
+}
+
 /** How one account hands a matched message over. */
 export interface TriggerConfig {
   readonly mode: TriggerMode
   readonly session?: SessionTriggerOptions
   readonly notify?: NotifyTriggerOptions
+  /**
+   * Rules, evaluated in order; the first one whose conditions all hold decides
+   * what happens. A message no rule claims falls back to {@link mode}, so an
+   * account can say "default to a session, except these".
+   *
+   * Omitted = the account's own `filters` and `mode` are the single rule, which
+   * is every configuration written before rules existed.
+   */
+  readonly rules?: readonly TriggerRule[]
   /**
    * The text posted into the session when a message matches.
    *

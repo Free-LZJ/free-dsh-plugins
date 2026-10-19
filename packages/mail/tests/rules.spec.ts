@@ -51,6 +51,13 @@ describe('matchesFilters', () => {
     expect(matchesFilters(mail(), { keywords: ['invoice'] })).toBe(false)
   })
 
+  it('matches keywords against the body when the caller read one', () => {
+    // The list preview is headers on most mail, so a keyword test against it
+    // matches nothing; the caller passes the real text once it has it.
+    expect(matchesFilters(mail({ snippet: '' }), { keywords: ['refund'] }, 'A refund is on its way')).toBe(true)
+    expect(matchesFilters(mail({ snippet: '' }), { keywords: ['refund'] })).toBe(false)
+  })
+
   it('treats an absent or all-blank group as unrestricted', () => {
     expect(matchesFilters(mail(), {})).toBe(true)
     expect(matchesFilters(mail({ subject: 'x' }), { subject: ['', '   '], from: [], keywords: ['\t'] })).toBe(true)

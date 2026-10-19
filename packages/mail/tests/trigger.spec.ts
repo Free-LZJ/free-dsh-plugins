@@ -6,7 +6,7 @@
 
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createTriggerer, triggerAvailability, type TriggerHost } from '../src/trigger.ts'
+import { createTriggerer, resolveTrigger, triggerAvailability, type TriggerHost } from '../src/trigger.ts'
 import type { MailSummary, TriggerConfig } from '../src/types.ts'
 
 /** The order mode A must drive the host in — cleanup steps excluded. */
@@ -346,6 +346,95 @@ describe('fire, mode panel', () => {
 
     expect(result).toEqual({ ok: true })
     expect(rec.steps).toEqual([])
+  })
+})
+
+describe('resolveTrigger', () => {
+  it('falls back to the account own filters and mode when it has no rules', async () => {
+    const trigger: TriggerConfig = {
+      mode: 'session',
+      session: { workspacePath: resolve('.') },
+      filters: { from: ['ci@'] },
+    }
+    const hit = await resolveTrigger(trigger, mail(), async () => 'body')
+    expect(hit.mode).toBe('session')
+    expect(hit.session?.workspacePath).toBe(resolve('.'))
+
+    const miss = await resolveTrigger({ ...trigger, filters: { from: ['nobody'] } }, mail(), async () => 'body')
+    expect(miss).toEqual({ mode: 'panel', filters: {} })
+  })
+
+  it('takes the first rule whose conditions all hold', async () => {
+    const trigger: TriggerConfig = {
+      mode: 'panel',
+      filters: {},
+      rules: [
+        { when: { from: ['github'] }, action: 'notify', notify: { sessionId: 's-1' } },
+        { when: { from: ['ci@'] }, action: 'session' },
+        { when: {}, action: 'panel' },
+      ],
+    }
+    const resolved = await resolveTrigger(trigger, mail(), async () => 'body')
+    expect(resolved.mode).toBe('session')
+    expect(resolved.notify).toBeUndefined()
+  })
+
+  it('inherits the account session and template when a rule names neither', async () => {
+    const trigger: TriggerConfig = {
+      mode: 'panel',
+      session: { workspacePath: resolve('.') },
+      promptTemplate: '{body}',
+      filters: {},
+      rules: [{ when: { subject: ['build'] }, action: 'session' }],
+    }
+    const resolved = await resolveTrigger(trigger, mail(), async () => 'body')
+    expect(resolved).toMatchObject({ mode: 'session', promptTemplate: '{body}' })
+    expect(resolved.session?.workspacePath).toBe(resolve('.'))
+  })
+
+  it('leaves a message no rule claims in the panel', async () => {
+    const trigger: TriggerConfig = {
+      mode: 'session',
+      session: { workspacePath: resolve('.') },
+      filters: {},
+      rules: [{ when: { from: ['github'] }, action: 'session' }],
+    }
+    expect(await resolveTrigger(trigger, mail(), async () => 'body')).toEqual({ mode: 'panel', filters: {} })
+  })
+
+  it('reads the body once, and only after the cheap groups matched', async () => {
+    let reads = 0
+    const read = async (): Promise<string> => {
+      reads += 1
+      return 'a refund is on its way'
+    }
+    const trigger: TriggerConfig = {
+      mode: 'panel',
+      filters: {},
+      rules: [
+        // The sender does not match, so this rule never gets as far as a body.
+        { when: { from: ['nobody'] }, action: 'session' },
+        { when: { keywords: ['refund'] }, action: 'notify', notify: { sessionId: 's-1' } },
+      ],
+    }
+    const resolved = await resolveTrigger(trigger, mail(), read)
+    expect(resolved.mode).toBe('notify')
+    expect(reads).toBe(1)
+  })
+
+  it('does not read a body when no rule survives the cheap groups', async () => {
+    let reads = 0
+    const trigger: TriggerConfig = {
+      mode: 'panel',
+      filters: {},
+      rules: [{ when: { from: ['github'], keywords: ['refund'] }, action: 'session' }],
+    }
+    const resolved = await resolveTrigger(trigger, mail(), async () => {
+      reads += 1
+      return 'refund'
+    })
+    expect(resolved).toEqual({ mode: 'panel', filters: {} })
+    expect(reads).toBe(0)
   })
 })
 

@@ -337,6 +337,49 @@ describe('the mail panel document', () => {
     expect(root.dataset.mailScheme).toBe('dark')
   })
 
+  it('renders the saved rule list in order and posts it back with a new row appended', async () => {
+    const state: MailState = {
+      ...STATE,
+      config: {
+        ...STATE.config,
+        accounts: [{
+          ...ACCOUNT,
+          trigger: {
+            mode: 'panel',
+            filters: {},
+            rules: [
+              { name: 'CI', when: { from: ['github'] }, action: 'session' },
+              { when: { keywords: ['refund'] }, action: 'notify', notify: { sessionId: 's-1' } },
+            ],
+          },
+        }],
+      },
+    }
+    const { window, writes } = await renderPanel({ state: { body: state } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    const rows = [...doc.querySelectorAll('[data-rule]')]
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.querySelector<HTMLSelectElement>('.m-rule-action')?.value).toBe('session')
+    expect(rows[1]?.querySelector<HTMLSelectElement>('.m-rule-action')?.value).toBe('notify')
+    expect(rows[0]?.querySelector<HTMLInputElement>('.m-rule-from')?.value).toBe('github')
+
+    doc.querySelector<HTMLElement>('.m-rule-add')?.click()
+    await settle(window)
+    expect(doc.querySelectorAll('[data-rule]')).toHaveLength(3)
+
+    doc.querySelector<HTMLElement>('.m-trigger-save')?.click()
+    await settle(window, 80)
+    const config = writes.find((one) => one.url === '/dsh-mail/config')
+    const sent = (config?.body as { trigger?: { rules?: readonly { action?: string }[] } } | undefined)?.trigger
+    expect(sent?.rules).toHaveLength(3)
+    // The order the drawer shows is the order the Host evaluates.
+    expect(sent?.rules?.[0]?.action).toBe('session')
+    expect(sent?.rules?.[2]?.action).toBe('session')
+  })
+
   it('sends the prompt template the drawer was given', async () => {
     const { window, writes } = await renderPanel({ state: { body: STATE } })
     const doc = window.document

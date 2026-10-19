@@ -30,9 +30,9 @@ import {
   createConnection, imapFactoryFor, probeAccount, WATCHED_FOLDER,
   type ImapFactory, type MailConnection, type MailFlagUpdate,
 } from './imap.ts'
-import { matchesFilters, promptBody } from './rules.ts'
+import { promptBody } from './rules.ts'
 import { createStore, messageKey, type MailStore } from './store.ts'
-import { createTriggerer, triggerAvailability, type TriggerHost } from './trigger.ts'
+import { createTriggerer, resolveTrigger, triggerAvailability, type TriggerHost } from './trigger.ts'
 import { registerRoutes, type AttachmentPayload, type RouteHost } from './routes.ts'
 import type {
   AccountStatus, DraftAccount, MailAccount, MailAction, MailDetail, MailState, MailSummary,
@@ -425,12 +425,19 @@ export function apply(ctx: Context): void {
           const key = messageKey(folder, outcome.uidValidity, message.summary.uid)
           if (store.isTriggered(accountId, key)) continue
           await store.markTriggered(accountId, key)
-          if (!matchesFilters(message.summary, account.trigger.filters)) continue
-          // Panel mode hands nothing over, so it must not pay for a body either.
-          const body = account.trigger.mode === 'panel'
-            ? message.preview
-            : await readBody(connection, folder, message.summary.uid, message.preview)
-          const result = await fire.fire(accountId, account.trigger, message.summary, body)
+          // One read per message, whoever ends up needing it: a rule that tests a
+          // keyword reads it while deciding, and the trigger reads it again to
+          // compose the prompt.
+          let body: string | undefined
+          const read = async (): Promise<string> => {
+            body ??= await readBody(connection, folder, message.summary.uid, message.preview)
+            return body
+          }
+          const resolved = await resolveTrigger(account.trigger, message.summary, read)
+          // No rule claimed it, or the one that did asks for no more than a row
+          // in the list — either way nothing is handed over and no body is read.
+          if (resolved.mode === 'panel') continue
+          const result = await fire.fire(accountId, resolved, message.summary, await read())
           if (!result.ok) {
             ctx.logger.warn(`mail: handing ${message.summary.subject || '(no subject)'} to the agent failed: ${result.message}`)
           }

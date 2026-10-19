@@ -74,14 +74,19 @@ function needles(values: readonly string[] | undefined): readonly string[] {
  * Whether one message passes this account's filters.
  *
  * Groups are AND-ed, values inside one group are OR-ed (case-insensitive
- * substring), absent or all-blank = unrestricted. `keywords` looks at the
- * subject and the snippet, which is the closest thing to a body the trigger
- * has without fetching the full message.
+ * substring), absent or all-blank = unrestricted.
+ *
+ * `keywords` is the only group that may need the body, so the caller passes it
+ * in when it has one: the scan's list row carries a 2 KB preview — headers, on
+ * most mail — and matching a keyword against that is matching against nothing.
+ * A caller with no body falls back to the snippet, which is right for the
+ * cheap pass that decides whether reading the message is worth it at all.
  * @param summary - the message being considered.
- * @param filters - the account's filters.
+ * @param filters - the conditions to check.
+ * @param body - the message's text, when the caller already read it.
  * @returns true when the message should be handed over.
  */
-export function matchesFilters(summary: MailSummary, filters: TriggerFilters): boolean {
+export function matchesFilters(summary: MailSummary, filters: TriggerFilters, body?: string): boolean {
   if ((filters.unreadOnly ?? true) && summary.seen) return false
 
   const from = needles(filters.from)
@@ -98,7 +103,7 @@ export function matchesFilters(summary: MailSummary, filters: TriggerFilters): b
 
   const keywords = needles(filters.keywords)
   if (keywords.length > 0) {
-    const text = `${summary.subject}\n${summary.snippet}`.toLowerCase()
+    const text = `${summary.subject}\n${body ?? summary.snippet}`.toLowerCase()
     if (!keywords.some(needle => text.includes(needle))) return false
   }
 

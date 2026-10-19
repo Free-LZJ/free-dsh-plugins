@@ -22,6 +22,7 @@ import type {
   TriggerConfig,
   TriggerFilters,
   TriggerMode,
+  TriggerRule,
 } from './types.ts'
 
 /** Bottom-of-the-barrel rescan interval, in seconds. */
@@ -130,6 +131,48 @@ function normalizeSession(input: unknown): SessionTriggerOptions | undefined {
 }
 
 /**
+ * One rule from the drawer.
+ *
+ * A rule naming a mode whose own parameters are unusable is dropped rather than
+ * downgraded to `panel`: a rule the user thinks is running and is not would be
+ * worse than one the drawer refuses to keep. Omitting the parameters entirely is
+ * a different thing — that means "use the account's", which is how a rule list
+ * stays readable when every rule shares one workspace.
+ * @param input - what the request carried for this rule.
+ * @returns the rule, or undefined when it cannot be acted on.
+ */
+function normalizeRule(input: unknown): TriggerRule | undefined {
+  if (!isRecord(input)) return undefined
+  const action: TriggerMode = named(input.action, TRIGGER_MODES) ?? 'panel'
+  const name = text(input.name)
+  const promptTemplate = text(input.promptTemplate)
+  const base = {
+    ...(name === undefined ? {} : { name }),
+    when: normalizeFilters(input.when),
+    action,
+    ...(promptTemplate === undefined ? {} : { promptTemplate }),
+  }
+  if (action === 'session') {
+    if (input.session === undefined) return base
+    const session = normalizeSession(input.session)
+    return session === undefined ? undefined : { ...base, session }
+  }
+  if (action === 'notify') {
+    if (input.notify === undefined) return base
+    const sessionId = text(isRecord(input.notify) ? input.notify.sessionId : undefined)
+    return sessionId === undefined ? undefined : { ...base, notify: { sessionId } }
+  }
+  return base
+}
+
+/** The rules, when the account wrote any; an empty list means "no rules". */
+function normalizeRules(value: unknown): readonly TriggerRule[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const rules = value.map(normalizeRule).filter((rule): rule is TriggerRule => rule !== undefined)
+  return rules.length === 0 ? undefined : rules
+}
+
+/**
  * Read a trigger the panel posted.
  *
  * A mode whose required option is missing falls back to `panel`: the message
@@ -147,17 +190,19 @@ export function normalizeTrigger(input: unknown): TriggerConfig {
   // built-in template", which is not the same as an empty one.
   const promptTemplate = text(source.promptTemplate)
   const prompt = promptTemplate === undefined ? {} : { promptTemplate }
+  const rules = normalizeRules(source.rules)
+  const withRules = rules === undefined ? {} : { rules }
   if (mode === 'session') {
     const session = normalizeSession(source.session)
-    if (session === undefined) return { mode: 'panel', filters, ...prompt }
-    return { mode, session, filters, ...prompt }
+    if (session === undefined) return { mode: 'panel', filters, ...prompt, ...withRules }
+    return { mode, session, filters, ...prompt, ...withRules }
   }
   if (mode === 'notify') {
     const sessionId = text(isRecord(source.notify) ? source.notify.sessionId : undefined)
-    if (sessionId === undefined) return { mode: 'panel', filters, ...prompt }
-    return { mode, notify: { sessionId }, filters, ...prompt }
+    if (sessionId === undefined) return { mode: 'panel', filters, ...prompt, ...withRules }
+    return { mode, notify: { sessionId }, filters, ...prompt, ...withRules }
   }
-  return { mode, filters, ...prompt }
+  return { mode, filters, ...prompt, ...withRules }
 }
 
 /**
