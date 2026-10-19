@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { MailSummary } from '../src/types.ts'
 import {
-  addressOf, addressesOf, isFlagged, isUnseen, parseDetail, snippetOf, toSummary,
+  addressOf, addressesOf, isFlagged, isUnseen, parseDetail, snippetOf, textOfHtml, toSummary,
 } from '../src/message.ts'
 
 const multipart = readFileSync(new URL('./fixtures/multipart.eml', import.meta.url))
@@ -149,6 +149,22 @@ describe('toSummary', () => {
   })
 })
 
+describe('textOfHtml', () => {
+  it('drops whole blocks that carry no visible text', () => {
+    const text = textOfHtml('<head><style>p{color:red}</style></head><body><script>alert(1)</script><p>Hello</p></body>')
+    expect(text).toBe('Hello')
+  })
+
+  it('breaks a line where the page broke one, and decodes entities', () => {
+    const text = textOfHtml('<div>first&nbsp;line</div><div>second &amp; third &lt;ok&gt;</div>')
+    expect(text).toBe('first line\nsecond & third <ok>')
+  })
+
+  it('drops a numeric reference that names no code point instead of throwing', () => {
+    expect(textOfHtml('<p>a&#99999999;b</p>')).toBe('ab')
+  })
+})
+
 describe('parseDetail', () => {
   it('gives the text, the HTML and the attachment list', async () => {
     const detail = await parseDetail({ source: multipart, summary: summaryOf() })
@@ -191,6 +207,24 @@ describe('parseDetail', () => {
     // 1000 bytes hold 333 whole three-byte characters; the 334th is halved.
     expect(detail.text).toHaveLength(333)
     expect(detail.text).not.toContain('\uFFFD')
+  })
+
+  it('reads the text out of an HTML-only message', async () => {
+    // QQ — and everything marketing sends — ships one `text/html` part with no
+    // `text/plain` at all, and mailparser leaves `text` empty for those. That is
+    // how a trigger ends up with a subject and nothing to act on.
+    const source = [
+      'Subject: only html',
+      'MIME-Version: 1.0',
+      'Content-Type: text/html; charset=utf-8',
+      '',
+      '<html><body><style>p{color:red}</style><p>尊敬的用户：</p><p>这是一封只有 HTML 的邮件。</p></body></html>',
+    ].join('\r\n')
+    const detail = await parseDetail({ source, summary: summaryOf() })
+    expect(detail.text).toContain('尊敬的用户')
+    expect(detail.text).toContain('这是一封只有 HTML 的邮件')
+    expect(detail.text).not.toContain('color:red')
+    expect(detail.html).toContain('尊敬的用户')
   })
 
   it('keeps the summary it was handed and prefers the parsed headers', async () => {

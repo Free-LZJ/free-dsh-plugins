@@ -30,7 +30,7 @@ import {
   createConnection, imapFactoryFor, probeAccount, WATCHED_FOLDER,
   type ImapFactory, type MailConnection, type MailFlagUpdate,
 } from './imap.ts'
-import { matchesFilters } from './rules.ts'
+import { matchesFilters, promptBody } from './rules.ts'
 import { createStore, messageKey, type MailStore } from './store.ts'
 import { createTriggerer, triggerAvailability, type TriggerHost } from './trigger.ts'
 import { registerRoutes, type AttachmentPayload, type RouteHost } from './routes.ts'
@@ -312,6 +312,33 @@ export function apply(ctx: Context): void {
   }
 
   /**
+   * The text a trigger hands to the agent.
+   *
+   * The scan's own preview is 2 KB of raw source — the headers, on most mail —
+   * which is why the live snapshot carries almost no previews at all. A prompt
+   * built from that says nothing but the subject, and "here is a subject, work
+   * it out" is not something an agent can act on. A message that is really
+   * about to be handed over is therefore read first, with the same fetch the
+   * reading pane uses.
+   * @param connection - the account's session, already connected.
+   * @param folder - the folder the message sits in.
+   * @param uid - the message.
+   * @param fallback - the scan's preview, used when the body cannot be read.
+   * @returns the capped body, or the preview when there was nothing better.
+   */
+  async function readBody(connection: MailConnection, folder: string, uid: number, fallback: string): Promise<string> {
+    try {
+      const detail = await connection.fetchDetail(folder, uid)
+      return detail === undefined ? fallback : promptBody(detail.text, fallback)
+    } catch (error: unknown) {
+      // A body that cannot be read is no reason to drop the message: hand over
+      // what the scan already has rather than losing the trigger entirely.
+      ctx.logger.warn(`mail: reading the body of uid ${String(uid)} failed: ${describe(error)}`)
+      return fallback
+    }
+  }
+
+  /**
    * One incremental pass over {@link WATCHED_FOLDER}, serialized per account.
    *
    * The ledger write comes before the trigger on purpose: if the trigger fails,
@@ -399,7 +426,11 @@ export function apply(ctx: Context): void {
           if (store.isTriggered(accountId, key)) continue
           await store.markTriggered(accountId, key)
           if (!matchesFilters(message.summary, account.trigger.filters)) continue
-          const result = await fire.fire(accountId, account.trigger, message.summary, message.preview)
+          // Panel mode hands nothing over, so it must not pay for a body either.
+          const body = account.trigger.mode === 'panel'
+            ? message.preview
+            : await readBody(connection, folder, message.summary.uid, message.preview)
+          const result = await fire.fire(accountId, account.trigger, message.summary, body)
           if (!result.ok) {
             ctx.logger.warn(`mail: handing ${message.summary.subject || '(no subject)'} to the agent failed: ${result.message}`)
           }

@@ -5,7 +5,7 @@
 
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildPrompt, matchesFilters, renderNotice, renderTitle, triggerReadiness } from '../src/rules.ts'
+import { buildPrompt, matchesFilters, promptBody, renderNotice, renderTitle, triggerReadiness } from '../src/rules.ts'
 import type { MailSummary, TriggerConfig } from '../src/types.ts'
 
 /** One message to filter, with the fields a test wants to vary. */
@@ -60,6 +60,27 @@ describe('matchesFilters', () => {
     expect(matchesFilters(mail({ seen: true }), {})).toBe(false)
     expect(matchesFilters(mail({ seen: true }), { unreadOnly: false })).toBe(true)
     expect(matchesFilters(mail({ seen: false }), { unreadOnly: true })).toBe(true)
+  })
+})
+
+describe('promptBody', () => {
+  it('hands over the body the message actually carries', () => {
+    expect(promptBody('short body', 'preview')).toBe('short body')
+  })
+
+  it('falls back to the list preview only when there is no text at all', () => {
+    expect(promptBody('   \n ', 'preview')).toBe('preview')
+  })
+
+  it('normalises CRLF so the prompt carries no stray carriage returns', () => {
+    expect(promptBody('one\r\ntwo', '')).toBe('one\ntwo')
+  })
+
+  it('caps a long body and says it was cut', () => {
+    const body = promptBody('x'.repeat(5000), 'preview')
+    expect(body.startsWith('x'.repeat(4000))).toBe(true)
+    expect(body.length).toBeLessThan(5000)
+    expect(body.endsWith('…（正文过长，已截断）')).toBe(true)
   })
 })
 

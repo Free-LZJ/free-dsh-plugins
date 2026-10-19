@@ -112,13 +112,36 @@ export function renderTitle(template: string | undefined, summary: MailSummary):
   return filled === '' ? FALLBACK_TITLE : filled
 }
 
+/** Longest body a prompt carries, in characters. */
+const PROMPT_BODY_LIMIT = 4000
+
+/**
+ * The body a trigger hands over, capped.
+ *
+ * The scan's own preview is 2 KB of raw source — the headers, on most mail —
+ * so it is empty for the overwhelming majority of messages (287 of the 300 rows
+ * in the live snapshot). A prompt that carries nothing but the subject is a
+ * trigger the agent cannot act on, so the trigger path reads the message itself
+ * and passes that text here; the list preview is only the fallback for a
+ * message that really has no body.
+ * @param text - the message's plain text, as the reading pane parsed it.
+ * @param fallback - the list preview, used when there is no body at all.
+ * @returns the body, marked when it was cut.
+ */
+export function promptBody(text: string, fallback: string): string {
+  const body = text.replace(/\r\n/g, '\n').trim()
+  if (body === '') return fallback
+  if (body.length <= PROMPT_BODY_LIMIT) return body
+  return `${body.slice(0, PROMPT_BODY_LIMIT).trimEnd()}\n…（正文过长，已截断）`
+}
+
 /**
  * The prompt handed to the agent. Starts with the untrusted-content notice.
  * @param summary - the message the session is about.
- * @param preview - plain-text body preview, already truncated by the caller.
+ * @param body - the message's text, already capped by {@link promptBody}.
  * @returns the message text.
  */
-export function buildPrompt(summary: MailSummary, preview: string): string {
+export function buildPrompt(summary: MailSummary, body: string): string {
   return [
     UNTRUSTED_NOTICE,
     `发件人：${renderFrom(summary.from)}`,
@@ -126,8 +149,8 @@ export function buildPrompt(summary: MailSummary, preview: string): string {
     `时间：${summary.date}`,
     `账号：${summary.accountId}`,
     '',
-    '正文预览：',
-    preview,
+    '正文：',
+    body,
   ].join('\n')
 }
 

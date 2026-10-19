@@ -239,6 +239,63 @@ export async function previewOf(source: Buffer | string, max: number = SNIPPET_L
 }
 
 /**
+ * The readable text of an HTML body, for the mail that ships no `text/plain`.
+ *
+ * Plenty of what arrives — every marketing blast, and most of what QQ hands
+ * over — is a single `text/html` part, and mailparser leaves `text` empty for
+ * those. The panel never noticed because it renders the HTML in its sandbox;
+ * an agent gets a prompt, and a prompt with no body is a trigger nobody can act
+ * on.
+ *
+ * A regex is the wrong tool for HTML in general and the right one for this: the
+ * input is one mail body rather than a page, there is no renderer in this
+ * process, and the consumer wants the words in order, not a faithful tree. What
+ * it must never do is leak a script or a style block into the prompt, which is
+ * what the first two substitutions are for.
+ * @param html - the raw HTML part.
+ * @returns the text, with a blank line where the page broke one.
+ */
+export function textOfHtml(html: string): string {
+  return html
+    // Comments and whole elements that carry no visible text.
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style|head|title|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    // A break where the page broke one, so paragraphs do not run together.
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6]|table|section|article|blockquote|ul|ol)\s*>/gi, '\n')
+    // Everything still bracketed is markup.
+    .replace(/<[^>]*>/g, '')
+    // The handful of entities a mail actually uses; a numeric reference is
+    // decoded only when it names a code point, so a stray one cannot throw.
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&#(\d+);/g, (_match, code: string) => {
+      const point = Number(code)
+      return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : ''
+    })
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
+ * The message's own text, or one read out of its HTML when it has none.
+ * @param parsed - what the parser made of the source.
+ * @param html - the HTML part, already capped, when the message carried one.
+ * @returns the text to show or to hand over.
+ */
+function ownTextOf(parsed: ParsedMail | undefined, html: string | undefined): string {
+  const own = parsed?.text ?? ''
+  if (own.trim() !== '') return own
+  return html === undefined ? '' : textOfHtml(html)
+}
+
+/**
  * One full source as the reading pane's shape.
  *
  * `text` and `html` are each capped independently, and any cut raises
@@ -255,8 +312,8 @@ export async function parseDetail(input: {
 }): Promise<MailDetail> {
   const parsed = await simpleParser(input.source) as ParsedMail | undefined
   const limit = input.maxTextBytes ?? TEXT_LIMIT
-  const text = clamp(parsed?.text ?? '', limit)
   const html = typeof parsed?.html === 'string' ? clamp(parsed.html, limit) : undefined
+  const text = clamp(ownTextOf(parsed, html?.text), limit)
 
   const attachments: readonly MailAttachment[] = (parsed?.attachments ?? []).map((attachment, index) => ({
     // `partId` is the parser's IMAP-style body part number, which is exactly

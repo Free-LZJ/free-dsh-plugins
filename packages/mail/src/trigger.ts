@@ -129,7 +129,7 @@ export function triggerAvailability(host: Partial<TriggerHost>): { session: bool
 /** One account's trigger, wired to the host it was created with. */
 export interface Triggerer {
   /** Hand one matched message over. Never throws. */
-  fire(accountId: string, trigger: TriggerConfig, summary: MailSummary, preview: string): Promise<RouteResult>
+  fire(accountId: string, trigger: TriggerConfig, summary: MailSummary, body: string): Promise<RouteResult>
 }
 
 /**
@@ -156,7 +156,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
     accountId: string,
     trigger: TriggerConfig,
     summary: MailSummary,
-    preview: string,
+    body: string,
   ): Promise<RouteResult> {
     const sessions = host.sessions
     const target = trigger.notify?.sessionId
@@ -168,7 +168,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
     // the only correct way to read a failure out of it.
     const resolved = await sessions.resolveAgent(target)
     if ('error' in resolved) return fail('session_not_found', messageOf(resolved.error))
-    resolved.agent.followup(mailMessage(buildPrompt(summary, preview), accountId, summary))
+    resolved.agent.followup(mailMessage(buildPrompt(summary, body), accountId, summary))
     return { ok: true }
   }
 
@@ -177,7 +177,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
     accountId: string,
     trigger: TriggerConfig,
     summary: MailSummary,
-    preview: string,
+    body: string,
   ): Promise<RouteResult> {
     const options = trigger.session
     if (options === undefined) return fail('invalid_config', '未配置新建会话参数：mode=session 需要 session')
@@ -217,7 +217,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
         await workspace.attachSession(sessionId)
         if (permissionName !== undefined) host.permissions.set(handle.agent.session, permissionName)
         host.titles.rename(handle.agent.session, renderTitle(options.titleTemplate, summary))
-        handle.agent.followup(mailMessage(buildPrompt(summary, preview), accountId, summary))
+        handle.agent.followup(mailMessage(buildPrompt(summary, body), accountId, summary))
       } catch (error) {
         // Best effort, both of them: the original failure is the one worth
         // reporting, so neither cleanup may replace it.
@@ -236,7 +236,7 @@ export function createTriggerer(host: TriggerHost): Triggerer {
       accountId: string,
       trigger: TriggerConfig,
       summary: MailSummary,
-      preview: string,
+      body: string,
     ): Promise<RouteResult> {
       try {
         const available: TriggerAvailability = triggerAvailability(host)
@@ -246,9 +246,9 @@ export function createTriggerer(host: TriggerHost): Triggerer {
           case 'panel':
             return { ok: true }
           case 'notify':
-            return await fireNotify(accountId, trigger, summary, preview)
+            return await fireNotify(accountId, trigger, summary, body)
           case 'session':
-            return await fireSession(accountId, trigger, summary, preview)
+            return await fireSession(accountId, trigger, summary, body)
         }
       } catch (error) {
         return fail('session_failed', messageOf(error))
