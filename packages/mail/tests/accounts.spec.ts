@@ -126,7 +126,7 @@ describe('the authorization code', () => {
   it('never puts the code in anything the panel can reach', async () => {
     const credentials = fakeCredentials()
     const id = accountIdFor('a@x.com', 'qq')
-    const view: MailConfigView = { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [account(id, 'a@x.com')], triggerAvailability: { session: false, notify: false } }
+    const view: MailConfigView = { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [account(id, 'a@x.com')], triggerAvailability: { session: false, notify: false }, presets: { agents: [], permissions: [] } }
     const dir = await mkdtemp(join(tmpdir(), 'mail-accounts-'))
     tempDirs.push(dir)
     const path = join(dir, 'state.json')

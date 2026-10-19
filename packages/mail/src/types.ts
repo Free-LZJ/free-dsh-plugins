@@ -229,6 +229,17 @@ export interface MailboxView {
   readonly total: number
 }
 
+/** One choice a settings dropdown offers. */
+export interface PresetChoice {
+  /** The value stored in the trigger. */
+  readonly value: string
+  /** What the dropdown shows; falls back to the value when the host names nothing. */
+  readonly label: string
+  readonly description?: string
+  /** Why this preset cannot be used, when its registry reports a load failure. */
+  readonly broken?: string
+}
+
 /** The parts of the configuration the panel is allowed to see (never the credential). */
 export interface MailConfigView {
   readonly fallbackScanSeconds: number
@@ -236,6 +247,14 @@ export interface MailConfigView {
   readonly accounts: readonly MailAccount[]
   /** Which trigger modes this deployment can actually run, so the drawer greys the rest out. */
   readonly triggerAvailability: { readonly session: boolean; readonly notify: boolean }
+  /**
+   * What the drawer may offer for the two preset fields.
+   *
+   * Read from the host services rather than hard-coded here: a deployment can
+   * ship its own presets, and a name typed by hand that no longer exists fails
+   * at trigger time — long after the person who typed it has moved on.
+   */
+  readonly presets: { readonly agents: readonly PresetChoice[]; readonly permissions: readonly PresetChoice[] }
 }
 
 /** `GET /dsh-mail/state`. */

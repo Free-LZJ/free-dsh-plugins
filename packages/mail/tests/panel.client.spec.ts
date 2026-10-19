@@ -69,7 +69,7 @@ const EMPTY_STATE: MailState = {
   accounts: [],
   mailboxes: [],
   messages: [],
-  config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [], triggerAvailability: { session: true, notify: true } },
+  config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [], triggerAvailability: { session: true, notify: true }, presets: { agents: [], permissions: [] } },
 }
 
 /** The account row `/state` reports for the account `ACCOUNT` configures. */
@@ -92,7 +92,25 @@ const STATE: MailState = {
     { accountId: 'acc-1', path: 'Sent Messages', unseen: 0, total: 3 },
   ],
   messages: [MESSAGE, OTHER_MESSAGE],
-  config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [ACCOUNT], triggerAvailability: { session: true, notify: true } },
+  config: {
+    fallbackScanSeconds: 300,
+    maxListMessages: 100,
+    accounts: [ACCOUNT],
+    triggerAvailability: { session: true, notify: true },
+    // What the drawer's two dropdowns show: the shipped presets name themselves
+    // through the host, and a permission preset carries its label too.
+    presets: {
+      agents: [
+        { value: 'standard', label: '标准模式', description: '日常编码与文件处理' },
+        { value: 'minimal', label: '极简模式', broken: '缺少必需服务' },
+      ],
+      permissions: [
+        { value: 'read-only', label: '只读' },
+        { value: 'workspace-write', label: '仅工作目录可写' },
+        { value: 'danger-full-access', label: '完全访问' },
+      ],
+    },
+  },
 }
 
 /** Carries a remote tracking pixel: the panel must not let it through by default. */
@@ -335,6 +353,40 @@ describe('the mail panel document', () => {
     expect(root.style.getPropertyValue('--mail-fg')).toBe('#e8eaee')
     expect(root.dataset.mailTokens).toBe('')
     expect(root.dataset.mailScheme).toBe('dark')
+  })
+
+  it('offers the presets as labelled options and keeps a saved value the list no longer has', async () => {
+    const state: MailState = {
+      ...STATE,
+      config: {
+        ...STATE.config,
+        accounts: [{
+          ...ACCOUNT,
+          trigger: {
+            mode: 'session',
+            filters: {},
+            session: { workspacePath: 'D:\\ws', agentPreset: 'minimal', permissionPreset: 'gone-preset' },
+          },
+        }],
+      },
+    }
+    const { window } = await renderPanel({ state: { body: state } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    const agent = doc.querySelector<HTMLSelectElement>('.m-trigger-preset')
+    const permission = doc.querySelector<HTMLSelectElement>('.m-trigger-permission')
+    expect(agent?.tagName).toBe('SELECT')
+    // The empty row means "use the deployment default"; every other row shows the
+    // host's label, not the identifier that gets stored.
+    expect([...(agent?.options ?? [])].map((option) => option.text)).toEqual(['（用部署默认）', '标准模式', '极简模式（不可用）'])
+    expect([...(permission?.options ?? [])].map((option) => option.text)).toContain('只读')
+    expect(agent?.value).toBe('minimal')
+    // A saved preset the list no longer offers has to survive the round trip,
+    // or opening the drawer would quietly rewrite the account's setting.
+    expect(permission?.value).toBe('gone-preset')
+    expect([...(permission?.options ?? [])].some((option) => option.text.includes('不在当前列表'))).toBe(true)
   })
 
   it('renders the saved rule list in order and posts it back with a new row appended', async () => {

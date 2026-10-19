@@ -120,7 +120,7 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
       accounts: [],
       mailboxes: [],
       messages: [],
-      config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [], triggerAvailability: { session: false, notify: false } },
+      config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [], triggerAvailability: { session: false, notify: false }, presets: { agents: [], permissions: [] } },
     }),
     detail: async () => undefined,
     attachment: async () => undefined,

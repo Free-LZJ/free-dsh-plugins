@@ -6,7 +6,7 @@
 
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createTriggerer, resolveTrigger, triggerAvailability, type TriggerHost } from '../src/trigger.ts'
+import { createTriggerer, presetChoices, resolveTrigger, triggerAvailability, type TriggerHost } from '../src/trigger.ts'
 import type { MailSummary, TriggerConfig } from '../src/types.ts'
 
 /** The order mode A must drive the host in — cleanup steps excluded. */
@@ -435,6 +435,64 @@ describe('resolveTrigger', () => {
     })
     expect(resolved).toEqual({ mode: 'panel', filters: {} })
     expect(reads).toBe(0)
+  })
+})
+
+describe('presetChoices', () => {
+  it('labels every preset with the name the host declared, falling back to its id', async () => {
+    const choices = await presetChoices({
+      agentPresets: {
+        async list() {
+          return [
+            { id: 'standard', name: '标准模式', description: '日常编码与文件处理', order: 1 },
+            { id: 'minimal', order: 3, broken: '缺少必需服务' },
+          ]
+        },
+      },
+      permissions: {
+        catalog: () => ({
+          options: [
+            { value: 'read-only', name: '只读', description: '不写盘' },
+            { value: 'danger-full-access', name: '' },
+          ],
+          defaultPreset: 'danger-full-access',
+        }),
+      },
+    })
+
+    expect(choices.agents).toEqual([
+      { value: 'standard', label: '标准模式', description: '日常编码与文件处理' },
+      // No declared name: the shipped-preset table supplies the label, and the
+      // failure travels with it so the drawer can mark the option.
+      { value: 'minimal', label: '极简模式', broken: '缺少必需服务' },
+    ])
+    expect(choices.permissions).toEqual([
+      { value: 'read-only', label: '只读', description: '不写盘' },
+      { value: 'danger-full-access', label: '完全访问（不弹审批）' },
+    ])
+  })
+
+  it('falls back to the bare names, and to empty, when the host cannot answer', async () => {
+    const bare = await presetChoices({ permissions: { names: ['read-only', 'workspace-write'] } })
+    expect(bare.permissions).toEqual([
+      { value: 'read-only', label: '只读' },
+      { value: 'workspace-write', label: '仅工作目录可写' },
+    ])
+    expect(bare.agents).toEqual([])
+
+    const broken = await presetChoices({
+      agentPresets: {
+        async list() {
+          throw new Error('registry offline')
+        },
+      },
+      permissions: {
+        catalog() {
+          throw new Error('catalog offline')
+        },
+      },
+    })
+    expect(broken).toEqual({ agents: [], permissions: [] })
   })
 })
 

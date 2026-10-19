@@ -15,7 +15,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { buildPrompt, matchesFilters, renderTitle, triggerReadiness, type TriggerAvailability } from './rules.ts'
-import type { MailSummary, RouteResult, TriggerConfig, TriggerRule } from './types.ts'
+import type { MailSummary, PresetChoice, RouteResult, TriggerConfig, TriggerRule } from './types.ts'
 
 /** Everything the trigger needs from the host. Injected so tests never touch cordis. */
 export interface TriggerHost {
@@ -24,11 +24,28 @@ export interface TriggerHost {
     set(session: unknown, name: string): void
     readonly names: readonly string[]
     readonly defaultPreset?: string
+    /**
+     * The advertised presets with their labels. Optional because a deployment may
+     * mount an older service that only publishes `names`; the drawer then falls
+     * back to the bare names.
+     */
+    catalog?(): {
+      readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+      readonly defaultPreset: string
+    }
   }
   readonly agentPresets: {
     resolve(id?: string): Promise<{ id: string; broken?: string }>
     acquireScope(id?: string): Promise<{ [Symbol.asyncDispose](): Promise<void> }>
     mount(agentCtx: unknown, id?: string): Promise<{ id: string }>
+    /** Every declared preset with its display metadata; optional for the same reason as `catalog`. */
+    list?(): Promise<readonly {
+      readonly id: string
+      readonly name?: string
+      readonly description?: string
+      readonly order?: number
+      readonly broken?: string
+    }[]>
   }
   readonly workspaces: {
     create(
@@ -178,6 +195,110 @@ export async function resolveTrigger(
     }
   }
   return { mode: 'panel', filters: {} }
+}
+
+/**
+ * Chinese labels for the presets this deployment ships.
+ *
+ * The shipped definitions declare no `name` — checked against a running instance,
+ * where every label came back as the bare id. A dropdown of `standard` /
+ * `workspace-write` is not the "show the label" the drawer asked for, so these
+ * are spelled out here. A deployment that does declare a name wins over this
+ * table, and an id nobody here knows falls back to itself: the table only ever
+ * fills a gap, it never renames a preset.
+ */
+const PRESET_LABELS: Readonly<Record<string, string>> = {
+  // Agent presets (`dsh-web-app/presets`).
+  standard: '标准模式',
+  ptc: 'PTC 模式（工具调用写成代码）',
+  minimal: '极简模式',
+  cordis: 'Cordis 组合模式',
+  // Permission presets (`dsh-permission-presets`).
+  'read-only': '只读',
+  'workspace-write': '仅工作目录可写',
+  'danger-full-access': '完全访问（不弹审批）',
+}
+
+/** The label for one preset: its declared name, else the table, else the id. */
+function presetLabel(id: string, declared: string | undefined): string {
+  const named = declared === undefined ? '' : declared.trim()
+  if (named !== '' && named !== id) return named
+  return PRESET_LABELS[id] ?? id
+}
+/** The slice of host services that describes which presets exist. */
+export interface PresetHost {
+  readonly permissions?: {
+    readonly names?: readonly string[]
+    catalog?(): {
+      readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+      readonly defaultPreset: string
+    }
+  }
+  readonly agentPresets?: {
+    list?(): Promise<readonly {
+      readonly id: string
+      readonly name?: string
+      readonly description?: string
+      readonly order?: number
+      readonly broken?: string
+    }[]>
+  }
+}
+
+/**
+ * The two preset lists a settings drawer can offer, read from the host.
+ *
+ * The label is the declared name and falls back to the id: the presets shipped
+ * in this deployment declare neither `name` nor `description`, so without the
+ * fallback every row would read as an empty string. A preset whose definition
+ * failed to load is still listed — hiding it would look like it never existed —
+ * with `broken` carrying the reason so the drawer can mark it.
+ *
+ * Both readers are optional: an older host may publish only `names`, and a
+ * registry that throws is not a reason to lose the field entirely.
+ * @param host - the host slice, possibly missing the optional readers.
+ * @returns the choices for the two fields, in the host's own order.
+ */
+export async function presetChoices(
+  host: PresetHost,
+): Promise<{ agents: PresetChoice[]; permissions: PresetChoice[] }> {
+  const agents: PresetChoice[] = []
+  const list = host.agentPresets?.list
+  if (typeof list === 'function') {
+    try {
+      for (const preset of await list.call(host.agentPresets)) {
+        agents.push({
+          value: preset.id,
+          label: presetLabel(preset.id, preset.name),
+          ...(preset.description === undefined ? {} : { description: preset.description }),
+          ...(preset.broken === undefined ? {} : { broken: preset.broken }),
+        })
+      }
+    } catch {
+      // A registry that cannot answer leaves the list empty; the drawer then
+      // says so instead of offering names that would fail at trigger time.
+    }
+  }
+
+  const permissions: PresetChoice[] = []
+  const catalog = host.permissions?.catalog
+  if (typeof catalog === 'function') {
+    try {
+      for (const option of catalog.call(host.permissions).options) {
+        permissions.push({
+          value: option.value,
+          label: presetLabel(option.value, option.name),
+          ...(option.description === undefined ? {} : { description: option.description }),
+        })
+      }
+    } catch {
+      // Same as above.
+    }
+  } else {
+    for (const name of host.permissions?.names ?? []) permissions.push({ value: name, label: presetLabel(name, undefined) })
+  }
+
+  return { agents, permissions }
 }
 
 /** One account's trigger, wired to the host it was created with. */

@@ -115,7 +115,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     #dsh-mail .m-count{color:var(--mail-fg-muted);font-size:12px}
     #dsh-mail .m-list-pane{width:340px;flex:0 0 auto;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--mail-line)}
     #dsh-mail .m-list{flex:1;min-height:0;overflow:auto}
-    #dsh-mail .m-row{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px;border-radius:0;border-bottom:1px solid var(--mail-line)}
+    #dsh-mail .m-row{position:relative;display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px;border-radius:0;border-bottom:1px solid var(--mail-line)}
     #dsh-mail .m-row[aria-current=true]{background:var(--mail-selected)}
     #dsh-mail .m-unread-dot{width:8px;height:8px;flex:0 0 auto;margin-top:7px;border-radius:50%;background:transparent}
     #dsh-mail .m-unread-dot[data-unread=true]{background:var(--mail-accent)}
@@ -268,8 +268,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
           <p class="m-hint m-trigger-availability" hidden></p>
           <div class="m-trigger-session" hidden>
             <label>工作目录（绝对路径） <input class="m-trigger-workspace" type="text" placeholder="D:\work"></label>
-            <label>Agent preset（留空用部署默认） <input class="m-trigger-preset" type="text"></label>
-            <label>权限 preset（留空用部署默认） <input class="m-trigger-permission" type="text"></label>
+            <label>Agent preset <select class="m-trigger-preset"></select></label>
+            <label>权限 preset <select class="m-trigger-permission"></select></label>
             <label>会话标题模板 <input class="m-trigger-title" type="text" placeholder="邮件：{subject}"></label>
           </div>
           <div class="m-trigger-notify" hidden>
@@ -917,10 +917,11 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   function loadTrigger() {
     const account = (view.data ? view.data.config.accounts : []).find((one) => one.id === el.triggerAccount.value);
     const trigger = account ? account.trigger : { mode: 'panel', filters: { unreadOnly: true } };
+    const presets = (view.data && view.data.config && view.data.config.presets) || { agents: [], permissions: [] };
     el.triggerMode.value = trigger.mode;
     root.querySelector('.m-trigger-workspace').value = (trigger.session && trigger.session.workspacePath) || '';
-    root.querySelector('.m-trigger-preset').value = (trigger.session && trigger.session.agentPreset) || '';
-    root.querySelector('.m-trigger-permission').value = (trigger.session && trigger.session.permissionPreset) || '';
+    fillPresetSelect(root.querySelector('.m-trigger-preset'), presets.agents, (trigger.session && trigger.session.agentPreset) || '', '（用部署默认）');
+    fillPresetSelect(root.querySelector('.m-trigger-permission'), presets.permissions, (trigger.session && trigger.session.permissionPreset) || '', '（用部署默认）');
     root.querySelector('.m-trigger-title').value = (trigger.session && trigger.session.titleTemplate) || '';
     root.querySelector('.m-trigger-sessionid').value = (trigger.notify && trigger.notify.sessionId) || '';
     root.querySelector('.m-trigger-prompt').value = trigger.promptTemplate || '';
@@ -935,6 +936,25 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   }
 
   /** 部署缺哪个服务，就把对应模式标灰并说明，而不是等保存时才失败。 */
+  /**
+   * 把 preset 列表填进下拉。
+   *
+   * 第一项永远代表「用部署默认」，因为留空是合法且推荐的用法；当前保存的值如果
+   * 已经不在列表里（preset 被删、或旧版手填的名字），也补一项出来 —— 否则下次
+   * 保存会把它悄悄改成别的。加载失败的 preset 照常列出但标注，藏起来只会让人
+   * 以为它从没存在过。
+   */
+  function fillPresetSelect(select, choices, current, fallbackLabel) {
+    const rows = [{ value: '', label: fallbackLabel }].concat(choices || []);
+    if (current && !rows.some((one) => one.value === current)) rows.push({ value: current, label: current + '（不在当前列表）' });
+    select.innerHTML = rows.map((one) => {
+      const label = one.broken ? one.label + '（不可用）' : one.label;
+      const title = one.description || one.broken || '';
+      return '<option value="' + esc(one.value) + '"' + (one.value === current ? ' selected' : '') +
+        (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + '</option>';
+    }).join('');
+  }
+
   function syncTriggerAvailability() {
     const availability = (view.data && view.data.config.triggerAvailability) || { session: true, notify: true };
     const note = root.querySelector('.m-trigger-availability');

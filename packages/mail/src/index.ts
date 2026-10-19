@@ -32,11 +32,11 @@ import {
 } from './imap.ts'
 import { promptBody } from './rules.ts'
 import { createStore, messageKey, type MailStore } from './store.ts'
-import { createTriggerer, resolveTrigger, triggerAvailability, type TriggerHost } from './trigger.ts'
+import { createTriggerer, presetChoices, resolveTrigger, triggerAvailability, type TriggerHost } from './trigger.ts'
 import { registerRoutes, type AttachmentPayload, type RouteHost } from './routes.ts'
 import type {
   AccountStatus, DraftAccount, MailAccount, MailAction, MailDetail, MailState, MailSummary,
-  MailboxView, RouteResult, ScanCursor,
+  MailboxView, PresetChoice, RouteResult, ScanCursor,
 } from './types.ts'
 
 export * from './paths.ts'
@@ -469,6 +469,32 @@ export function apply(ctx: Context): void {
     return pass
   }
 
+  /**
+   * The preset lists the drawer offers, cached because `/state` is synchronous.
+   *
+   * Read once at boot and re-read whenever a pass finds them empty: a session
+   * created before the host finished mounting its registries would otherwise lock
+   * the two dropdowns shut until the plugin restarts.
+   */
+  const presetCache: { agents: PresetChoice[]; permissions: PresetChoice[] } = { agents: [], permissions: [] }
+  let refreshingPresets = false
+
+  /** Re-read both preset lists from the host; never throws. */
+  async function refreshPresets(): Promise<void> {
+    if (refreshingPresets) return
+    refreshingPresets = true
+    try {
+      const read = await presetChoices(triggerHost())
+      presetCache.agents = read.agents
+      presetCache.permissions = read.permissions
+      touch()
+    } catch (error: unknown) {
+      ctx.logger.warn(`mail: reading the preset lists failed: ${describe(error)}`)
+    } finally {
+      refreshingPresets = false
+    }
+  }
+
   /** Start every configured account and the fallback sweep that covers missed events. */
   async function boot(): Promise<void> {
     try {
@@ -477,6 +503,9 @@ export function apply(ctx: Context): void {
       ctx.logger.warn(`mail: reading the state file failed: ${describe(error)}`)
     }
     if (stopping) return
+    // Before any account connects: the drawer's two preset fields are dropdowns
+    // now, and an empty list would leave them unusable until the first pass.
+    void refreshPresets()
     for (const account of store.accounts()) {
       // Draw what was on screen last time before touching the network: after a
       // restart the cursor already points past the mailbox, so without this the
@@ -593,6 +622,9 @@ export function apply(ctx: Context): void {
       // below — so a message read elsewhere stops being bold within about half a
       // minute instead of waiting for the fallback sweep.
       for (const account of accounts) requestScan(account.id)
+      // A drawer opened before the host answered gets its dropdowns on the next
+      // poll; the read is cheap and never blocks this answer.
+      if (presetCache.agents.length === 0) void refreshPresets()
       return {
         version: 1,
         revision,
@@ -634,6 +666,7 @@ export function apply(ctx: Context): void {
           maxListMessages: DEFAULT_CONFIG.maxListMessages,
           accounts,
           triggerAvailability: triggerAvailability(triggerHost()),
+          presets: presetCache,
         },
       }
     },
