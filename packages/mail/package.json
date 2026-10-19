@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-mail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mail for DSH: a sidebar panel over IMAP (QQ / Gmail) that reads, searches and triages your inbox, and hands a new message to an agent session when you ask it to",
   "repository": {
     "type": "git",
