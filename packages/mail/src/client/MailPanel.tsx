@@ -28,15 +28,20 @@ export type MailPanelProps = PropsRuntime<'main'> & PropsLocale<'panel.mail'>
 /**
  * Fill the main panel with the Host's mail document.
  *
- * The frame is a full-height flex row so the document owns its own scrolling:
- * `min-height: 100vh` keeps it from collapsing inside a seat that states no
- * height of its own.
+ * The frame is a full-height flex row so the document owns its own scrolling,
+ * and its height comes from the seat, never from the viewport. DSH's own frame
+ * is `height: 100%` with `padding-top: var(--dsh-windows-titlebar-height)`, so
+ * the main seat is exactly one titlebar *shorter* than `100vh`. A
+ * `min-height: 100vh` here therefore made this frame taller than its seat, and
+ * the seat's `overflow: hidden` cut the difference off the bottom — the panel
+ * believed it was whole while its last rows sat outside the window, so the list
+ * reached its scroll end with the end still invisible.
  * @param props - framework props; `t` names the frame for assistive technology.
  * @returns the framed panel document.
  */
 export function MailPanel({ t }: MailPanelProps): ReactNode {
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: '100vh', minWidth: 0 }}>
+    <div style={{ display: 'flex', height: '100%', minHeight: 0, minWidth: 0 }}>
       <iframe
         src={PANEL_SRC}
         title={t('title')}
