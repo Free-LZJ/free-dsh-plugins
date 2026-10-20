@@ -24,6 +24,11 @@ This provider removes the conversation from the equation. It asks the account
 service for a token for the search endpoint and sends it in the header that
 route expects, so search works while chat stays exactly where it was.
 
+Treat that as a last resort rather than a preference. When the relay in use does
+not support dsh's search at all, pinning `web.searchProvider` to the account
+route is the only way left to search; a relay that forwards the `web_search`
+server tool makes this package unnecessary.
+
 ## What it does not touch
 
 Nothing about which model replies. No model provider is registered, no
