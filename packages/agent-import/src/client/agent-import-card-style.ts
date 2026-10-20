@@ -78,7 +78,7 @@ const AGENT_IMPORT_CSS = `
 .${AGENT_IMPORT_CLASS.section} {
   min-width: 0;
   padding: 18px 0;
-  border-top: 1px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 .${AGENT_IMPORT_CLASS.section}:first-child {
   padding-top: 0;
@@ -105,7 +105,7 @@ const AGENT_IMPORT_CSS = `
 .${AGENT_IMPORT_CLASS.sourceRow} {
   min-width: 0;
   padding: 5px 0;
-  border-top: 1px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 .${AGENT_IMPORT_CLASS.sourceRow}:first-child {
   padding-top: 0;
@@ -220,7 +220,7 @@ const AGENT_IMPORT_CSS = `
 }
 .${AGENT_IMPORT_CLASS.table} th {
   padding: 6px 8px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
   font-size: 12px;
   font-weight: 600;
   text-align: left;
@@ -228,7 +228,7 @@ const AGENT_IMPORT_CSS = `
 }
 .${AGENT_IMPORT_CLASS.table} td {
   padding: 7px 8px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -299,7 +299,7 @@ const AGENT_IMPORT_CSS = `
 .${AGENT_IMPORT_CLASS.skillRow} {
   min-width: 0;
   padding: 10px 0;
-  border-top: 1px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 .${AGENT_IMPORT_CLASS.skillRow}:first-child {
   border-top: 0;
@@ -359,8 +359,8 @@ const AGENT_IMPORT_CSS = `
   gap: 4px;
   margin-top: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
   font-size: 12px;
   line-height: 1.6;
   color: var(--dsw-alias-label-secondary);
@@ -384,8 +384,8 @@ const AGENT_IMPORT_CSS = `
   margin: 8px 0 0;
   padding: 10px 12px;
   overflow: auto;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg);
   font-family: var(--dsw-font-markdown-code-font-family, Consolas, monospace);
   font-size: 12px;
   line-height: 1.6;
