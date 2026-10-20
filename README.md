@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
 [![npm: agent-import](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg?label=agent-import)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
+[![npm: console](https://img.shields.io/npm/v/@free-lzj/dsh-console.svg?label=console)](https://www.npmjs.com/package/@free-lzj/dsh-console)
 [![npm: mail](https://img.shields.io/npm/v/@free-lzj/dsh-mail.svg?label=mail)](https://www.npmjs.com/package/@free-lzj/dsh-mail)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
 
@@ -20,10 +21,25 @@
 | 包 | 版本 | 给 dsh 添什么 |
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.2` | 把 Codex / Claude Code 已经声明好的 MCP 服务器挂进 dsh，并把各 Agent 工具的技能以**符号链接**导入 dsh 自己的技能目录统一管理；同一个包在设置页里带一页「代理配置导入」 |
+| [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | **工作台**：dsh 的首页。首页列出**接入它面板契约**的插件（卡片宫格 / 列表 / 紧凑，可搜索、可置顶）并从那里打开——没接入的插件不会出现；同时是**通知出口**——插件把通知交给 `ctx.console.notify()`，由工作台从**可替换、可多选**的渠道里挑怎么送达（桌面通知 / 应用内消息 / 提示音）。界面完全用 DSH 的设计系统（`ui-primitives` 控件 + `--dsw-*` token），不另起一套 |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.1.0` | 侧边栏里的邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**），新邮件按账号配置新建 agent 会话、投递到指定会话或只高亮 |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
 
 每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是这些包共有的约定，以及本仓库自身的开发说明。
+
+## 可拔插的插件：靠契约，不靠硬依赖
+
+`console` 定义接口，其他包接入接口，谁都不是谁的硬依赖。
+
+| 接口 | 消费方怎么用 | 没有工作台时 |
+|---|---|---|
+| **面板契约** | 浏览器半边 import `@free-lzj/dsh-console/contract` 的 `useConsolePanel` | 面板保留自己的侧边栏图标与 `main` 键，和以前完全一样 |
+| **通知契约** | Host 半边调用 `ctx.console?.notify({ title, body, tone, source })` | 调用变成空操作（`?.`），插件照常工作 |
+| **渠道注册表** | 本包把每个送达方式注册成一个策略（`id` / `plan` / `deliver`），配置决定启用哪些 | 不适用（包内扩展点） |
+
+契约是**打包时内联**的普通模块，所以接入包对 `console` 没有运行时依赖：没装工作台也能装上 mail 并用起来。接管与否是**运行时**判断（Loader 行顺序由用户的 profile 决定，不由本仓库决定），所以契约用 `ctx.inject` 跟随服务出现/消失——工作台可能晚于插件挂载，被禁用时也要把侧边栏图标还回去。
+
+这种「先定义接口、再提供多个实现、最后配置多选」的写法已固化为仓库约束：[`rules/design-patterns.md`](rules/design-patterns.md)——契约、实现、注册表、配置四层分开，并给出了可机械判断的检查项。
 
 ## 搜索走账号，聊天不动
 
@@ -69,18 +85,20 @@ dsh 自带的搜索只在**会话本身跑在 `deepseek-account` 路由**时才�
 
 ```sh
 dsh plugin --profile web add @free-lzj/dsh-agent-import
+dsh plugin --profile web add @free-lzj/dsh-console
 dsh plugin --profile web add @free-lzj/dsh-mail
 ```
 
 **Profile 要选你实际在跑的那个**：`dsh web` 用 `web`。Electron 桌面端用 `desktop` —— 它不是另一个客户端，而是同一套 `dsh-web-app` 组合外加一份**自带版本**的 dsh 运行时，页面由 Host 自己的 `ctx.webServer` 在本机端口上提供，所以两个半边照常工作，只是 profile 与全局 CLI 不通用：
 
 ```sh
+dsh plugin --profile desktop add @free-lzj/dsh-console
 dsh plugin --profile desktop add @free-lzj/dsh-mail
 ```
 
 > **加载时机**：Host 半边是启动时加载的 JS，**改了要重启** `dsh web`（桌面端预览版同理）；浏览器半边刷新页面即可。
 
-> **兼容性预检**：两个包的 peer 范围都覆盖 0.1.7 起的 0.1.x 与含预发布在内的 0.2.x 运行时（桌面端自带的那份也在其中）。运行时不落在范围里时，dsh 启动的预检会把该行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "…": …`），插件与页面都不出现，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
+> **兼容性预检**：三个包的 peer 范围都覆盖 0.1.7 起的 0.1.x 与含预发布在内的 0.2.x 运行时（桌面端自带的那份也在其中）。运行时不落在范围里时，dsh 启动的预检会把该行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "…": …`），插件与页面都不出现，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
 
 ### 从本仓库安装（改插件本身时才需要）
 
@@ -91,11 +109,14 @@ dsh plugin --profile desktop add @free-lzj/dsh-mail
 pnpm install
 pnpm run build
 
+dsh plugin --profile web add "<本仓库绝对路径>/packages/console"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/mail"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/web-search-account"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
+
+**装本地路径时用 `.tgz` 而不是目录**：`packages/mail` 这类带第三方运行时依赖的包，`add <目录>` 会装成 `link:`，桌面端 profile 里可能整行激活失败（现象与绕过见 [`docs/troubleshooting.md`](docs/troubleshooting.md)）。`pnpm pack` 出的 tarball 走的是普通安装路径，没有这个问题。
 
 不改 profile 也可以，用 overlay 启动即可（示例见 [`examples/agent-import.cordis.yml`](examples/agent-import.cordis.yml)）：
 
@@ -123,17 +144,20 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 | 目录 | 包 |
 |---|---|
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import`（MCP 服务器 + 技能导入） |
-| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（侧边栏邮箱） |
+| [`packages/console`](packages/console) | `@free-lzj/dsh-console`（工作台首页 + 通知出口） |
+| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（邮箱面板） |
 | [`packages/web-search-account`](packages/web-search-account) | `@free-lzj/dsh-web-search-account`（搜索走已登录账号，仅 Host 半边） |
 
 ```sh
 pnpm install
 pnpm run typecheck   # 每个包，两个半边一起
 pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js（Node 半边）、lib/client.js（浏览器半边）
-pnpm run test        # vitest：32 个 spec 文件 / 548 个测试
+pnpm run test        # vitest：37 个 spec 文件 / 608 个测试
 ```
 
-先 `build` 再 `test`：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口没有向 Host 半边取值），没有 `lib/` 时其中一条会显示为 skipped。
+先 `build` 再 `test`：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口没有向 Host 半边取值，以及 `console` 的契约产物仍是可被内联的普通模块），没有 `lib/` 时其中一条会显示为 skipped。
+
+**包之间有构建顺序**：`console` 的契约产物由它的构建生成，`mail` 把它内联进自己的浏览器半边。`pnpm run build` 按依赖顺序跑，整仓构建没问题；单独重建 mail 而刚改过 console 的契约时，要先把 console 建出来。
 
 CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）在 `windows-latest` 上跑：adapter 的 spec 断言 Windows 盘符路径（Codex / Claude Code 主目录用 `C:`、`D:` 夹具），在 Linux 上这些夹具会被当成相对路径。
 
@@ -144,7 +168,7 @@ CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）在 `windows-lates
 ### 发布
 
 ```sh
-cd packages/agent-import   # 或 packages/mail
+cd packages/agent-import   # 或 packages/console、packages/mail
 npm publish               # prepublishOnly 会先 build；--access public 写在 publishConfig 里
 ```
 

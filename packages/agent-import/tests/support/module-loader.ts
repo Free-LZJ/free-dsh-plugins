@@ -51,6 +51,29 @@ if (typeof window !== 'undefined') {
   (window as unknown as { __ModuleLoader__: { load(request: LoadRequest): void } }).__ModuleLoader__ = {
     load: ({ id, factory }) => { modules.set(id, factory(requirePlatform)) },
   }
+  // Also reachable without a relative import into another package's test
+  // directory: a spec that needs an object the *page* composes (the slot
+  // registry, say) asks here for the same instance the shell would receive.
+  ;(globalThis as unknown as { __DSH_TEST_MODULES__: TestModuleTable }).__DSH_TEST_MODULES__ = {
+    get: (id) => modules.get(id),
+  }
+}
+
+/** The module table, published for specs outside this package. */
+export interface TestModuleTable {
+  /**
+   * @param id - module id a browser bundle declared.
+   * @returns its exports, or undefined when that bundle was never evaluated.
+   */
+  get(id: string): unknown
+}
+
+/**
+ * Read the published module table.
+ * @returns the table, or undefined when this environment never installed a loader.
+ */
+export function testModuleTable(): TestModuleTable | undefined {
+  return (globalThis as unknown as { __DSH_TEST_MODULES__?: TestModuleTable }).__DSH_TEST_MODULES__
 }
 
 /**

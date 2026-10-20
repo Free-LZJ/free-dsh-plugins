@@ -14,7 +14,12 @@ packages/
     tests/             #   *.spec.ts（Host）/ *.client.spec.tsx（浏览器）
     cordis.patch.yml   #   dsh.bundle 补丁：dsh plugin add 时插入的唯一 Loader 行
     tsdown.config.ts   #   两半的打包形态（平台模块表在这）
-  mail/                # @free-lzj/dsh-mail          侧边栏邮箱面板 + 新邮件交给 agent
+  mail/                # @free-lzj/dsh-mail          邮箱面板（接入工作台后从工作台进入）+ 新邮件交给 agent
+  console/             # @free-lzj/dsh-console       工作台首页 + 通知接口；对外导出 panel 契约
+    src/index.ts       #   Host 半边：ctx.console 服务、通知渠道注册表
+    src/client/        #   浏览器半边：首页列表、通知中心、设置行
+    src/client/contract.ts  # 跨插件契约（消费方 import 的是它）
+    src/protocol.ts    #   两半共用的类型（Host 与浏览器都 import）
   web-search-account/  # @free-lzj/dsh-web-search-account  用已登录账号联网搜索（仅 Host 半边）
 examples/              # dsh web --patch 用的 overlay 示例
 docs/                  # 项目级文档（不是约束）
@@ -36,6 +41,8 @@ rules/                 # 开发规则（约束的唯一权威位置）
 | [`rules/documentation.md`](rules/documentation.md) | 改 README、`docs/**`、`examples/**` 里的说明文字时 |
 | [`rules/packages.md`](rules/packages.md) | 新增包，或改任一包的 `src/`、`package.json`、`tsdown.config.ts`、`cordis.patch.yml` 时 |
 | [`rules/build.md`](rules/build.md) | 改 `package.json`、`tsconfig*.json`、`tsdown.config.ts`，或新增 import / 依赖时 |
+| [`rules/design-patterns.md`](rules/design-patterns.md) | 新增/修改「可替换实现」「多选配置」「跨插件接口」时——通知渠道、导入源、面板接入、存储后端、provider；以及评审这类代码时 |
+| [`rules/plugin-ui.md`](rules/plugin-ui.md) | 改任何插件的浏览器半边界面（`src/client/**` 的组件、样式、文案）时 |
 | [`rules/testing.md`](rules/testing.md) | 改 `src/` 之后、新增路由 / 组件 / 产物契约时 |
 | [`rules/git-release.md`](rules/git-release.md) | **执行 Git 写操作之前**；`npm publish` 或改版本号之前（只读 `status`/`diff`/`log` 不需要） |
 | [`rules/workspace.md`](rules/workspace.md) | 需要写脚本、抓数据、截图、存调研产物时 |

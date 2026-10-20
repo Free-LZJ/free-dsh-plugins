@@ -6,6 +6,7 @@
 
 [![CI](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml/badge.svg)](https://github.com/Free-LZJ/free-dsh-plugins/actions/workflows/ci.yml)
 [![npm: agent-import](https://img.shields.io/npm/v/@free-lzj/dsh-agent-import.svg?label=agent-import)](https://www.npmjs.com/package/@free-lzj/dsh-agent-import)
+[![npm: console](https://img.shields.io/npm/v/@free-lzj/dsh-console.svg?label=console)](https://www.npmjs.com/package/@free-lzj/dsh-console)
 [![npm: mail](https://img.shields.io/npm/v/@free-lzj/dsh-mail.svg?label=mail)](https://www.npmjs.com/package/@free-lzj/dsh-mail)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
 
@@ -20,9 +21,25 @@
 | Package | Version | What it adds to dsh |
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.2` | Mounts the MCP servers Codex / Claude Code already declare, and manages every agent tool's skills by **linking** them into dsh's own skills directory; the same package ships the Settings page that configures both |
+| [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | The workbench: dsh's home surface. Its home page lists the plugins that **adopt its panel contract** (card grid / list / compact, search and pinning) and opens them from there — a plugin that has not adopted it never appears. It is also the notification hub: plugins hand a notice to `ctx.console.notify()` and the workbench picks how to deliver it from **interchangeable, multi-select channels** (desktop notification / in-app centre / sound). Its UI stays entirely inside DSH's design system (`ui-primitives` controls and `--dsw-*` tokens) instead of a look of its own |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.1.0` | A sidebar mail panel: read / search / flag / move / delete (**no sending**), and a new message that opens an agent session, lands in one you already have, or just lights up the panel |
+| [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | Web search through your **signed-in DeepSeek account**, independent of the model the conversation runs on: chat pinned to a gateway or a third-party model still searches, with no extra search key |
 
-Each package's install steps, configuration fields, panel details and known limitations live in its own README (linked above). What follows is what both packages share, and how this repository itself is developed.
+Each package's install steps, configuration fields, panel details and known limitations live in its own README (linked above). What follows is what the packages share, and how this repository itself is developed.
+
+## Droppable plugins: a contract, not a hard dependency
+
+`console` defines interfaces; other packages adopt them; nothing becomes a hard requirement of anything else.
+
+| Interface | Consumer calls | When the workbench is absent |
+|---|---|---|
+| **Panel contract** | the browser half imports `useConsolePanel` from `@free-lzj/dsh-console/contract` | the panel keeps its own sidebar row and its own `main` key — exactly as before |
+| **Notification contract** | the Host half calls `ctx.console?.notify({ title, body, tone, source })` | the call is a no-op (`?.`), the plugin still works |
+| **Channel registry** | this package registers each delivery channel as a strategy (`id`, `plan`, `deliver`); the configuration selects which run | n/a (internal extension point) |
+
+The contract is **inlined at build time**, so an adopting package has no runtime dependency on `console`: installing mail without the workbench still works. Adoption is a *runtime* decision (the Loader's row order is the user's profile, not ours), so the contract follows the service with `ctx.inject`: the workbench may mount after the plugin, and disabling it hands the sidebar row back.
+
+`rules/design-patterns.md` states this as a repository constraint — contract, implementations, registry, configuration as four separate layers, with the checks that make it verifiable.
 
 ## Every package is a dual-face one
 
@@ -49,6 +66,7 @@ Every package declares `dsh.bundle` (its patch file is the `cordis.patch.yml` be
 
 ```sh
 dsh plugin --profile web add @free-lzj/dsh-agent-import
+dsh plugin --profile web add @free-lzj/dsh-console
 dsh plugin --profile web add @free-lzj/dsh-mail
 ```
 
@@ -102,16 +120,19 @@ A pnpm monorepo: one directory under `packages/*` is one package.
 | Directory | Package |
 |---|---|
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import` (MCP servers + skill import) |
-| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (sidebar mail) |
+| [`packages/console`](packages/console) | `@free-lzj/dsh-console` (workbench home + notification hub) |
+| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (mail panel) |
 
 ```sh
 pnpm install
 pnpm run typecheck   # every package, both halves
 pnpm run build       # tsc for types, tsdown for lib/index.js (Node half) and lib/client.js (browser half)
-pnpm run test        # vitest: 31 spec files / 515 tests
+pnpm run test        # vitest: 37 spec files / 608 tests
 ```
 
-Build before testing: the artifacts have contract specs of their own (registration id, the `dsh.client` declaration, `exports["./client"]`, and that nothing in the browser entry takes a value from the Host half), and one of them reports as skipped without `lib/`.
+Build before testing: the artifacts have contract specs of their own (registration id, the `dsh.client` declaration, `exports["./client"]`, that nothing in the browser entry takes a value from the Host half, and that `console`'s contract artifact stays an inlinable plain module), and one of them reports as skipped without `lib/`.
+
+**Build order matters between packages**: `console`'s contract artifact is generated by its build, and `mail` inlines it. `pnpm run build` runs packages in dependency order, so a full build is right; a single-package build of mail after changing console's contract needs console built first.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on `windows-latest`: the adapter specs assert Windows drive-letter path handling (`C:`, `D:` fixtures for Codex and Claude Code homes), which Linux reads as relative paths.
 
@@ -122,7 +143,7 @@ The real-composition end-to-end test (boot a shipped profile, assert the importe
 ### Releasing
 
 ```sh
-cd packages/agent-import   # or packages/mail
+cd packages/agent-import   # or packages/console, packages/mail
 npm publish               # prepublishOnly builds first; publishConfig carries access: public
 ```
 
