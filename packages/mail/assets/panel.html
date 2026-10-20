@@ -114,7 +114,10 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     #dsh-mail .m-folder-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #dsh-mail .m-count{color:var(--mail-fg-muted);font-size:12px}
     #dsh-mail .m-list-pane{width:340px;flex:0 0 auto;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--mail-line)}
+    /* 邮箱里几乎总有比列表窗口更老的邮件；这条尾巴只留给「真的到底了」。 */
     #dsh-mail .m-list{flex:1;min-height:0;overflow:auto}
+    #dsh-mail .m-bottom{display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px 12px 20px;color:var(--mail-fg-muted);font-size:12px;line-height:18px;text-align:center}
+    #dsh-mail .m-bottom img{width:88px;height:auto;display:block}
     #dsh-mail .m-row{position:relative;display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px;border-radius:0;border-bottom:1px solid var(--mail-line)}
     #dsh-mail .m-row[aria-current=true]{background:var(--mail-selected)}
     #dsh-mail .m-unread-dot{width:8px;height:8px;flex:0 0 auto;margin-top:7px;border-radius:50%;background:transparent}
@@ -194,7 +197,9 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     <nav class="m-folders" aria-label="文件夹"></nav>
 
     <section class="m-list-pane">
-      <div class="m-list" role="list" aria-label="邮件列表"></div>
+      <div class="m-list" role="list" aria-label="邮件列表">
+        <div class="m-bottom" role="presentation" aria-live="polite" hidden></div>
+      </div>
       <div class="m-empty" hidden></div>
     </section>
 
@@ -310,6 +315,10 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   const POLL_MS = 2000;
   // 被阻止的远程图片换成 1×1 透明 GIF：默认渲染里连原地址都不出现。
   const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  // 触底的那条小鲸鱼（固定 6 色调色板、透明底，约 1.4 KB）。不自动量化：像素图
+  // 一量化，粉色小脸就没了。内联而不是挂路由：面板的 CSP 本来就放行 data: 图片，
+  // 也不该为一张装饰图多开一个 HTTP 面。
+  const WHALE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOwAAACsCAMAAABPVbBKAAADAFBMVEX///9VavT3nbUYHCjW3OiWoL4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAewrD7AAAAAXRSTlMAQObYZgAAAj9JREFUeNrt3UmSwjAMQFEL3//O3QuKTlG48SRryNeSEOKHFQ/EJKU4D/mNcpcACzYJ9jZgsGAdFbYVvfuCBQtWD9Abo8cBCxbseeBIwVf2XRqUgAUbGCtKsXrsmf3Bgs2OFcXYPYlYPiZYsIGxcihONo4mNQoWbDLst4KABQvWTx/bUxiwYMH+//liHFpgV7UKFmyS87VVMLBgwfrG7ga7bInBgk10vu4Eu69VsGATYVfAZlfrwIK9E7bWpQvOZqvX5qyftWATYG3S+PiX8pS2wDsWo7jB1j9sBZsJ++p2tLFaC7Jm+9cZbxjse+rOpDJYp1hZzWN17BZ0AzbqDYGtbWwFC/YgdgU9in1cAixYP9ihn2jcYIfR3xqht82PDxEG+63Ffd8ONhBWwqdxF7h30HB5W1hs7wjp+j6wQbDiJo1VwaOT1QZ4610KtLCjM5pWKoN1mMaSLo1PXTADC/ZuWK2BxSkwWLBg44C3FgYsWLBj2PEJQg2LnZn6gc2YxtuxBrV7K2wFC3YSe6KR2nmlQFag0bAVbDCs9GdxVSuIt742E7aCzYiVE1hvtfvR/NygXhADbG29DjbyeWuKHb2R665VcNfYOsgBC/YMVjSxOx8ApvEnxlKcPu0MLFhD7ApY8+aRpTh7SiFYsIGwFmCwYMHuWfSx2riFGFiABRsAe3KxVogZEFiwAbAnF0enrl2wYBP1uUcXVoMFeyOsxR8JTZBgwSbCaqKL1wALNgFW/WmEYMGCdYcuUQMsWFvsDzl8WgnZg9XTAAAAAElFTkSuQmCC';
   const SPECIAL = {
     '\\Inbox': '收件箱', '\\Sent': '已发送', '\\Drafts': '草稿', '\\Trash': '已删除',
     '\\Junk': '垃圾邮件', '\\Archive': '归档', '\\All': '全部邮件', '\\Flagged': '已加星标',
@@ -320,7 +329,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   for (const [name, selector] of Object.entries({
     statusDot: '.m-status-dot', accountSelect: '.m-account-select', search: '.m-search',
     unread: '.m-unread', refresh: '.m-refresh', settings: '.m-settings', status: '.m-status',
-    folders: '.m-folders', list: '.m-list', empty: '.m-empty',
+    folders: '.m-folders', list: '.m-list', bottom: '.m-bottom', empty: '.m-empty',
     readEmpty: '.m-read-empty', readContent: '.m-read-content', subject: '.m-subject',
     date: '.m-date', from: '.m-from', addresses: '.m-addresses', readBar: '.m-read-bar',
     actSeen: '.m-act-seen', actFlag: '.m-act-flag', moveTarget: '.m-move-target',
@@ -579,6 +588,38 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
         '<span class="m-row-marks">' + (mail.flagged ? '<span aria-hidden="true">★</span><span class="m-sr-only">已加星标</span>' : '') +
         (mail.hasAttachments ? '<span aria-hidden="true">📎</span><span class="m-sr-only">含附件</span>' : '') + '</span></button>';
     }).join('');
+    // 尾巴属于列表内容，不是页脚：重写 innerHTML 会把它一并冲掉，所以每次钉回末尾。
+    // 放在列表外面它会常驻可见，那时还没滚到底就说「到底啦」，是句假话。
+    el.list.append(el.bottom);
+  }
+
+  /**
+   * 列表尾巴。
+   *
+   * 面板只拿最近 maxListMessages 封（默认 300）。顶满说明邮箱里还有更老的，
+   * 所以两种情况下那句收尾必须不同——同一个「到底啦」配上一句「没有更早的邮件」
+   * 就会在顶满时撒谎，而顶满恰恰是收件箱大的人的常态。搜索时整条尾巴都不画：
+   * 搜索结果不是列表的末尾，说「到底」同样不对。
+   */
+  function renderBottom(mails) {
+    const end = mails.length > 0 && view.query.trim().length === 0;
+    el.bottom.hidden = !end;
+    if (!end) {
+      delete el.bottom.dataset.label;
+      el.bottom.replaceChildren();
+      return;
+    }
+    const limit = view.data ? view.data.config.maxListMessages : 0;
+    const capped = Boolean(view.data && limit > 0 && view.data.messages.length >= limit);
+    const label = capped ? '到底啦 · 这里只放最近 ' + limit + ' 封邮件' : '到底啦，没有更早的邮件了';
+    // 每次轮询都重建这行会让读屏软件反复念同一句；文案没变就什么都不做。
+    if (el.bottom.dataset.label === label) return;
+    el.bottom.dataset.label = label;
+    const image = document.createElement('img');
+    image.src = WHALE;
+    image.alt = '';
+    image.draggable = false;
+    el.bottom.replaceChildren(image, text(label));
   }
 
   function renderEmpty() {
@@ -622,6 +663,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     renderTop();
     renderFolders();
     renderList();
+    renderBottom(visible());
     renderEmpty();
     syncDrawer();
   }
@@ -1172,13 +1214,20 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     view.folder = '';
     renderAll();
   });
-  el.search.addEventListener('input', () => { view.query = el.search.value; renderList(); renderEmpty(); renderTop(); });
+  el.search.addEventListener('input', () => {
+    view.query = el.search.value;
+    renderList();
+    renderBottom(visible());
+    renderEmpty();
+    renderTop();
+  });
   el.folders.addEventListener('click', (event) => {
     const node = event.target.closest('[data-folder]');
     if (!node) return;
     view.folder = node.dataset.folder;
     renderFolders();
     renderList();
+    renderBottom(visible());
     renderEmpty();
     renderTop();
   });

@@ -212,6 +212,39 @@ describe('the mail panel document', () => {
     expect(doc.querySelector('.m-empty')?.hasAttribute('hidden')).toBe(true)
   })
 
+  it('draws the end-of-list whale, and says which kind of end it is', async () => {
+    // The window holds more than the panel drew, so every row is on screen.
+    const roomy: MailState = { ...STATE, config: { ...STATE.config, maxListMessages: 3 } }
+    const roomyPanel = await renderPanel({ state: { body: roomy } })
+    const roomyBottom = roomyPanel.window.document.querySelector('.m-bottom')
+    expect(roomyBottom?.hasAttribute('hidden')).toBe(false)
+    expect(roomyBottom?.textContent).toContain('到底啦')
+    expect(roomyBottom?.textContent).toContain('没有更早')
+    expect(roomyBottom?.querySelector('img')?.getAttribute('src')).toContain('data:image/png;base64,')
+
+    // A snapshot that fills the window means older mail exists, so the tail says
+    // that instead of claiming there is none.
+    const capped: MailState = { ...STATE, config: { ...STATE.config, maxListMessages: 2 } }
+    const cappedPanel = await renderPanel({ state: { body: capped } })
+    const cappedBottom = cappedPanel.window.document.querySelector('.m-bottom')
+    expect(cappedBottom?.hasAttribute('hidden')).toBe(false)
+    expect(cappedBottom?.textContent).toContain('最近 2 封')
+    expect(cappedBottom?.textContent).not.toContain('没有更早')
+
+    // A query filters the list, so its last row is not the end of the mailbox.
+    const doc = cappedPanel.window.document
+    const search = doc.querySelector<HTMLInputElement>('.m-search')
+    if (search) {
+      search.value = '张三'
+      search.dispatchEvent(new cappedPanel.window.Event('input', { bubbles: true }))
+    }
+    expect(doc.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+
+    // No rows at all is not an end either; the empty state speaks for that case.
+    const none = await renderPanel({ state: { body: EMPTY_STATE } })
+    expect(none.window.document.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+  })
+
   it('asks the server for a scan and shows progress while it runs', async () => {
     // The Host reports which stage its pass is in. The panel used to only re-read
     // the in-memory snapshot, which is why pressing this button looked dead.
