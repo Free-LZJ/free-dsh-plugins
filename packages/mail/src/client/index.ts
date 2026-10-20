@@ -1,29 +1,28 @@
 /**
- * The mail panel's sidebar entry, browser half of this package.
+ * The mail panel's entry, browser half of this package.
  *
- * A first-class main panel: one icon in the sidebar's global panel list, and the
- * same id addressing this front end's component in the layout's `main` keyed
- * slot. The Host half — the Loader row that mounts this package — owns the IMAP
- * connections and serves both the panel document and the inbox state it reads.
- *
- * `order: 40` places the entry after the shipped panels (Plugins at 0,
- * Automation tasks at 10) and after the Context Insights entry a third-party
- * context plugin registers at 20.
+ * The panel now goes through the workbench contract
+ * (`@free-lzj/dsh-console/contract`): when a workbench is loaded, mail lists
+ * there and no longer takes a sidebar row of its own; when none is, it keeps the
+ * classic credentials it always had. Both registration shapes are the contract's
+ * job, so this file only declares what mail *is*.
  *
  * @module @free-lzj/dsh-mail/client
  */
 
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-// Type-only: the layout's `main` keyed-slot declaration this page occupies.
+// Type-only: the layout's `main` keyed-slot declaration the panel occupies.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: the slot service (`ctx.slots`) and its registration contracts.
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the renderer's Context merge, which is what publishes `ctx.slots`.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-// Type-only: the sidebar's `sidebar.panellist` declaration this icon occupies.
+// Type-only: the sidebar's `sidebar.panellist` declaration the row occupies.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { createElement } from 'react'
+import { useConsolePanel, type ConsolePanelDescriptor } from '@free-lzj/dsh-console/contract'
 import { MailIcon } from './MailIcon.tsx'
 import { MailPanel } from './MailPanel.tsx'
 import { en, zh, type MailLocaleKey } from './locales.ts'
@@ -48,16 +47,28 @@ export const PANEL_ID = 'mail'
 export const inject = ['slots', 'locale']
 
 /**
- * Register the sidebar entry and the panel it opens.
+ * Register the mail panel, with the workbench when it is there and on its own
+ * sidebar row when it is not.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'mail: dictionaries')
-  ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
-    name: 'main', key: PANEL_ID, locale: NS,
-  }, MailPanel)), 'mail: panel')
-  ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-    name: 'sidebar.panellist', id: PANEL_ID, order: 40, locale: NS, label: () => t('panel'),
-  }, MailIcon)), 'mail: sidebar entry')
+  useConsolePanel(ctx, {
+    id: PANEL_ID,
+    title: () => t('panel'),
+    description: () => t('description'),
+    keywords: () => [t('panel'), 'mail', 'email', 'imap'],
+    order: 20,
+    // The panel's props are typed against this package's own namespace, which
+    // the workbench cannot name; the layout hands every `main` occupant the same
+    // two seats it always did.
+    render: MailPanel as unknown as ConsolePanelDescriptor['render'],
+    icon: createElement(MailIcon, { size: 16 }),
+  }, {
+    locale: NS,
+    order: 40,
+    label: () => t('panel'),
+    Icon: MailIcon,
+  })
 }

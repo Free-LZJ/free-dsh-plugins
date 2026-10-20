@@ -1,7 +1,7 @@
 {
   "name": "@free-lzj/dsh-mail",
-  "version": "0.1.1",
-  "description": "Mail for DSH: a sidebar panel over IMAP (QQ / Gmail) that reads, searches and triages your inbox, and hands a new message to an agent session when you ask it to",
+  "version": "0.2.0",
+  "description": "Mail for DSH: an inbox panel over IMAP (QQ / Gmail) that reads, searches and triages your inbox, and hands a new message to an agent session when you ask it to",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Free-LZJ/free-dsh-plugins.git",
@@ -103,6 +103,7 @@
     "@deepseek-ai/dsh-client-ui-sidebar": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.7-rc.2",
     "@deepseek-ai/dsh-host-webserver": "0.1.7-rc.2",
+    "@free-lzj/dsh-console": "link:../console",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",

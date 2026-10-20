@@ -1,5 +1,6 @@
 /**
- * Decorative occupant for the mail sidebar entry.
+ * Decorative occupant for the mail sidebar entry, and the glyph on mail's card
+ * in the workbench's home list.
  *
  * Hand-drawn rather than imported, deliberately: the shell's icon set
  * (`@deepseek-ai/dsh-client-ui-primitives`) ships no mail, envelope, inbox or
@@ -9,20 +10,19 @@
  * SVG cost less than that confusion, and adding an icon dependency for one
  * glyph costs more than both.
  *
- * The sidebar owns the accessible label, so the glyph stays `aria-hidden`.
+ * The sidebar owns the accessible label, so the glyph stays `aria-hidden`. The
+ * props are narrowed to the one fact the drawing reads, so the workbench can
+ * render the same glyph on a card without the sidebar's whole standard seat.
  *
  * @module @free-lzj/dsh-mail/client/MailIcon
  */
 
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-
 /**
- * Render an envelope at the size the sidebar asks for.
- * @param props - the sidebar's icon share: the requested edge and whether the panel is selected.
+ * Render an envelope at the size the host asks for.
+ * @param props - the requested edge in pixels.
  * @returns decorative envelope icon.
  */
-export function MailIcon({ size }: PropsRuntime<'sidebar.panellist'>) {
+export function MailIcon({ size }: { readonly size: number }) {
   return (
     <svg
       width={size}
