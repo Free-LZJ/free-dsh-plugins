@@ -16,7 +16,7 @@ import {
   type RouteHost,
 } from '../src/routes.ts'
 import {
-  ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
+  ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
 } from '../src/paths.ts'
 import type { MailState, RouteResult } from '../src/types.ts'
 
@@ -120,7 +120,12 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
       accounts: [],
       mailboxes: [],
       messages: [],
-      config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [], triggerAvailability: { session: false, notify: false }, presets: { agents: [], permissions: [] } },
+      config: {
+        fallbackScanSeconds: 300, maxListMessages: 100, maxWindowMessages: 2000, accounts: [],
+        triggerAvailability: { session: false, notify: false }, workbenchAvailable: true,
+        presets: { agents: [], permissions: [] },
+        preferences: { loadRemoteImages: true, trustedSenders: [] },
+      },
     }),
     detail: async () => undefined,
     attachment: async () => undefined,
@@ -128,6 +133,7 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
     action: async () => ok,
     config: async () => ok,
     refresh: async () => ok,
+    more: async () => ok,
     ...overrides,
   }
 }
@@ -190,10 +196,50 @@ describe('reading a body', () => {
 describe('the registered routes', () => {
   it('registers exactly the paths the panel uses, all as exact routes', () => {
     const { routes } = mounted()
-    for (const path of [PANEL_PATH, STATE_PATH, MESSAGE_PATH, ATTACHMENT_PATH, ACTION_PATH, CONFIG_PATH, REFRESH_PATH]) {
+    for (const path of [PANEL_PATH, STATE_PATH, MESSAGE_PATH, ATTACHMENT_PATH, ACTION_PATH, CONFIG_PATH, REFRESH_PATH, MORE_PATH]) {
       expect(routes.has(path)).toBe(true)
     }
-    expect(routes.size).toBe(7)
+    expect(routes.size).toBe(8)
+  })
+
+  it('runs an older page through the same mutation guards as a refresh', async () => {
+    const run = vi.fn(async () => ({ ok: true, added: 30, exhausted: false }) as RouteResult)
+    const { call } = mounted(host({ more: run }))
+
+    const accepted = new RecordedResponse()
+    await call(
+      MORE_PATH,
+      request({ url: MORE_PATH, method: 'POST', headers: asJson, body: JSON.stringify({ folder: 'Archive' }) }),
+      accepted as unknown as ServerResponse,
+    )
+    expect(accepted.status).toBe(200)
+    // The folder the panel named is the folder the Host pages through.
+    expect(run).toHaveBeenCalledWith({ folder: 'Archive' })
+    expect(JSON.parse(accepted.text)).toMatchObject({ ok: true, added: 30, exhausted: false })
+
+    // Reading history is a mutation like any other: another origin must not reach it.
+    const refused = new RecordedResponse()
+    await call(
+      MORE_PATH,
+      request({ url: MORE_PATH, method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+      refused as unknown as ServerResponse,
+    )
+    expect(refused.status).toBe(403)
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('mirrors a page the Host could not open', async () => {
+    const { call } = mounted(host({
+      more: async () => ({ ok: false, code: 'folder_unavailable', message: '打不开文件夹「X」' }),
+    }))
+    const response = new RecordedResponse()
+    await call(
+      MORE_PATH,
+      request({ url: MORE_PATH, method: 'POST', headers: asJson, body: '{}' }),
+      response as unknown as ServerResponse,
+    )
+    expect(response.status).toBe(400)
+    expect(JSON.parse(response.text)).toMatchObject({ ok: false, code: 'folder_unavailable' })
   })
 
   it('runs a refresh through the same mutation guards as an action', async () => {

@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { JSDOM, VirtualConsole, type DOMWindow } from 'jsdom'
 import { describe, expect, it } from 'vitest'
-import type { MailConfigView, MailDetail, MailState, MailSummary } from '../src/types.ts'
+import type { MailConfigView, MailDetail, MailPreferences, MailState, MailSummary } from '../src/types.ts'
 
 /**
  * The shipped document, read as a consumer receives it.
@@ -35,6 +35,7 @@ const MESSAGE: MailSummary = {
   flagged: false,
   hasAttachments: true,
   snippet: '下周三的评审改到周四，请提前看附件',
+  headers: {},
 }
 
 const OTHER_MESSAGE: MailSummary = {
@@ -49,6 +50,7 @@ const OTHER_MESSAGE: MailSummary = {
   flagged: true,
   hasAttachments: false,
   snippet: '本月账单已出',
+  headers: {},
 }
 
 const ACCOUNT: MailConfigView['accounts'][number] = {
@@ -69,7 +71,12 @@ const EMPTY_STATE: MailState = {
   accounts: [],
   mailboxes: [],
   messages: [],
-  config: { fallbackScanSeconds: 300, maxListMessages: 100, accounts: [], triggerAvailability: { session: true, notify: true }, presets: { agents: [], permissions: [] } },
+  config: {
+    fallbackScanSeconds: 300, maxListMessages: 100, maxWindowMessages: 2000, accounts: [],
+    triggerAvailability: { session: true, notify: true }, workbenchAvailable: true,
+    presets: { agents: [], permissions: [] },
+    preferences: { loadRemoteImages: true, trustedSenders: [] },
+  },
 }
 
 /** The account row `/state` reports for the account `ACCOUNT` configures. */
@@ -95,8 +102,9 @@ const STATE: MailState = {
   config: {
     fallbackScanSeconds: 300,
     maxListMessages: 100,
+    maxWindowMessages: 2000,
     accounts: [ACCOUNT],
-    triggerAvailability: { session: true, notify: true },
+    triggerAvailability: { session: true, notify: true }, workbenchAvailable: true,
     // What the drawer's two dropdowns show: the shipped presets name themselves
     // through the host, and a permission preset carries its label too.
     presets: {
@@ -110,6 +118,7 @@ const STATE: MailState = {
         { value: 'danger-full-access', label: '完全访问' },
       ],
     },
+    preferences: { loadRemoteImages: true, trustedSenders: [] },
   },
 }
 
@@ -125,6 +134,11 @@ const DETAIL: MailDetail = {
 }
 
 /* ──────────────────────────────── harness ─────────────────────────────── */
+
+/** The same mailbox, with a different answer to "may remote images load". */
+function stateWithPreferences(preferences: MailPreferences): MailState {
+  return { ...STATE, config: { ...STATE.config, preferences } }
+}
 
 /** One canned answer: `status` defaults to 200. */
 interface Reply {
@@ -212,37 +226,60 @@ describe('the mail panel document', () => {
     expect(doc.querySelector('.m-empty')?.hasAttribute('hidden')).toBe(true)
   })
 
-  it('draws the end-of-list whale, and says which kind of end it is', async () => {
-    // The window holds more than the panel drew, so every row is on screen.
-    const roomy: MailState = { ...STATE, config: { ...STATE.config, maxListMessages: 3 } }
-    const roomyPanel = await renderPanel({ state: { body: roomy } })
-    const roomyBottom = roomyPanel.window.document.querySelector('.m-bottom')
-    expect(roomyBottom?.hasAttribute('hidden')).toBe(false)
-    expect(roomyBottom?.textContent).toContain('到底啦')
-    expect(roomyBottom?.textContent).toContain('没有更早')
-    expect(roomyBottom?.querySelector('img')?.getAttribute('src')).toContain('data:image/png;base64,')
+  it('offers the older page while the folder has one, and ends with the whale', async () => {
+    // The server reports 9 messages in the inbox while the window holds 2, so
+    // there is history below the last row.
+    const panel = await renderPanel({ state: { body: STATE } })
+    const doc = panel.window.document
+    const tail = doc.querySelector('.m-bottom')
+    expect(tail?.hasAttribute('hidden')).toBe(false)
+    expect(tail?.textContent).toContain('还有更早的邮件')
+    expect(tail?.querySelector('img')?.getAttribute('src')).toContain('data:image/png;base64,')
 
-    // A snapshot that fills the window means older mail exists, so the tail says
-    // that instead of claiming there is none.
-    const capped: MailState = { ...STATE, config: { ...STATE.config, maxListMessages: 2 } }
-    const cappedPanel = await renderPanel({ state: { body: capped } })
-    const cappedBottom = cappedPanel.window.document.querySelector('.m-bottom')
-    expect(cappedBottom?.hasAttribute('hidden')).toBe(false)
-    expect(cappedBottom?.textContent).toContain('最近 2 封')
-    expect(cappedBottom?.textContent).not.toContain('没有更早')
+    // No folder in the body means the combined view, which the Host reads as the
+    // folder it keeps current.
+    tail?.querySelector<HTMLButtonElement>('.m-more')?.click()
+    await settle(panel.window, 80)
+    const asked = panel.writes.find((one) => one.url === '/dsh-mail/more')
+    expect(asked?.body).toEqual({})
+
+    // A window that has caught up with the server ends with the whale instead,
+    // and offers nothing to press.
+    const caughtUp: MailState = {
+      ...STATE,
+      mailboxes: [{ accountId: 'acc-1', path: 'INBOX', specialUse: '\\Inbox', unseen: 1, total: 2 }],
+    }
+    const done = await renderPanel({ state: { body: caughtUp } })
+    const doneTail = done.window.document.querySelector('.m-bottom')
+    expect(doneTail?.textContent).toContain('到底啦，没有更早的邮件了')
+    expect(doneTail?.querySelector('.m-more')).toBeNull()
 
     // A query filters the list, so its last row is not the end of the mailbox.
-    const doc = cappedPanel.window.document
-    const search = doc.querySelector<HTMLInputElement>('.m-search')
+    const search = done.window.document.querySelector<HTMLInputElement>('.m-search')
     if (search) {
       search.value = '张三'
-      search.dispatchEvent(new cappedPanel.window.Event('input', { bubbles: true }))
+      search.dispatchEvent(new done.window.Event('input', { bubbles: true }))
     }
-    expect(doc.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+    expect(done.window.document.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+  })
 
-    // No rows at all is not an end either; the empty state speaks for that case.
-    const none = await renderPanel({ state: { body: EMPTY_STATE } })
-    expect(none.window.document.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+  it('lets a folder nothing has loaded yet pull its first page', async () => {
+    const panel = await renderPanel({ state: { body: STATE } })
+    const doc = panel.window.document
+    // The tree lists "Sent Messages" with 3 messages; the window holds none of
+    // them, because a scan only ever keeps the watched folder current.
+    doc.querySelector<HTMLElement>('.m-folders [data-folder="Sent Messages"]')?.click()
+    await settle(panel.window, 40)
+
+    expect(doc.querySelectorAll('.m-row').length).toBe(0)
+    const empty = doc.querySelector('.m-empty')
+    expect(empty?.hasAttribute('hidden')).toBe(false)
+    expect(empty?.textContent).toContain('还没有加载')
+
+    empty?.querySelector<HTMLButtonElement>('.m-more')?.click()
+    await settle(panel.window, 80)
+    const asked = panel.writes.find((one) => one.url === '/dsh-mail/more')
+    expect(asked?.body).toEqual({ folder: 'Sent Messages' })
   })
 
   it('asks the server for a scan and shows progress while it runs', async () => {
@@ -334,7 +371,7 @@ describe('the mail panel document', () => {
     expect(doc.querySelector('.m-empty')?.textContent).not.toContain('授权码')
   })
 
-  it('frames message HTML in a sandbox with no remote image source by default', async () => {
+  it('loads remote images by default, in a sandbox that still forbids scripts', async () => {
     const { window } = await renderPanel({ state: { body: STATE }, message: { body: DETAIL } })
     const doc = window.document
     doc.querySelector('.m-row')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
@@ -347,23 +384,111 @@ describe('the mail panel document', () => {
     const srcdoc = frame?.getAttribute('srcdoc') ?? ''
     expect(srcdoc).toContain('正文第一段')
     expect(srcdoc).toContain('<base target="_blank">')
-    expect(srcdoc).toMatch(/img-src data:;/)
-    // The tracking pixel is replaced outright, so its address never reaches the frame.
-    expect(srcdoc).toContain('data:image/gif;base64')
-    expect(srcdoc).not.toContain('https://tracker.example')
+    // Default: the mail is yours and the pictures are part of it.
+    expect(srcdoc).toMatch(/img-src data: http: https:/)
+    expect(srcdoc).toContain('https://tracker.example')
+    // Nothing left to warn about when the images are loading anyway.
+    expect(doc.querySelector('.m-images-note')?.hasAttribute('hidden')).toBe(true)
     expect(doc.querySelector('.m-from')?.textContent).toContain('张三')
 
     const attachment = doc.querySelector('.m-attachments a')
     expect(attachment?.getAttribute('href')).toContain('/dsh-mail/attachment?')
     expect(attachment?.getAttribute('href')).toContain('part=2')
     expect(attachment?.getAttribute('href')).toContain('uid=11')
+  })
 
-    // Asking for images re-renders the same script-less sandbox, now allowing https.
-    doc.querySelector('.m-show-images')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-    const allowed = doc.querySelector('.m-html-frame')
-    expect(allowed?.getAttribute('sandbox')).toBe('')
-    expect(allowed?.getAttribute('srcdoc')).toContain('https://tracker.example')
-    expect(allowed?.getAttribute('srcdoc')).toMatch(/img-src data: https:/)
+  it('blocks them when the setting is off, and the banner is the way back in', async () => {
+    const off = stateWithPreferences({ loadRemoteImages: false, trustedSenders: [] })
+    const { window } = await renderPanel({ state: { body: off }, message: { body: DETAIL } })
+    const doc = window.document
+    doc.querySelector('.m-row')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    const blocked = doc.querySelector('.m-html-frame')?.getAttribute('srcdoc') ?? ''
+    expect(blocked).toMatch(/img-src data:;/)
+    // Replaced outright, so the address never reaches the frame.
+    expect(blocked).toContain('data:image/gif;base64')
+    expect(blocked).not.toContain('https://tracker.example')
+    const note = doc.querySelector('.m-images-note')
+    expect(note?.hasAttribute('hidden')).toBe(false)
+    expect(note?.textContent).toContain('远程图片')
+
+    note?.querySelector<HTMLButtonElement>('.m-images-load-all')?.click()
+    expect(doc.querySelector('.m-html-frame')?.getAttribute('srcdoc')).toContain('https://tracker.example')
+    expect(doc.querySelector('.m-images-note')?.hasAttribute('hidden')).toBe(true)
+  })
+
+  it('lets an http: picture through too, which the https-only rule did not', async () => {
+    // The banner's button used to allow `https:` only, so a mail whose pictures
+    // are plain `http:` showed nothing after pressing it: the gate that offered
+    // the button matched both schemes and the code behind it honoured one.
+    const detail: MailDetail = { ...DETAIL, html: '<p>正文</p><img src="http://cdn.example/a.png">' }
+    const off = stateWithPreferences({ loadRemoteImages: false, trustedSenders: [] })
+    const { window } = await renderPanel({ state: { body: off }, message: { body: detail } })
+    const doc = window.document
+    doc.querySelector('.m-row')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+    expect(doc.querySelector('.m-html-frame')?.getAttribute('srcdoc')).not.toContain('http://cdn.example')
+
+    doc.querySelector<HTMLButtonElement>('.m-images-load-all')?.click()
+    expect(doc.querySelector('.m-html-frame')?.getAttribute('srcdoc')).toContain('http://cdn.example')
+  })
+
+  it('shows a whitelisted sender pictures without asking', async () => {
+    const trusted = stateWithPreferences({ loadRemoteImages: false, trustedSenders: ['zhang@qq.com'] })
+    const { window } = await renderPanel({ state: { body: trusted }, message: { body: DETAIL } })
+    const doc = window.document
+    doc.querySelector('.m-row')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    expect(doc.querySelector('.m-html-frame')?.getAttribute('srcdoc')).toContain('https://tracker.example')
+    expect(doc.querySelector('.m-images-note')?.hasAttribute('hidden')).toBe(true)
+  })
+
+  it('trusts the sender it saw when the reading pane offers to', async () => {
+    const off = stateWithPreferences({ loadRemoteImages: false, trustedSenders: [] })
+    const panel = await renderPanel({ state: { body: off }, message: { body: DETAIL } })
+    const doc = panel.window.document
+    doc.querySelector('.m-row')?.dispatchEvent(new panel.window.MouseEvent('click', { bubbles: true }))
+    await settle(panel.window)
+
+    doc.querySelector<HTMLButtonElement>('.m-images-trust')?.click()
+    await settle(panel.window, 60)
+    // The address comes from the parsed detail, lowercased, not from the list row.
+    expect(panel.writes.find((one) => one.url === '/dsh-mail/config')?.body)
+      .toEqual({ op: 'trustSender', address: 'zhang@qq.com', trusted: true })
+  })
+
+  it('edits the image switch and the whitelist from the drawer', async () => {
+    const off = stateWithPreferences({ loadRemoteImages: false, trustedSenders: ['old@example.com'] })
+    const panel = await renderPanel({ state: { body: off } })
+    const doc = panel.window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new panel.window.MouseEvent('click', { bubbles: true }))
+    await settle(panel.window)
+
+    const toggle = doc.querySelector<HTMLInputElement>('.m-images-load')
+    expect(toggle?.checked).toBe(false)
+    if (toggle) {
+      toggle.checked = true
+      toggle.dispatchEvent(new panel.window.Event('change', { bubbles: true }))
+    }
+    await settle(panel.window, 60)
+    expect(panel.writes.find((one) => one.url === '/dsh-mail/config')?.body)
+      .toEqual({ op: 'setPreferences', preferences: { loadRemoteImages: true } })
+
+    expect(doc.querySelector('.m-trust-list')?.textContent).toContain('old@example.com')
+    const input = doc.querySelector<HTMLInputElement>('.m-trust-input')
+    if (input) input.value = 'New@Example.com'
+    doc.querySelector<HTMLButtonElement>('.m-trust-add')?.click()
+    await settle(panel.window, 60)
+    // Normalized on the way out, so the panel's own list and the Host agree.
+    expect(panel.writes.filter((one) => one.url === '/dsh-mail/config').at(-1)?.body)
+      .toEqual({ op: 'trustSender', address: 'new@example.com', trusted: true })
+
+    doc.querySelector<HTMLButtonElement>('.m-trust-list .m-trust-remove')?.click()
+    await settle(panel.window, 60)
+    expect(panel.writes.filter((one) => one.url === '/dsh-mail/config').at(-1)?.body)
+      .toEqual({ op: 'trustSender', address: 'old@example.com', trusted: false })
   })
 
   it('keeps its own palette without throwing when there is no host document', async () => {
@@ -481,10 +606,47 @@ describe('the mail panel document', () => {
     expect(config?.body).toMatchObject({ op: 'setTrigger', trigger: { promptTemplate: '{subject}\n\n{body}' } })
   })
 
-  it('marks the trigger modes the Host half cannot offer', async () => {
-    const state: MailState = {
+  it('saves the workbench notification switch as its own setting, not as a mode', async () => {
+    const { window, writes } = await renderPanel({ state: { body: STATE } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    // The switch is its own card; the behaviour select keeps the three modes.
+    const modes = [...doc.querySelectorAll<HTMLOptionElement>('.m-trigger-mode option')].map((option) => option.value)
+    expect(modes).toEqual(['panel', 'session', 'notify'])
+    const toggle = doc.querySelector<HTMLInputElement>('.m-workbench-notify')
+    expect(toggle).toBeTruthy()
+    expect(toggle?.disabled).toBe(false)
+    if (toggle) toggle.checked = true
+
+    doc.querySelector<HTMLElement>('.m-workbench-save')?.click()
+    await settle(window, 80)
+    const config = writes.find((one) => one.url === '/dsh-mail/config')
+    expect(config?.body).toMatchObject({ op: 'setTrigger', trigger: { notifyWorkbench: true } })
+    // The mode the account already had is carried along untouched.
+    expect((config?.body as { trigger?: { mode?: string } } | undefined)?.trigger?.mode).toBe(STATE.config.accounts[0]?.trigger.mode)
+  })
+
+  it('greys the notification switch out when no workbench answers', async () => {
+    const state: MailState = { ...STATE, config: { ...STATE.config, workbenchAvailable: false } }
+    const { window } = await renderPanel({ state: { body: state } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    expect(doc.querySelector<HTMLInputElement>('.m-workbench-notify')?.disabled).toBe(true)
+    const note = doc.querySelector('.m-workbench-availability')
+    expect(note?.hasAttribute('hidden')).toBe(false)
+    expect(note?.textContent).toContain('未安装工作台')
+    // The modes themselves are unaffected: they are a different axis.
+    const modes = [...doc.querySelectorAll<HTMLOptionElement>('.m-trigger-mode option')]
+    expect(modes.every((option) => !option.disabled)).toBe(true)
+  })
+
+  it('marks the trigger modes the Host half cannot offer', async () => {    const state: MailState = {
       ...STATE,
-      config: { ...STATE.config, triggerAvailability: { session: false, notify: false } },
+      config: { ...STATE.config, triggerAvailability: { session: false, notify: false }, workbenchAvailable: true },
     }
     const { window } = await renderPanel({ state: { body: state } })
     const doc = window.document
@@ -498,8 +660,72 @@ describe('the mail panel document', () => {
     const note = doc.querySelector('.m-trigger-availability')
     expect(note?.hasAttribute('hidden')).toBe(false)
     expect(note?.textContent).toContain('不可选')
+    expect(note?.textContent).toContain('新建会话')
+    expect(note?.textContent).toContain('投递提醒')
     // The drawer also offers the account form the Host's config route consumes.
     expect(doc.querySelector('.m-account-form')).toBeTruthy()
     expect(doc.querySelectorAll('.m-account-list [data-edit]').length).toBe(1)
+  })
+
+  it('offers the notify mode, its own parameter block and posts those fields back', async () => {
+    const state: MailState = {
+      ...STATE,
+      config: {
+        ...STATE.config,
+        accounts: [{
+          ...ACCOUNT,
+          trigger: { mode: 'notify', filters: {}, notify: { sessionId: 's-1' } },
+        }],
+      },
+    }
+    const { window, writes } = await renderPanel({ state: { body: state } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    // The behaviour select offers three modes, and the notify block is the visible one.
+    const modes = [...doc.querySelectorAll<HTMLOptionElement>('.m-trigger-mode option')].map((option) => option.value)
+    expect(modes).toEqual(['panel', 'session', 'notify'])
+    expect(doc.querySelector<HTMLElement>('.m-trigger-notify')?.hasAttribute('hidden')).toBe(false)
+    expect(doc.querySelector<HTMLElement>('.m-trigger-session')?.hasAttribute('hidden')).toBe(true)
+
+    // The saved target session is loaded back into the block.
+    const sessionId = doc.querySelector<HTMLInputElement>('.m-trigger-sessionid')
+    expect(sessionId?.value).toBe('s-1')
+    // The blocks are independent: the session fields are not fed from notify ones.
+    expect(doc.querySelector<HTMLInputElement>('.m-trigger-workspace')?.value).toBe('')
+
+    if (sessionId) sessionId.value = 's-2'
+    doc.querySelector<HTMLElement>('.m-trigger-save')?.click()
+    await settle(window, 80)
+
+    const config = writes.find((one) => one.url === '/dsh-mail/config')
+    expect(config?.body).toMatchObject({
+      op: 'setTrigger',
+      trigger: { mode: 'notify', notify: { sessionId: 's-2' } },
+    })
+  })
+
+  it('refuses to save a notify trigger with no target session', async () => {
+    const { window, writes } = await renderPanel({ state: { body: STATE } })
+    const doc = window.document
+    doc.querySelector('.m-settings')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await settle(window)
+
+    const mode = doc.querySelector<HTMLSelectElement>('.m-trigger-mode')
+    if (mode) {
+      mode.value = 'notify'
+      mode.dispatchEvent(new window.Event('change', { bubbles: true }))
+    }
+    await settle(window)
+    expect(doc.querySelector<HTMLElement>('.m-trigger-notify')?.hasAttribute('hidden')).toBe(false)
+
+    doc.querySelector<HTMLElement>('.m-trigger-save')?.click()
+    await settle(window, 40)
+    // Nothing was sent, and the reason is on screen rather than a silent rewrite.
+    expect(writes.some((one) => one.url === '/dsh-mail/config')).toBe(false)
+    const result = doc.querySelector('.m-trigger-result')
+    expect(result?.getAttribute('data-error')).toBe('true')
+    expect(result?.textContent).toContain('目标会话 id')
   })
 })

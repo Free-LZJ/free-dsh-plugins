@@ -25,22 +25,58 @@ import {
   accountIdFor, readPassword, removePassword, testAccount, writePassword,
   type CredentialsLike, type ProbeFn,
 } from './accounts.ts'
-import { DEFAULT_CONFIG, normalizeAccountInput, normalizeAction, normalizeDraft, normalizeTrigger } from './config.ts'
+import {
+  DEFAULT_CONFIG, normalizeAccountInput, normalizeAction, normalizeDraft,
+  normalizePreferences, normalizeTrigger, senderKey, withTrustedSender,
+} from './config.ts'
 import {
   createConnection, imapFactoryFor, probeAccount, WATCHED_FOLDER,
   type ImapFactory, type MailConnection, type MailFlagUpdate,
 } from './imap.ts'
 import { promptBody } from './rules.ts'
 import { createStore, messageKey, type MailStore } from './store.ts'
-import { createTriggerer, presetChoices, resolveTrigger, triggerAvailability, type TriggerHost } from './trigger.ts'
+import {
+  createTriggerer, presetChoices, resolveTrigger, triggerAvailability, workbenchAvailable,
+  type Triggerer, type TriggerHost,
+} from './trigger.ts'
 import { registerRoutes, type AttachmentPayload, type RouteHost } from './routes.ts'
 import type {
-  AccountStatus, DraftAccount, MailAccount, MailAction, MailDetail, MailState, MailSummary,
-  MailboxView, PresetChoice, RouteResult, ScanCursor,
+  AccountStatus, ConsoleNoticeLike, DraftAccount, MailAccount, MailAction, MailDetail, MailReceivedPayload,
+  MailService, MailState, MailSummary, MailboxView, NormalizedMessage, PresetChoice, RouteResult, ScanCursor,
+  TriggerConfig,
 } from './types.ts'
 
 export * from './paths.ts'
 export * from './types.ts'
+
+// Type-only: the two extension points other plugins meet — the `ctx.mail`
+// service a consumer reads, and the `mail/received` event a triage engine
+// listens on. Both are declared here rather than in `types.ts` because they
+// merge into cordis, and only the Host half has any business doing that.
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /**
+     * The mail I/O service, when this plugin is mounted.
+     *
+     * Optional on purpose: a deployment without the mail plugin simply has no
+     * mail, and a consumer must treat that as a normal state (see
+     * `rules/design-patterns.md` on optional dependencies) rather than as a
+     * missing dependency it can install its way out of.
+     */
+    mail?: MailService
+  }
+  interface Events {
+    /**
+     * A new message arrived on a configured account.
+     *
+     * Emitted instead of acted upon: which rules exist and what they do belongs
+     * to the triage engine (`@free-lzj/dsh-mailflow`), and mail only owns "a
+     * message arrived". The dedupe ledger is written **before** this is
+     * dispatched, so a listener that throws does not cause a replay.
+     */
+    'mail/received'(payload: MailReceivedPayload): void
+  }
+}
 
 /**
  * The only folder the scan loop watches; other folders are listed but not scanned.
@@ -51,8 +87,30 @@ export * from './types.ts'
  */
 export { WATCHED_FOLDER }
 
-/** Largest number of messages the snapshot keeps per account. */
-const SNAPSHOT_LIMIT = DEFAULT_CONFIG.maxListMessages
+/**
+ * Hard ceiling on one account's in-memory window, across every folder.
+ *
+ * `maxListMessages` is one *page*: what a scan fetches, and what `/state` first
+ * draws. It is deliberately not a ceiling, because the whole point of "load
+ * more" is to grow past it. This is the ceiling instead, and it is a memory and
+ * bandwidth bound rather than a correctness one: every revision change
+ * re-serialises the whole list to the panel, so 2000 rows is a few hundred KB
+ * per change — past that, polling stops being free.
+ */
+const MAX_SNAPSHOT_MESSAGES = 2000
+
+/**
+ * Identity of one snapshot row.
+ *
+ * A UID is only unique *inside* one mailbox (RFC 3501 §2.3.1.1), so keying by
+ * UID alone would let an INBOX row and a Sent row with the same number
+ * overwrite each other as soon as a second folder is loaded.
+ * @param message - the row to key.
+ * @returns a key unique across folders and accounts of one account's window.
+ */
+function snapshotKey(message: MailSummary): string {
+  return `${message.folder}\u0000${String(message.uid)}`
+}
 
 /**
  * Shortest gap between two panel-driven scans of one account.
@@ -144,6 +202,9 @@ export function apply(ctx: Context): void {
     titles: ctx.get('sessionTitle'),
     sessions: ctx.get('sessionController'),
     defaultModel: ctx.get('agentDefaultModel'),
+    // Read fresh for the same reason as the rest: the workbench is an optional
+    // plugin whose Loader row may come before or after this one.
+    console: ctx.get('console') as ConsoleNoticeLike | undefined,
     log: (message: string) => ctx.logger.info(message),
   }) as unknown as TriggerHost
 
@@ -182,15 +243,40 @@ export function apply(ctx: Context): void {
     touch()
   }
 
-  /** Fold freshly scanned messages into the snapshot, newest first. */
-  function mergeSnapshot(accountId: string, incoming: readonly MailSummary[]): void {
-    const byUid = new Map<number, MailSummary>()
-    for (const message of snapshots.get(accountId) ?? []) byUid.set(message.uid, message)
-    for (const message of incoming) byUid.set(message.uid, message)
+  /**
+   * Fold freshly scanned messages into the snapshot, newest first.
+   *
+   * Ordered by date rather than by UID: `/state` draws by date, and once more
+   * than one folder is in the window a UID ordering would trim whichever folder
+   * happens to use the lowest numbers. The trim is the ceiling, not the page
+   * size — see {@link MAX_SNAPSHOT_MESSAGES}.
+   * @param accountId - the account whose window grows.
+   * @param incoming - the rows the server just returned.
+   * @returns how many rows were not already held, so "load more" can tell the
+   * panel whether its page brought anything.
+   */
+  function mergeSnapshot(accountId: string, incoming: readonly MailSummary[]): number {
+    const byKey = new Map<string, MailSummary>()
+    for (const message of snapshots.get(accountId) ?? []) byKey.set(snapshotKey(message), message)
+    let added = 0
+    for (const message of incoming) {
+      const key = snapshotKey(message)
+      if (!byKey.has(key)) added += 1
+      byKey.set(key, message)
+    }
     snapshots.set(
       accountId,
-      [...byUid.values()].sort((left, right) => right.uid - left.uid).slice(0, SNAPSHOT_LIMIT),
+      [...byKey.values()]
+        .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
+        .slice(0, MAX_SNAPSHOT_MESSAGES),
     )
+    touch()
+    return added
+  }
+
+  /** Forget one folder's rows, leaving the account's other folders alone. */
+  function dropFolderRows(accountId: string, folder: string): void {
+    snapshots.set(accountId, (snapshots.get(accountId) ?? []).filter(message => message.folder !== folder))
     touch()
   }
 
@@ -200,13 +286,14 @@ export function apply(ctx: Context): void {
    * Only `seen` and `flagged` move: the rest of a row was already fetched, and
    * rebuilding it here would risk replacing a newer summary with an older one.
    * @param accountId - the account whose rows changed.
+   * @param folder - the mailbox those flags describe; a UID means nothing without it.
    * @param updates - what the server just said about those rows.
    */
-  function applyFlagUpdates(accountId: string, updates: readonly MailFlagUpdate[]): void {
+  function applyFlagUpdates(accountId: string, folder: string, updates: readonly MailFlagUpdate[]): void {
     if (updates.length === 0) return
     const byUid = new Map(updates.map(update => [update.uid, update]))
     snapshots.set(accountId, (snapshots.get(accountId) ?? []).map((message) => {
-      const update = byUid.get(message.uid)
+      const update = message.folder === folder ? byUid.get(message.uid) : undefined
       return update === undefined ? message : { ...message, seen: update.seen, flagged: update.flagged }
     }))
     touch()
@@ -219,13 +306,32 @@ export function apply(ctx: Context): void {
    * as "asked to refresh, nothing came back". Nothing else in IMAP tells us, so
    * without this the panel keeps a ghost row until the next restart.
    * @param accountId - the account whose rows changed.
+   * @param folder - the mailbox those UIDs belong to.
    * @param vanished - the UIDs the server did not answer for.
    */
-  function dropVanished(accountId: string, vanished: readonly number[]): void {
+  function dropVanished(accountId: string, folder: string, vanished: readonly number[]): void {
     if (vanished.length === 0) return
     const gone = new Set(vanished)
-    snapshots.set(accountId, (snapshots.get(accountId) ?? []).filter(message => !gone.has(message.uid)))
+    snapshots.set(
+      accountId,
+      (snapshots.get(accountId) ?? []).filter(message => message.folder !== folder || !gone.has(message.uid)),
+    )
     touch()
+  }
+
+  /**
+   * Remember what the panel is showing, so the next start draws it before any
+   * scan can possibly run.
+   *
+   * Written once per pass rather than once per changed row, and also after a
+   * backwards page — otherwise every restart would silently throw away the
+   * history the user explicitly asked for.
+   * @param accountId - the account whose window to persist.
+   */
+  async function persistSnapshot(accountId: string): Promise<void> {
+    const capturedAt = new Date().toISOString()
+    await store.saveMessages(accountId, { at: capturedAt, messages: snapshots.get(accountId) ?? [] })
+    cacheAt.set(accountId, capturedAt)
   }
 
   /**
@@ -292,8 +398,8 @@ export function apply(ctx: Context): void {
         // Push, not poll: the resident connection is selected on INBOX, so the
         // server volunteers these (RFC 3501 §5.2) and the panel's list is right
         // before the next poll can notice.
-        onFlagsChange: (updates) => applyFlagUpdates(account.id, updates),
-        onExpunge: (uids) => dropVanished(account.id, uids),
+        onFlagsChange: (updates) => applyFlagUpdates(account.id, WATCHED_FOLDER, updates),
+        onExpunge: (uids) => dropVanished(account.id, WATCHED_FOLDER, uids),
         onLog: (message) => ctx.logger.info(`mail: ${message}`),
       },
     )
@@ -394,53 +500,54 @@ export function apply(ctx: Context): void {
         maxMessages: DEFAULT_CONFIG.maxListMessages,
         // Re-read what is on screen: an incremental scan never revisits a UID it
         // already handed over, so a message read elsewhere would stay bold here.
-        refreshUids: (snapshots.get(accountId) ?? []).map(message => message.uid),
+        // Only this folder's rows: the pass runs against one selected mailbox, and
+        // a UID from another folder would name an unrelated message there.
+        refreshUids: (snapshots.get(accountId) ?? [])
+          .filter(message => message.folder === folder)
+          .map(message => message.uid),
       })
       stages.set(accountId, 'merging')
 
       // A rebuilt mailbox restarts its UIDs. Everything stored about it — cursor,
       // dedupe ledger, snapshot — describes messages that no longer exist, and a
-      // stale UID can end up addressing a different message entirely, so the whole
+      // stale UID can end up addressing a different message entirely, so that
       // folder is forgotten rather than adjusted. This pass was aimed at the old
       // generation's UIDs and is dropped whole with it; the next one sees no
-      // cursor and backfills from 1.
+      // cursor and backfills from 1. Only *this* folder is dropped: the account's
+      // other folders are a different mailbox with their own generation.
       if (cursor !== undefined && cursor.uidValidity !== outcome.uidValidity) {
         await store.forgetFolder(accountId, folder)
-        snapshots.delete(accountId)
+        dropFolderRows(accountId, folder)
         uidValidityOf.set(accountId, outcome.uidValidity)
         return
       }
       uidValidityOf.set(accountId, outcome.uidValidity)
       mergeSnapshot(accountId, outcome.messages.map(message => message.summary))
-      applyFlagUpdates(accountId, outcome.refreshed)
-      dropVanished(accountId, outcome.vanished)
+      applyFlagUpdates(accountId, folder, outcome.refreshed)
+      dropVanished(accountId, folder, outcome.vanished)
       updateMailboxCounters(accountId, folder, outcome.counters)
       if (outcome.searchUnreliable) {
         ctx.logger.warn(`mail: ${accountId} answered SEARCH with nothing; fell back to a client-side filter`)
       }
 
       if (!backfill) {
-        const fire = createTriggerer(triggerHost())
+        // Whichever engine owns triage: with `mailflow` mounted the message is
+        // emitted and this plugin is done with it; without it the account's own
+        // trigger config runs, exactly as it did before mailflow existed.
+        // Probed per pass, not once, because a Loader row may be applied later.
+        const fire = ctx.get('mailflow') === undefined ? createTriggerer(triggerHost()) : undefined
         for (const message of outcome.messages) {
-          const key = messageKey(folder, outcome.uidValidity, message.summary.uid)
-          if (store.isTriggered(accountId, key)) continue
-          await store.markTriggered(accountId, key)
-          // One read per message, whoever ends up needing it: a rule that tests a
-          // keyword reads it while deciding, and the trigger reads it again to
-          // compose the prompt.
-          let body: string | undefined
-          const read = async (): Promise<string> => {
-            body ??= await readBody(connection, folder, message.summary.uid, message.preview)
-            return body
-          }
-          const resolved = await resolveTrigger(account.trigger, message.summary, read)
-          // No rule claimed it, or the one that did asks for no more than a row
-          // in the list — either way nothing is handed over and no body is read.
-          if (resolved.mode === 'panel') continue
-          const result = await fire.fire(accountId, resolved, message.summary, await read())
-          if (!result.ok) {
-            ctx.logger.warn(`mail: handing ${message.summary.subject || '(no subject)'} to the agent failed: ${result.message}`)
-          }
+          await handOver(message, {
+            accountId,
+            accountName: account.name,
+            trigger: account.trigger,
+            uidValidity: outcome.uidValidity,
+            ...(fire === undefined ? {} : { fire }),
+            ledger: store,
+            readBody: (uid, fallback) => readBody(connection, folder, uid, fallback),
+            emit: (payload) => ctx.emit('mail/received', payload),
+            log: (line) => ctx.logger.warn(line),
+          })
         }
       }
 
@@ -452,9 +559,7 @@ export function apply(ctx: Context): void {
 
       // Remember what the panel is showing — once per pass, not once per changed
       // row. The next start draws this before any scan can possibly run.
-      const capturedAt = new Date().toISOString()
-      await store.saveMessages(accountId, { at: capturedAt, messages: snapshots.get(accountId) ?? [] })
-      cacheAt.set(accountId, capturedAt)
+      await persistSnapshot(accountId)
       // A pass that got this far has nothing to complain about any more.
       syncErrors.delete(accountId)
       stages.set(accountId, 'done')
@@ -467,6 +572,66 @@ export function apply(ctx: Context): void {
     })
     scanning.set(accountId, pass)
     return pass
+  }
+
+  /**
+   * Fetch one page of older mail for one folder.
+   *
+   * The panel draws a window, and this is the only way it ever grows *backwards*:
+   * a scan walks forwards from a cursor, so it can never reach mail older than
+   * the newest page the snapshot already holds. A page starts below the oldest
+   * row held for that folder — and "below nothing" is simply the newest page,
+   * which is why opening a folder the plugin has never scanned is the same call.
+   *
+   * Deliberately touches neither the trigger ledger nor the cursor: those record
+   * what has been handed to an agent, and re-reading history must not re-fire it.
+   * @param accountId - the account to page through.
+   * @param folder - the mailbox to page through.
+   * @param page - how many rows one page holds.
+   * @returns the route result, carrying how many rows the page actually added.
+   */
+  async function loadMore(
+    accountId: string,
+    folder: string,
+    page = DEFAULT_CONFIG.maxListMessages,
+  ): Promise<RouteResult> {
+    const connection = connections.get(accountId)
+    if (connection === undefined) {
+      return { ok: false, code: 'account_offline', message: '这个账号当前没有连接' }
+    }
+    const held = (snapshots.get(accountId) ?? []).filter(message => message.folder === folder)
+    const knownUidValidity = held[0]?.uidValidity ?? 0
+    const oldest = held.length === 0 ? undefined : Math.min(...held.map(message => message.uid))
+    const outcome = await connection.scan({
+      folder,
+      fromUid: 1,
+      ...(oldest === undefined ? {} : { beforeUid: oldest }),
+      knownUidValidity,
+      maxMessages: page,
+    })
+    // A rebuilt mailbox means every UID held for this folder now names a
+    // different message, so the folder starts over from its newest page.
+    if (held.length > 0 && knownUidValidity !== outcome.uidValidity) {
+      await store.forgetFolder(accountId, folder)
+      dropFolderRows(accountId, folder)
+      const fresh = await connection.scan({
+        folder,
+        fromUid: 1,
+        knownUidValidity: outcome.uidValidity,
+        maxMessages: page,
+      })
+      const restarted = fresh.messages.map(message => message.summary)
+      const added = mergeSnapshot(accountId, restarted)
+      await persistSnapshot(accountId)
+      return { ok: true, added, exhausted: restarted.length < page }
+    }
+    const rows = outcome.messages.map(message => message.summary)
+    const added = mergeSnapshot(accountId, rows)
+    updateMailboxCounters(accountId, folder, outcome.counters)
+    await persistSnapshot(accountId)
+    // A page shorter than the one asked for means the server had nothing older,
+    // which is the panel's cue to stop offering "load more" for this folder.
+    return { ok: true, added, exhausted: rows.length < page }
   }
 
   /**
@@ -555,6 +720,77 @@ export function apply(ctx: Context): void {
     }))
     touch()
   }
+
+  /**
+   * The mail capabilities other plugins use.
+   *
+   * Registered as a service rather than read out of a module global so a
+   * consumer follows the plugin's own lifetime: it appears when this row is
+   * applied and disappears when it is unloaded, and `ctx.get('mail')` answering
+   * undefined is the documented normal state of a deployment without it.
+   */
+  const service: MailService = {
+    accounts: (): readonly MailAccount[] => store.accounts(),
+
+    listMailboxes: async (accountId: string): Promise<readonly MailboxView[]> => {
+      const connection = connections.get(accountId)
+      if (connection === undefined) return mailboxes.get(accountId) ?? []
+      try {
+        // Read from the session rather than answering the cache: a caller
+        // looking for a folder the user created on another client wants the
+        // server's answer, and the cache is refreshed with it either way.
+        const listed = [...await connection.listMailboxes()]
+        mailboxes.set(accountId, listed)
+        touch()
+        return listed
+      } catch (error: unknown) {
+        ctx.logger.warn(`mail: listing the folders of ${accountId} failed: ${describe(error)}`)
+        return mailboxes.get(accountId) ?? []
+      }
+    },
+
+    ensureFolder: async (accountId: string, path: string) => {
+      const connection = connections.get(accountId)
+      if (connection === undefined) {
+        return { ok: false, code: 'account_offline', message: '这个账号当前没有连接' }
+      }
+      const created = await connection.mailboxCreate(path)
+      // The panel's folder tree is a cache, and a folder created here is not in
+      // it: without this refresh, "move to 推广" looks like it did nothing until
+      // the next reconnect. Never awaited — the caller has a move to finish.
+      if (created.ok) void service.listMailboxes(accountId)
+      return created
+    },
+
+    applyAction: async (action: MailAction): Promise<RouteResult> => {
+      const connection = connections.get(action.accountId)
+      if (connection === undefined) {
+        return { ok: false, code: 'account_offline', message: '这个账号当前没有连接' }
+      }
+      const result = await connection.applyAction(action)
+      if (result.ok) applyActionLocally(action)
+      return result
+    },
+
+    fetchDetail: async (accountId: string, folder: string, uid: number): Promise<MailDetail | undefined> => {
+      const connection = connections.get(accountId)
+      if (connection === undefined) return undefined
+      try {
+        return await connection.fetchDetail(folder, uid)
+      } catch (error: unknown) {
+        // "No such message" is the shape the signature promises, so a session
+        // that died under it is reported as absent and logged rather than thrown
+        // at a caller that has no way to act on the difference.
+        ctx.logger.warn(`mail: reading uid ${String(uid)} of ${accountId} failed: ${describe(error)}`)
+        return undefined
+      }
+    },
+  }
+
+  // `provide` rather than a bare `set`: it is what makes the name a service a
+  // consumer can `inject`, and it is disposed with this plugin's own fiber, so
+  // there is nothing to clear by hand on unload.
+  ctx.provide('mail', service)
 
   /** Replace one account's trigger and persist the whole list. */
   async function setTrigger(accountId: string, trigger: unknown): Promise<RouteResult> {
@@ -657,16 +893,22 @@ export function apply(ctx: Context): void {
           }
         }),
         mailboxes: [...mailboxes.values()].flat(),
+        // No trim here: every account's window is already bounded by
+        // MAX_SNAPSHOT_MESSAGES in `mergeSnapshot`, and trimming again at a
+        // different number would silently undo "load more" for the account whose
+        // rows happened to sort last.
         messages: [...snapshots.entries()]
           .flatMap(([, messages]) => messages)
-          .sort((left, right) => Date.parse(right.date) - Date.parse(left.date))
-          .slice(0, SNAPSHOT_LIMIT),
+          .sort((left, right) => Date.parse(right.date) - Date.parse(left.date)),
         config: {
           fallbackScanSeconds: DEFAULT_CONFIG.fallbackScanSeconds,
           maxListMessages: DEFAULT_CONFIG.maxListMessages,
+          maxWindowMessages: MAX_SNAPSHOT_MESSAGES,
           accounts,
           triggerAvailability: triggerAvailability(triggerHost()),
+          workbenchAvailable: workbenchAvailable(triggerHost()),
           presets: presetCache,
+          preferences: store.preferences(),
         },
       }
     },
@@ -686,13 +928,9 @@ export function apply(ctx: Context): void {
     action: async (input: unknown): Promise<RouteResult> => {
       const parsed = normalizeAction(input)
       if (!parsed.ok) return { ok: false, code: parsed.code, message: parsed.message }
-      const connection = connections.get(parsed.value.accountId)
-      if (connection === undefined) {
-        return { ok: false, code: 'account_offline', message: '这个账号当前没有连接' }
-      }
-      const result = await connection.applyAction(parsed.value)
-      if (result.ok) applyActionLocally(parsed.value)
-      return result
+      // The same call the service hands out, so the panel and another plugin
+      // cannot drift into two versions of "read a message".
+      return await service.applyAction(parsed.value)
     },
 
     config: async (input: unknown): Promise<RouteResult> => {
@@ -746,6 +984,29 @@ export function apply(ctx: Context): void {
           }
           return await setTrigger(accountId, record['trigger'])
         }
+        case 'setPreferences': {
+          const parsed = normalizePreferences(record['preferences'])
+          if (!parsed.ok) return { ok: false, code: 'invalid_config', message: `${parsed.field}: ${parsed.message}` }
+          await store.setPreferences({ ...store.preferences(), ...parsed.value })
+          // The panel polls with the revision it already holds, so a change the
+          // user just made has to move it — otherwise the drawer keeps showing
+          // the old switch and the reading pane keeps the old behaviour.
+          touch()
+          return { ok: true }
+        }
+        case 'trustSender': {
+          const address = senderKey(record['address'])
+          const trusted = record['trusted']
+          if (address === undefined) return { ok: false, code: 'invalid_config', message: '不是有效的发件人地址' }
+          if (typeof trusted !== 'boolean') return { ok: false, code: 'invalid_config', message: 'trusted 必须是布尔值' }
+          const preferences = store.preferences()
+          await store.setPreferences({
+            ...preferences,
+            trustedSenders: withTrustedSender(preferences.trustedSenders, address, trusted),
+          })
+          touch()
+          return { ok: true }
+        }
         default:
           return { ok: false, code: 'invalid_config', message: `未知操作：${String(record['op'])}` }
       }
@@ -776,6 +1037,49 @@ export function apply(ctx: Context): void {
       }
       return { ok: true }
     },
+
+    more: async (input: unknown): Promise<RouteResult> => {
+      const record = isRecord(input) ? input : {}
+      const accountId = typeof record['accountId'] === 'string' && record['accountId'] !== ''
+        ? record['accountId']
+        : undefined
+      // No folder means the panel's combined view, which is the watched folder:
+      // it is the only mailbox a scan keeps current, so it is the one "older
+      // mail" can mean without the caller naming a folder.
+      const folder = typeof record['folder'] === 'string' && record['folder'] !== ''
+        ? record['folder']
+        : WATCHED_FOLDER
+      const targets = accountId === undefined
+        ? store.accounts()
+        : store.accounts().filter(candidate => candidate.id === accountId)
+      if (targets.length === 0) {
+        return { ok: false, code: 'account_not_found', message: `没有这个账号：${String(accountId)}` }
+      }
+      let added = 0
+      let exhausted = true
+      let failure: RouteResult | undefined
+      try {
+        for (const account of targets) {
+          // One page at a time on purpose: the connection holds a single mailbox
+          // lock, so these would serialise anyway, and each page touches the
+          // snapshot before the next one starts — the panel sees the list grow
+          // instead of waiting for the slowest account.
+          const result = await loadMore(account.id, folder)
+          if (!result.ok) {
+            failure = result
+            continue
+          }
+          added += result.added ?? 0
+          exhausted = exhausted && result.exhausted === true
+        }
+      } catch (error: unknown) {
+        return { ok: false, code: 'folder_unavailable', message: `打不开文件夹「${folder}」：${describe(error)}` }
+      }
+      // A partial answer beats a failed one: with two accounts, one offline must
+      // not hide the page the other one just brought.
+      if (failure !== undefined && added === 0) return failure
+      return { ok: true, added, exhausted }
+    },
   }
 
   registerRoutes(ctx, routeHost)
@@ -796,6 +1100,83 @@ export function apply(ctx: Context): void {
       }
     }, 'mail: connections')
   })
+}
+
+/**
+ * What one hand-over needs from the scan pass.
+ *
+ * Passed explicitly rather than captured in a closure so the two paths — the
+ * triage engine and the account's own trigger — can be driven side by side in a
+ * test. That is the only way to hold the "a deployment without mailflow behaves
+ * exactly as it did before" promise down.
+ */
+export interface HandoverDeps {
+  readonly accountId: string
+  readonly accountName: string
+  /** The account's own trigger; read only on the fallback path. */
+  readonly trigger: TriggerConfig
+  readonly uidValidity: number
+  /**
+   * The fallback triggerer, or undefined when a triage engine owns the message.
+   *
+   * Undefined is not "nothing happens": the message is emitted as
+   * `mail/received` instead, and whoever listens decides what to do with it.
+   */
+  readonly fire?: Triggerer | undefined
+  /** Where "this message was already handed over" is recorded. */
+  readonly ledger: Pick<MailStore, 'isTriggered' | 'markTriggered'>
+  readonly readBody: (uid: number, fallback: string) => Promise<string>
+  readonly emit: (payload: MailReceivedPayload) => void
+  readonly log: (message: string) => void
+}
+
+/**
+ * Hand one scanned message over, once.
+ *
+ * The ledger is written **before** anything is handed over: if the hand-over
+ * fails, the message stays in the panel for the user to act on, whereas the
+ * reverse order would silently drop it. That is why a mailflow listener that
+ * throws never sees a message twice.
+ *
+ * The body is read lazily and at most once, whoever ends up needing it: the
+ * list preview is 2 KB of headers for most mail, and a message that is decided
+ * on its headers must not cost an IMAP round trip.
+ * @param message - the row the scan just found.
+ * @param deps - the ledger, the reader and whichever engine owns the message.
+ */
+export async function handOver(message: NormalizedMessage, deps: HandoverDeps): Promise<void> {
+  const summary = message.summary
+  const key = messageKey(summary.folder, deps.uidValidity, summary.uid)
+  if (deps.ledger.isTriggered(deps.accountId, key)) return
+  await deps.ledger.markTriggered(deps.accountId, key)
+
+  let body: string | undefined
+  const read = async (): Promise<string> => {
+    body ??= await deps.readBody(summary.uid, message.preview)
+    return body
+  }
+
+  if (deps.fire === undefined) {
+    deps.emit({
+      accountId: deps.accountId,
+      accountName: deps.accountName,
+      summary,
+      readBody: read,
+    })
+    return
+  }
+
+  const resolved = await resolveTrigger(deps.trigger, summary, read)
+  // No rule claimed it, or the one that did asks for no more than a row in the
+  // list — either way nothing is handed to an agent. The workbench notice is not
+  // pushed here: `resolveTrigger` carries the switch onto `resolved`, and `fire`
+  // pushes it once. Pushing in both places is how every matched message used to
+  // arrive twice.
+  if (resolved.mode === 'panel' && resolved.notifyWorkbench !== true) return
+  const result = await deps.fire.fire(deps.accountId, resolved, summary, await read(), deps.accountName)
+  if (!result.ok) {
+    deps.log(`mail: handing ${summary.subject || '(no subject)'} to the agent failed: ${result.message}`)
+  }
 }
 
 /** Whether a parsed body is a JSON object rather than an array or a primitive. */

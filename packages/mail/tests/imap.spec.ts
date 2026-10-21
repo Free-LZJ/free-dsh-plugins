@@ -11,7 +11,7 @@ import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MailAccount, MailAction } from '../src/types.ts'
 import {
-  MailOfflineError, createConnection, probeAccount, scanFolder,
+  MAX_BODY_PART_BYTES, MailOfflineError, createConnection, layoutOf, probeAccount, scanFolder,
   type ImapClientLike, type ImapFactory, type MailFlagUpdate, type ScanOptions,
 } from '../src/imap.ts'
 
@@ -56,8 +56,23 @@ interface FakeScript {
    */
   readonly expunged?: readonly number[]
   readonly fetchOne?: FetchedMessage | false
+  /**
+   * What a `bodyParts` FETCH answers, keyed by the section requested.
+   *
+   * The reading pane asks for the parts its body is made of in a second command,
+   * so a script has to be able to answer the head and the parts differently. A
+   * section the script does not name is one the server did not answer for.
+   */
+  readonly parts?: Readonly<Record<string, string | Buffer>>
   /** Content the download answers with, or false for "the part is not there". */
   readonly download?: { filename?: string; contentType?: string } | false
+  /**
+   * What `CREATE` answers, in the shapes imapflow actually returns them:
+   * a created mailbox, the server's `ALREADYEXISTS` answer (which imapflow
+   * reports as `created: false` rather than as a throw), `undefined` for a
+   * session that is not authenticated, or a thrown command failure.
+   */
+  readonly create?: { readonly path?: string; readonly created?: boolean } | { readonly throws: unknown } | 'not-authenticated'
   /** Answer NO to every STORE, as a read-only folder would. */
   readonly refuseWrites?: boolean
   /** Value every write throws instead of running. */
@@ -132,6 +147,14 @@ function makeFake(script: FakeScript = {}): Fake {
         calls.push({ method: 'status', args: [path, query] })
         return script.status ?? { messages: mailbox.length, unseen: 1, uidValidity: 9 }
       },
+      async mailboxCreate(path): Promise<{ path: string; created?: boolean } | undefined> {
+        calls.push({ method: 'mailboxCreate', args: [path] })
+        const scripted = script.create
+        if (scripted === undefined) return { path, created: true }
+        if (scripted === 'not-authenticated') return undefined
+        if ('throws' in scripted) throw scripted.throws
+        return { path: scripted.path ?? path, ...(scripted.created === undefined ? {} : { created: scripted.created }) }
+      },
       async getMailboxLock(path): Promise<{ release(): void }> {
         calls.push({ method: 'getMailboxLock', args: [path] })
         return { release: (): void => { calls.push({ method: 'release', args: [path] }) } }
@@ -154,6 +177,18 @@ function makeFake(script: FakeScript = {}): Fake {
       },
       async fetchOne(seq, query, queryOptions): Promise<FetchedMessage | false | undefined> {
         calls.push({ method: 'fetchOne', args: [seq, query, queryOptions] })
+        const wanted = (query as { bodyParts?: readonly { key?: string }[] } | null)?.bodyParts
+        if (Array.isArray(wanted)) {
+          // The reading pane's second command: only the sections it named come
+          // back, keyed the way imapflow keys them, and the answer is a different
+          // shape from a head — so a scripted head never stands in for it.
+          const bodyParts = new Map<string, Buffer>()
+          for (const one of wanted) {
+            const value = one.key === undefined ? undefined : script.parts?.[one.key]
+            if (value !== undefined) bodyParts.set(one.key as string, Buffer.from(value))
+          }
+          return { ...fetched(Number(seq)), bodyParts }
+        }
         return script.fetchOne ?? fetched(Number(seq))
       },
       async messageFlagsAdd(range, flags, storeOptions): Promise<boolean> {
@@ -332,6 +367,33 @@ describe('scanFolder', () => {
     expect(callsTo(fake, 'fetch')[0]?.args[0]).toEqual([5, 6, 7, 8, 9])
   })
 
+  it('reads a backwards window as the newest page below its upper bound', async () => {
+    const fake = makeFake({ mailbox: [1, 2, 3, 4, 5, 6, 7, 8, 9], mailboxState: { exists: 9, uidValidity: 7 } })
+    const outcome = await scanFolder(fake.factory({}), scanOptions({ beforeUid: 8, maxMessages: 3 }))
+
+    // `1:7`, not `1:*`: closing the range is what makes the pass walk backwards.
+    const newMail = callsTo(fake, 'search').find(one => (one.args[0] as { uid?: unknown }).uid !== undefined)
+    expect(newMail?.args[0]).toEqual({ uid: '1:7' })
+    // The page closest to the bound — 5, 6, 7 — not the oldest three in the folder.
+    expect(callsTo(fake, 'fetch')[0]?.args[0]).toEqual([5, 6, 7])
+    expect(outcome.messages.map(one => one.summary.uid)).toEqual([5, 6, 7])
+  })
+
+  it('answers an inverted window without asking the server for it', async () => {
+    const fake = makeFake({ mailbox: [1, 2, 3], mailboxState: { exists: 3, uidValidity: 7 } })
+    const outcome = await scanFolder(fake.factory({}), scanOptions({ beforeUid: 1 }))
+
+    // `UID SEARCH 1:0` is a malformed range rather than an empty one, and some
+    // servers answer it with BAD; having reached the oldest message is not an error.
+    const ranged = callsTo(fake, 'search').filter(one => (one.args[0] as { uid?: unknown }).uid !== undefined)
+    expect(ranged).toHaveLength(0)
+    expect(callsTo(fake, 'fetch')).toHaveLength(0)
+    expect(outcome.messages).toEqual([])
+    // The counters still come back, or the folder tree would blink to zero on
+    // every page that happens to be empty.
+    expect(outcome.counters).toEqual({ total: 3, unseen: 3 })
+  })
+
   it('leaves the cursor alone when SEARCH fails', async () => {
     const fake = makeFake({ search: false, mailboxState: { exists: 400, uidValidity: 7 } })
     const client = fake.factory({})
@@ -507,6 +569,106 @@ describe('scanFolder', () => {
   })
 })
 
+describe('layoutOf', () => {
+  /** A structure node, with the fields a real BODYSTRUCTURE carries. */
+  const node = (fields: Record<string, unknown>): Record<string, unknown> => fields
+
+  it('reads a multipart message into the parts a reader needs', () => {
+    const layout = layoutOf(node({
+      type: 'multipart/mixed',
+      childNodes: [
+        node({
+          type: 'multipart/alternative',
+          childNodes: [
+            node({ part: '1.1', type: 'text/plain', parameters: { charset: 'utf-8' } }),
+            node({ part: '1.2', type: 'text/html', parameters: { charset: 'utf-8' } }),
+          ],
+        }),
+        node({ part: '2', type: 'application/pdf', size: 2048, disposition: 'attachment', dispositionParameters: { filename: 'report.pdf' } }),
+      ],
+    }))
+
+    expect(layout.text.map(plan => plan.section)).toEqual(['1.1'])
+    expect(layout.html.map(plan => plan.section)).toEqual(['1.2'])
+    expect(layout.inline).toEqual([])
+    expect(layout.attachments).toEqual([
+      { part: '2', filename: 'report.pdf', contentType: 'application/pdf', size: 2048 },
+    ])
+  })
+
+  it('addresses a non-multipart message as part 1, which is what the server calls it', () => {
+    // RFC 3501 §6.4.5: a message that is not multipart has exactly one part, and
+    // the structure carries no number for it. `1` is the section on the wire and
+    // the shape the download route's own check accepts.
+    const layout = layoutOf(node({ type: 'text/html', parameters: { charset: 'gb18030' }, size: 700 }))
+    expect(layout.html).toEqual([
+      { section: '1', type: 'text/html', parameters: { charset: 'gb18030' }, size: 700, root: true },
+    ])
+    expect(layout.attachments).toEqual([])
+  })
+
+  it('lists a part the HTML names as both a picture and a file', () => {
+    const layout = layoutOf(node({
+      type: 'multipart/related',
+      childNodes: [
+        node({ part: '1', type: 'text/html', parameters: { charset: 'utf-8' } }),
+        node({ part: '2', type: 'image/png', id: '<logo@example.com>', size: 30, disposition: 'inline', dispositionParameters: { filename: 'logo.png' } }),
+      ],
+    }))
+    expect(layout.inline).toEqual([{
+      section: '2', type: 'image/png', size: 30, cid: '<logo@example.com>',
+    }])
+    // The pane draws it *and* offers it, which is what the parser's own list did.
+    expect(layout.attachments).toEqual([
+      { part: '2', filename: 'logo.png', contentType: 'image/png', size: 30 },
+    ])
+  })
+
+  it('takes an attached text file for a file, not for the message', () => {
+    // `Content-Disposition: attachment` on a `text/plain` part is a .txt the
+    // sender attached; handing it over as the body would show a file as the mail.
+    const layout = layoutOf(node({
+      type: 'multipart/mixed',
+      childNodes: [
+        node({ part: '1', type: 'text/plain', parameters: { charset: 'utf-8' } }),
+        node({ part: '2', type: 'text/plain', size: 12, disposition: 'attachment', dispositionParameters: { filename: 'notes.txt' } }),
+      ],
+    }))
+    expect(layout.text.map(plan => plan.section)).toEqual(['1'])
+    expect(layout.attachments).toEqual([
+      { part: '2', filename: 'notes.txt', contentType: 'text/plain', size: 12 },
+    ])
+  })
+
+  it('leaves an attached mail at its wrapper instead of walking into it', () => {
+    // A message/rfc822 part *contains* a message with its own text part; reading
+    // it as this message's body would show the attached mail as the mail.
+    const layout = layoutOf(node({
+      type: 'multipart/mixed',
+      childNodes: [
+        node({ part: '1', type: 'text/plain' }),
+        node({
+          part: '2',
+          type: 'message/rfc822',
+          size: 900,
+          disposition: 'attachment',
+          dispositionParameters: { filename: 'forwarded.eml' },
+          childNodes: [node({ part: '2', type: 'text/plain' })],
+        }),
+      ],
+    }))
+    expect(layout.text.map(plan => plan.section)).toEqual(['1'])
+    expect(layout.attachments).toEqual([
+      { part: '2', filename: 'forwarded.eml', contentType: 'message/rfc822', size: 900 },
+    ])
+  })
+
+  it('has nothing to fetch for a structure the server did not describe', () => {
+    expect(layoutOf(undefined)).toEqual({ text: [], html: [], inline: [], attachments: [] })
+    expect(layoutOf(null)).toEqual({ text: [], html: [], inline: [], attachments: [] })
+  })
+})
+
 describe('createConnection actions', () => {
   /** One connected client plus its calls. */
   async function connected(script: FakeScript = {}): Promise<{ fake: Fake; connection: ReturnType<typeof createConnection> }> {
@@ -574,6 +736,19 @@ describe('createConnection actions', () => {
     expect(fake.calls.filter(call => /expunge/i.test(call.method))).toEqual([])
   })
 
+  it('puts the watched folder back after paging through another one', async () => {
+    const { fake, connection } = await connected()
+    const before = callsTo(fake, 'getMailboxLock').length
+    await connection.scan({ folder: 'Archive', fromUid: 1, knownUidValidity: 0, maxMessages: 10 })
+
+    // IDLE only announces the selected mailbox (RFC 2177 §3), and imapflow keeps
+    // whatever the last lock selected — so a page in another folder would leave
+    // the account quietly watching the wrong mailbox until something else
+    // happened to switch it back.
+    const after = callsTo(fake, 'getMailboxLock').slice(before).map(call => call.args[0])
+    expect(after).toEqual(['Archive', 'INBOX'])
+  })
+
   it('refuses a range that is empty, non-positive or oversized', async () => {
     const { fake, connection } = await connected()
     const tooMany = Array.from({ length: 501 }, (_, index) => index + 1)
@@ -606,9 +781,11 @@ describe('createConnection actions', () => {
   })
 
   it('finds a detail, and answers undefined for a message that is gone', async () => {
-    const { connection } = await connected()
-    const detail = await connection.fetchDetail('INBOX', 5, 100)
+    const { connection } = await connected({ parts: { 1: 'Hello   mail 5\n' } })
+    const detail = await connection.fetchDetail('INBOX', 5)
     expect(detail?.subject).toBe('Message 5')
+    // The body is the part the server answered with, and nothing else.
+    expect(detail?.text).toContain('Hello   mail 5')
     expect(detail?.truncated).toBe(false)
 
     const missing = makeFake({ fetchOne: false })
@@ -617,25 +794,60 @@ describe('createConnection actions', () => {
     await expect(gone.fetchDetail('INBOX', 5)).resolves.toBeUndefined()
   })
 
-  it('bounds the body it downloads for the reading pane', async () => {
-    const { fake, connection } = await connected()
+  it('reads a message by asking for its parts, never for the message', async () => {
+    const { fake, connection } = await connected({ parts: { 1: 'the body' } })
     await connection.fetchDetail('INBOX', 5)
 
-    const query = callsTo(fake, 'fetchOne')[0]?.args[1] as { source?: unknown }
-    // RFC 4549 §4.6 is a MUST: check the size before downloading the body. An
-    // unbounded `source: true` would pull a 30 MB message to show a paragraph.
-    expect(query.source).toEqual({ maxLength: 2 * 1024 * 1024 })
+    const asked = callsTo(fake, 'fetchOne')
+    expect(asked).toHaveLength(2)
+    // The head: everything about the message, none of its bytes.
+    const head = asked[0]?.args[1] as { source?: unknown; bodyStructure?: unknown }
+    expect(head.source).toBeUndefined()
+    expect(head.bodyStructure).toBe(true)
+    // The parts: one section, capped, because a byte range has to be asked for
+    // before the bytes are (RFC 4549 §4.6) — and this is the only cap left.
+    expect((asked[1]?.args[1] as { bodyParts?: unknown }).bodyParts)
+      .toEqual([{ key: '1', start: 0, maxLength: MAX_BODY_PART_BYTES }])
     // The generation comes from the SELECT this call just made, not from a
     // STATUS of the mailbox this session has selected.
     expect(callsTo(fake, 'status')).toEqual([])
   })
 
-  it('marks a body the server cut at the cap as truncated', async () => {
+  it('opens a message with a big attachment without fetching the attachment', async () => {
+    // The reported bug, at the size that produced it: a 70 KB body behind a 3 MB
+    // PDF used to be fetched as one capped source, came back cut, and the pane
+    // announced a truncated body it had actually received in full.
+    const structure = {
+      type: 'multipart/mixed',
+      childNodes: [
+        { part: '1', type: 'text/plain', parameters: { charset: 'utf-8' } },
+        { part: '2', type: 'application/pdf', encoding: 'base64', size: 3 * 1024 * 1024, disposition: 'attachment', dispositionParameters: { filename: 'report.pdf' } },
+      ],
+    }
+    const { fake, connection } = await connected({
+      fetchOne: { ...fetched(5), size: 3 * 1024 * 1024 + 70_000, bodyStructure: structure },
+      parts: { 1: '正文只有这一段' },
+    })
+    const detail = await connection.fetchDetail('INBOX', 5)
+
+    expect(detail?.text).toContain('正文只有这一段')
+    // The notice used to fire here, and the message had not been cut at all.
+    expect(detail?.truncated).toBe(false)
+    // The attachment is listed from the structure, with the section the download
+    // route will use, and without a byte of it having crossed the wire.
+    expect(detail?.attachments).toEqual([
+      { part: '2', filename: 'report.pdf', contentType: 'application/pdf', size: 3 * 1024 * 1024 },
+    ])
+    expect(detail?.hasAttachments).toBe(true)
+    const asked = callsTo(fake, 'fetchOne')
+    expect((asked[1]?.args[1] as { bodyParts?: readonly { key: string }[] }).bodyParts?.map(one => one.key))
+      .toEqual(['1'])
+  })
+
+  it('says so when a body part itself came back at the cap', async () => {
     const cut = makeFake({
-      // What a capped fetch looks like on the wire: valid headers, a body that
-      // stops mid-way, and the full size still reported by RFC822.SIZE — which
-      // is the only place the cut is visible at all.
-      fetchOne: { ...fetched(5), size: 5 * 1024 * 1024, source: Buffer.from('Subject: Big\n\n只有开头这一段') },
+      fetchOne: { ...fetched(5), bodyStructure: { part: '1', type: 'text/html', encoding: 'base64', size: MAX_BODY_PART_BYTES + 1 } },
+      parts: { 1: '<p>只有开头这一段</p>' },
     })
     const connection = createConnection(cut.factory, accountOf(), 'secret-code', 30)
     await connection.start()
@@ -684,6 +896,65 @@ describe('createConnection actions', () => {
       { accountId: 'acct', path: 'INBOX', specialUse: '\\Inbox', unseen: 3, total: 12 },
       { accountId: 'acct', path: 'Archive', unseen: 3, total: 12 },
     ])
+  })
+
+  it('creates a folder and answers with the path the server reports', async () => {
+    const fake = makeFake({ create: { path: 'INBOX.推广' } })
+    const connection = createConnection(fake.factory, accountOf(), 'secret-code', 30)
+    await connection.start()
+
+    // imapflow adds the namespace prefix and joins path segments itself, so the
+    // path it echoes back is the one a later MOVE has to use.
+    await expect(connection.mailboxCreate('推广')).resolves.toEqual({ ok: true, path: 'INBOX.推广' })
+    expect(callsTo(fake, 'mailboxCreate')[0]?.args).toEqual(['推广'])
+  })
+
+  it('treats a folder that already exists as a success', async () => {
+    // RFC 5530 `ALREADYEXISTS` is what a server answers for a folder that is
+    // already there; imapflow turns it into `created: false` rather than a
+    // throw. "Make sure it exists" asked exactly that.
+    const fake = makeFake({ create: { created: false } })
+    const connection = createConnection(fake.factory, accountOf(), 'secret-code', 30)
+    await connection.start()
+
+    await expect(connection.mailboxCreate('推广')).resolves.toEqual({ ok: true, path: '推广' })
+  })
+
+  it('reports a refused CREATE as imap_rejected rather than throwing', async () => {
+    const fake = makeFake({ create: { throws: new Error('Mailbox name is not allowed') } })
+    const connection = createConnection(fake.factory, accountOf(), 'secret-code', 30)
+    await connection.start()
+
+    await expect(connection.mailboxCreate('bad name'))
+      .resolves.toMatchObject({ ok: false, code: 'imap_rejected' })
+  })
+
+  it('reports a dropped connection during CREATE as account_offline', async () => {
+    const fake = makeFake({ create: { throws: Object.assign(new Error('Connection not available'), { code: 'NoConnection' }) } })
+    const connection = createConnection(fake.factory, accountOf(), 'secret-code', 30)
+    await connection.start()
+
+    await expect(connection.mailboxCreate('推广'))
+      .resolves.toMatchObject({ ok: false, code: 'account_offline' })
+  })
+
+  it('answers offline when there is no session, without throwing', async () => {
+    const fake = makeFake()
+    const connection = createConnection(fake.factory, accountOf(), 'secret-code', 30)
+    await expect(connection.mailboxCreate('推广'))
+      .resolves.toMatchObject({ ok: false, code: 'account_offline' })
+    expect(callsTo(fake, 'mailboxCreate')).toEqual([])
+  })
+
+  it('answers offline when the session is not authenticated', async () => {
+    // imapflow returns undefined instead of throwing when the precondition
+    // (an authenticated session) is not met.
+    const fake = makeFake({ create: 'not-authenticated' })
+    const connection = createConnection(fake.factory, accountOf(), 'secret-code', 30)
+    await connection.start()
+
+    await expect(connection.mailboxCreate('推广'))
+      .resolves.toMatchObject({ ok: false, code: 'account_offline' })
   })
 
   it('throws a coded offline error on the request path when there is no session', async () => {

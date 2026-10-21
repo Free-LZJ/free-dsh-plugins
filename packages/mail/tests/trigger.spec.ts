@@ -6,7 +6,7 @@
 
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createTriggerer, presetChoices, resolveTrigger, triggerAvailability, type TriggerHost } from '../src/trigger.ts'
+import { createTriggerer, presetChoices, resolveTrigger, triggerAvailability, workbenchAvailable, type TriggerHost } from '../src/trigger.ts'
 import type { MailSummary, TriggerConfig } from '../src/types.ts'
 
 /** The order mode A must drive the host in — cleanup steps excluded. */
@@ -37,13 +37,20 @@ interface Recorder {
   readonly detached: string[]
   readonly sets: { session: unknown; name: string }[]
   readonly titles: { session: unknown; title: string }[]
+  /** Every notice handed to the workbench, in order. */
+  readonly notices: Record<string, unknown>[]
   scopeDisposals: number
   disposes: number
 }
 
 /** Build a host that records every call, plus the recorder and the caller's knobs. */
 function makeHost(
-  options: { readonly failAt?: FailAt; readonly sessions?: boolean; readonly defaultPreset?: string } = {},
+  options: {
+    readonly failAt?: FailAt
+    readonly sessions?: boolean
+    readonly console?: boolean
+    readonly defaultPreset?: string
+  } = {},
 ): { host: TriggerHost; rec: Recorder } {
   const rec: Recorder = {
     steps: [],
@@ -56,6 +63,7 @@ function makeHost(
     detached: [],
     sets: [],
     titles: [],
+    notices: [],
     scopeDisposals: 0,
     disposes: 0,
   }
@@ -148,6 +156,16 @@ function makeHost(
       currentSelection: () => ({ provider: 'deepseek', model: 'deepseek-v4' }),
     },
     log: () => {},
+    ...(options.console === false
+      ? {}
+      : {
+          console: {
+            notify: (notice: Record<string, unknown>) => {
+              rec.notices.push(notice)
+              return Promise.resolve(notice)
+            },
+          },
+        }),
     ...(options.sessions === false
       ? {}
       : {
@@ -185,6 +203,7 @@ function mail(): MailSummary {
     flagged: false,
     hasAttachments: false,
     snippet: 'nightly job failed',
+    headers: {},
   }
 }
 
@@ -501,7 +520,7 @@ describe('triggerAvailability', () => {
     expect(triggerAvailability({})).toEqual({ session: false, notify: false })
   })
 
-  it('reports both modes when the full host is wired', () => {
+  it('reports every mode when the full host is wired', () => {
     const { host } = makeHost()
     expect(triggerAvailability(host)).toEqual({ session: true, notify: true })
   })
@@ -510,5 +529,105 @@ describe('triggerAvailability', () => {
     const { host } = makeHost()
     const { titles: _titles, ...withoutTitles } = host
     expect(triggerAvailability(withoutTitles)).toEqual({ session: false, notify: true })
+  })
+
+  it('keeps the workbench switch out of the mode list', () => {
+    // The notification switch is its own axis: it must not show up as a mode,
+    // and a deployment without a workbench must not lose the modes that work.
+    const { host } = makeHost({ console: false })
+    expect(triggerAvailability(host)).toEqual({ session: true, notify: true })
+    expect(workbenchAvailable(host)).toBe(false)
+    expect(workbenchAvailable(makeHost().host)).toBe(true)
+    expect(workbenchAvailable({})).toBe(false)
+  })
+})
+
+describe('workbench notification switch', () => {
+  it('rides along with the panel mode and creates nothing', async () => {
+    const { host, rec } = makeHost()
+    const result = await createTriggerer(host).fire(
+      'acc-1',
+      { mode: 'panel', notifyWorkbench: true, filters: {} },
+      mail(),
+      '',
+      'free_lzj@qq.com',
+    )
+    expect(result).toEqual({ ok: true })
+    expect(rec.notices).toEqual([{
+      title: '新邮件 · CI Bot：Build failed',
+      body: 'ci@example.com',
+      source: 'mail · free_lzj@qq.com',
+    }])
+    expect(rec.steps).toEqual([])
+  })
+
+  it('pushes the notice before the session it rides along with', async () => {
+    const { host, rec } = makeHost()
+    const result = await createTriggerer(host).fire(
+      'acc-1',
+      { mode: 'session', notifyWorkbench: true, session: { workspacePath: resolve('.') }, filters: {} },
+      mail(),
+      'body text',
+      'free_lzj@qq.com',
+    )
+    expect(result).toEqual({ ok: true })
+    expect(rec.notices).toHaveLength(1)
+    // The session was still built: the switch adds a notice, it does not replace.
+    expect(rec.steps).toContain('agents.create')
+    expect(rec.followups).toHaveLength(1)
+  })
+
+  it('stays silent when the switch is off or merely truthy-but-not-true', async () => {
+    const { host, rec } = makeHost()
+    const triggerer = createTriggerer(host)
+    await triggerer.fire('acc-1', { mode: 'panel', filters: {} }, mail(), '')
+    await triggerer.fire('acc-1', { mode: 'panel', notifyWorkbench: false, filters: {} }, mail(), '')
+    expect(rec.notices).toEqual([])
+  })
+
+  it('does not cost the message its session when the workbench throws', async () => {
+    const { host, rec } = makeHost()
+    const broken = { ...host, console: { notify: () => Promise.reject(new Error('workbench disposed')) } }
+    const result = await createTriggerer(broken).fire(
+      'acc-1',
+      { mode: 'session', notifyWorkbench: true, session: { workspacePath: resolve('.') }, filters: {} },
+      mail(),
+      'body',
+    )
+    expect(result).toEqual({ ok: true })
+    expect(rec.followups).toHaveLength(1)
+  })
+
+  it('reports a missing workbench in the log instead of throwing', async () => {
+    const logs: string[] = []
+    const { host } = makeHost({ console: false })
+    const result = await createTriggerer({ ...host, log: (line) => logs.push(line) }).fire(
+      'acc-1',
+      { mode: 'panel', notifyWorkbench: true, filters: {} },
+      mail(),
+      '',
+    )
+    expect(result).toEqual({ ok: true })
+    expect(logs.join('\n')).toContain('未安装工作台')
+  })
+
+  it('carries the switch through a rule list, so a claimed message is noticed once', async () => {
+    // The scan loop used to push its own notice and `fire` pushed a second one,
+    // so every matched message arrived twice. The switch now rides on the
+    // resolved trigger and is pushed exactly once, whichever rule claimed it.
+    const { host, rec } = makeHost()
+    const trigger: TriggerConfig = {
+      mode: 'panel',
+      notifyWorkbench: true,
+      filters: {},
+      rules: [{ when: { from: ['ci@example.com'] }, action: 'session', session: { workspacePath: resolve('.') } }],
+    }
+    const summary = mail()
+    const resolved = await resolveTrigger(trigger, summary, async () => 'body')
+    expect(resolved.notifyWorkbench).toBe(true)
+    expect(resolved.mode).toBe('session')
+    await createTriggerer(host).fire('acc-1', resolved, summary, 'body', 'free_lzj@qq.com')
+    expect(rec.notices).toHaveLength(1)
+    expect(rec.followups).toHaveLength(1)
   })
 })

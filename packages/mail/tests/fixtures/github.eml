@@ -1,0 +1,31 @@
+Return-Path: <notifications@github.com>
+Received: from github.com (github.com [192.30.253.126])
+	by mx.example.net (Postfix) with ESMTPS id 4C1A2B3D
+	for <me@example.com>; Tue, 20 Oct 2026 09:12:31 +0000 (UTC)
+Date: Tue, 20 Oct 2026 09:12:30 +0000
+From: "free-lzj/dsh-plugins" <notifications@github.com>
+Reply-To: "free-lzj/dsh-plugins" <reply+abc123@reply.github.com>
+To: me@example.com
+Message-ID: <free-lzj/dsh-plugins/pull/12/review/456@github.com>
+In-Reply-To: <free-lzj/dsh-plugins/pull/12@github.com>
+References: <free-lzj/dsh-plugins/pull/12@github.com>
+Subject: Re: [free-lzj/dsh-plugins] 邮件分诊设计 (PR #12)
+Mime-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+X-GitHub-Sender: zejian-li
+X-GitHub-Recipient: Free-LZJ
+X-GitHub-Reason: review_requested
+List-Id: free-lzj/dsh-plugins
+ <dsh-plugins.free-lzj.github.com>
+List-Unsubscribe: <https://github.com/notifications/unsubscribe-auth/ABC123>,
+ <mailto:noreply@github.com?subject=unsubscribe>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+Precedence: list
+Auto-Submitted: auto-generated
+
+You are receiving this because your review was requested.
+Reply to this email directly, view it on GitHub:
+https://github.com/free-lzj/dsh-plugins/pull/12
+
+List-Id: this line is body text, not a header.

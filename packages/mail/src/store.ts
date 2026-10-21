@@ -19,11 +19,22 @@
 
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { normalizeAccountInput } from './config.ts'
-import type { AccountState, MailAccount, MailStateFile, MailSummary, ScanCursor } from './types.ts'
+import { normalizeAccountInput, trustedSendersOf } from './config.ts'
+import type {
+  AccountState, MailAccount, MailPreferences, MailStateFile, MailSummary, ScanCursor,
+} from './types.ts'
 
 /** How many messages one account remembers having triggered something for. */
 export const TRIGGER_LEDGER_LIMIT = 500
+
+/**
+ * Where the reading pane starts before a person has said otherwise.
+ *
+ * Remote images load, because a mail is the user's own and the pictures in it are
+ * the point of an HTML body. Blocking them is one checkbox away, and the pane
+ * then asks per message — see `MailPreferences`.
+ */
+export const DEFAULT_PREFERENCES: MailPreferences = { loadRemoteImages: true, trustedSenders: [] }
 
 /** One message already handed over, and when. */
 interface LedgerEntry {
@@ -66,6 +77,11 @@ interface PersistedAccount extends AccountState {
 /** The whole `state.json`. */
 interface PersistedState extends MailStateFile {
   readonly accounts: Readonly<Record<string, PersistedAccount>>
+  /** Absent in a file written before the reading pane had preferences. */
+  readonly preferences?: {
+    readonly loadRemoteImages?: boolean
+    readonly trustedSenders?: readonly string[]
+  }
 }
 
 /** The in-memory form of one account's record. */
@@ -108,6 +124,10 @@ export interface MailStore {
   cachedMessages(accountId: string): CachedSnapshot | undefined
   /** Remember the rows the panel is showing, so the next start is not blank. */
   saveMessages(accountId: string, snapshot: CachedSnapshot): Promise<void>
+  /** How the reading pane shows remote images. */
+  preferences(): MailPreferences
+  /** Replace the reading preferences and persist. */
+  setPreferences(next: MailPreferences): Promise<void>
   /** Drop everything for one account. */
   forget(accountId: string): Promise<void>
 }
@@ -229,6 +249,23 @@ function parseSnapshot(value: unknown): CachedSnapshot | undefined {
 }
 
 /**
+ * Read the persisted reading preferences.
+ *
+ * A file that predates the setting keeps the default rather than flipping to
+ * blocked: "the user never chose" and "the user chose off" have to stay
+ * distinguishable, and only an explicit `false` is the latter.
+ * @param value - the stored `preferences`, whatever it turned out to be.
+ * @returns the preferences to run with.
+ */
+function parsePreferences(value: unknown): MailPreferences {
+  if (!isRecord(value)) return DEFAULT_PREFERENCES
+  return {
+    loadRemoteImages: value.loadRemoteImages === false ? false : true,
+    trustedSenders: trustedSendersOf(value.trustedSenders),
+  }
+}
+
+/**
  * Open the store behind one file.
  * @param options - `path` is the `state.json` to own; nothing else is read from
  * the environment, so a test can point it at a temporary directory.
@@ -239,6 +276,9 @@ export function createStore(options: { readonly path: string }): MailStore {
 
   /** Accounts by id, in insertion order. */
   let entries = new Map<string, Entry>()
+
+  /** Reading preferences; one record for the whole plugin, not one per account. */
+  let preferences: MailPreferences = DEFAULT_PREFERENCES
 
   /** The tail of the write chain: each write starts after the previous one ended. */
   let tail: Promise<unknown> = Promise.resolve()
@@ -281,7 +321,7 @@ export function createStore(options: { readonly path: string }): MailStore {
         ...(entry.messages === undefined ? {} : { messages: entry.messages }),
       }
     }
-    const file: PersistedState = { version: 1, accounts }
+    const file: PersistedState = { version: 1, accounts, preferences }
     const temporary = `${path}.tmp`
     await mkdir(dirname(path), { recursive: true })
     await writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
@@ -293,6 +333,7 @@ export function createStore(options: { readonly path: string }): MailStore {
 
   async function load(): Promise<void> {
     entries = new Map()
+    preferences = DEFAULT_PREFERENCES
     let raw: string
     try {
       raw = await readFile(path, 'utf8')
@@ -305,7 +346,11 @@ export function createStore(options: { readonly path: string }): MailStore {
     } catch {
       return
     }
-    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.accounts)) return
+    if (!isRecord(parsed) || parsed.version !== 1) return
+    // Before the account guard: the reading preferences are not account state,
+    // and a file whose account map is unreadable still knows how to show mail.
+    preferences = parsePreferences(parsed.preferences)
+    if (!isRecord(parsed.accounts)) return
     for (const [id, stored] of Object.entries(parsed.accounts)) {
       if (!isRecord(stored)) continue
       const cursors = new Map<string, ScanCursor>()
@@ -390,6 +435,16 @@ export function createStore(options: { readonly path: string }): MailStore {
     await serialize(persist)
   }
 
+  async function setPreferences(next: MailPreferences): Promise<void> {
+    // Through the same normalizer the panel's POST goes through, so a caller
+    // cannot write a whitelist entry the routes would have refused.
+    preferences = {
+      loadRemoteImages: next.loadRemoteImages !== false,
+      trustedSenders: trustedSendersOf(next.trustedSenders),
+    }
+    await serialize(persist)
+  }
+
   async function forget(accountId: string): Promise<void> {
     entries.delete(accountId)
     await serialize(persist)
@@ -408,6 +463,8 @@ export function createStore(options: { readonly path: string }): MailStore {
     setFolderFor,
     cachedMessages: accountId => entries.get(accountId)?.messages,
     saveMessages,
+    preferences: () => preferences,
+    setPreferences,
     forget,
   }
 }

@@ -22,7 +22,7 @@
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.2` | 把 Codex / Claude Code 已经声明好的 MCP 服务器挂进 dsh，并把各 Agent 工具的技能以**符号链接**导入 dsh 自己的技能目录统一管理；同一个包在设置页里带一页「代理配置导入」 |
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | **工作台**：dsh 的首页。首页列出**接入它面板契约**的插件（卡片宫格 / 列表 / 紧凑，可搜索、可置顶）并从那里打开——没接入的插件不会出现；同时是**通知出口**——插件把通知交给 `ctx.console.notify()`，由工作台从**可替换、可多选**的渠道里挑怎么送达（桌面通知 / 应用内消息 / 提示音）。界面完全用 DSH 的设计系统（`ui-primitives` 控件 + `--dsw-*` token），不另起一套 |
-| [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.2.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**），新邮件按账号配置新建 agent 会话、投递到指定会话或只高亮。装了工作台时它列在工作台里，不再单独占侧边栏 |
+| [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**）；同时是**邮件 I/O 提供方**——对别的插件暴露 `ctx.mail` 与 `mail/received` 事件。装了工作台时它列在工作台里，不再单独占侧边栏 |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
 
 每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是这些包共有的约定，以及本仓库自身的开发说明。
@@ -145,7 +145,7 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 |---|---|
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import`（MCP 服务器 + 技能导入） |
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console`（工作台首页 + 通知出口） |
-| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（邮箱面板） |
+| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（邮箱面板 + 邮件 I/O 服务） |
 | [`packages/web-search-account`](packages/web-search-account) | `@free-lzj/dsh-web-search-account`（搜索走已登录账号，仅 Host 半边） |
 
 ```sh

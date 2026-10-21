@@ -121,19 +121,30 @@ function renderFrom(from: MailAddress): string {
 }
 
 /**
- * Title for a new session: substitutes `{subject}` and `{from}` in the template.
+ * Fill a title template with the fields every title may name: `{subject}` and
+ * `{from}`.
  *
  * The replacement is a function, not a string, because a subject may itself
  * contain `$&` and a literal replacement would expand it.
+ * @param template - the template to fill.
+ * @param summary - the message the title is about.
+ * @returns the filled title, trimmed; empty when the template renders to nothing.
+ */
+function fillTitle(template: string, summary: MailSummary): string {
+  return template
+    .replaceAll('{subject}', () => summary.subject)
+    .replaceAll('{from}', () => renderFrom(summary.from))
+    .trim()
+}
+
+/**
+ * Title for a new session: substitutes `{subject}` and `{from}` in the template.
  * @param template - the configured template; absent = `邮件：{subject}`.
  * @param summary - the message the session is about.
  * @returns a non-empty title.
  */
 export function renderTitle(template: string | undefined, summary: MailSummary): string {
-  const filled = (template ?? DEFAULT_TITLE_TEMPLATE)
-    .replaceAll('{subject}', () => summary.subject)
-    .replaceAll('{from}', () => renderFrom(summary.from))
-    .trim()
+  const filled = fillTitle(template ?? DEFAULT_TITLE_TEMPLATE, summary)
   return filled === '' ? FALLBACK_TITLE : filled
 }
 
@@ -201,6 +212,37 @@ export function buildPrompt(summary: MailSummary, body: string, template?: strin
  */
 export function renderNotice(summary: MailSummary): string {
   return `新邮件：${renderFrom(summary.from)} — ${summary.subject}（${summary.date}）`
+}
+
+/** Longest subject a workbench notice carries; the notice list is one line tall. */
+const NOTICE_SUBJECT_LIMIT = 80
+
+/**
+ * The notice the workbench shows for a new message.
+ *
+ * One line, because the workbench renders it in a list row: the sender's name
+ * leads (that is what a person scans for) and the subject follows, cut with an
+ * ellipsis rather than wrapped. The account is the source line, so the panel it
+ * points at can be told apart when several mailboxes are configured.
+ * @param summary - the message that matched.
+ * @param accountName - the account it arrived on, if the caller knows it.
+ * @returns the title, and the body only when it adds something.
+ */
+export function renderNoticeParts(
+  summary: MailSummary,
+  accountName?: string,
+): { title: string; body?: string; source: string } {
+  const who = summary.from.name?.trim() || summary.from.address
+  const subject = summary.subject.trim()
+  const cut = subject.length <= NOTICE_SUBJECT_LIMIT
+    ? subject
+    : `${subject.slice(0, NOTICE_SUBJECT_LIMIT).trimEnd()}…`
+  const body = summary.from.address === who ? undefined : summary.from.address
+  return {
+    title: cut === '' ? `新邮件 · ${who}` : `新邮件 · ${who}：${cut}`,
+    ...(body === undefined ? {} : { body }),
+    source: accountName === undefined || accountName === '' ? 'mail' : `mail · ${accountName}`,
+  }
 }
 
 /**

@@ -46,6 +46,43 @@ describe('messageKey', () => {
   })
 })
 
+describe('preferences', () => {
+  it('starts by loading remote images, because nothing has been chosen yet', async () => {
+    const { store } = await tempStore()
+    await store.load()
+    expect(store.preferences()).toEqual({ loadRemoteImages: true, trustedSenders: [] })
+  })
+
+  it('survives a round trip and normalizes what it is handed', async () => {
+    const { path, store } = await tempStore()
+    await store.load()
+    await store.setPreferences({ loadRemoteImages: false, trustedSenders: ['Alice@Example.com', 'alice@example.com', 'not an address'] })
+    expect(store.preferences()).toEqual({ loadRemoteImages: false, trustedSenders: ['alice@example.com'] })
+
+    const reopened = createStore({ path })
+    await reopened.load()
+    expect(reopened.preferences()).toEqual({ loadRemoteImages: false, trustedSenders: ['alice@example.com'] })
+  })
+
+  it('keeps the default for a file written before the setting existed', async () => {
+    const { path, store } = await tempStore()
+    await writeRaw(path, JSON.stringify({ version: 1, accounts: {} }))
+    await store.load()
+    expect(store.preferences().loadRemoteImages).toBe(true)
+  })
+
+  it('reads a hand-edited whitelist through the same rule the routes use', async () => {
+    const { path, store } = await tempStore()
+    await writeRaw(path, JSON.stringify({
+      version: 1,
+      accounts: {},
+      preferences: { loadRemoteImages: false, trustedSenders: ['a@b.com', '', 42, 'a@b.com', 'x y@z'] },
+    }))
+    await store.load()
+    expect(store.preferences()).toEqual({ loadRemoteImages: false, trustedSenders: ['a@b.com'] })
+  })
+})
+
 describe('load', () => {
   it('answers an empty state before anything was written', async () => {
     const { store } = await tempStore()
@@ -258,6 +295,7 @@ function row(uid: number): MailSummary {
     seen: false,
     flagged: false,
     hasAttachments: false,
+    headers: {},
     snippet: '',
   }
 }

@@ -91,6 +91,16 @@ export interface TriggerRule {
 /** How one account hands a matched message over. */
 export interface TriggerConfig {
   readonly mode: TriggerMode
+  /**
+   * Also push a workbench notice for every matched message, whatever
+   * {@link mode} says. Independent of the mode on purpose: "tell me there is
+   * new mail" and "wake an agent for this mail" are two different asks, and
+   * folding one into the other would lose whichever is not chosen.
+   *
+   * Absent or false = off. Needs `@free-lzj/dsh-console`; without it the notice
+   * has nowhere to go and the drawer says so.
+   */
+  readonly notifyWorkbench?: boolean
   readonly session?: SessionTriggerOptions
   readonly notify?: NotifyTriggerOptions
   /**
@@ -116,6 +126,18 @@ export interface TriggerConfig {
 
 /* ─────────────────────────────── messages ─────────────────────────────── */
 
+/**
+ * The headers a triage rule may read, keyed by lowercased name.
+ *
+ * Only the names in `TRIAGE_HEADERS` (`src/headers.ts`) appear here, and a
+ * header that is absent — or present but empty — is absent from the object
+ * rather than mapped to an empty string, so "does this message carry a
+ * List-Unsubscribe" is answerable by looking at the keys.
+ */
+export interface MailHeaders {
+  readonly [name: string]: string | undefined
+}
+
 /** One message as the panel list shows it. */
 export interface MailSummary {
   readonly accountId: string
@@ -131,6 +153,8 @@ export interface MailSummary {
   readonly hasAttachments: boolean
   /** Plain-text preview, already truncated. */
   readonly snippet: string
+  /** The triage headers of the message; see {@link MailHeaders}. */
+  readonly headers: MailHeaders
 }
 
 /** One address as the envelope reports it. */
@@ -152,12 +176,24 @@ export interface MailAttachment {
 export interface MailDetail extends MailSummary {
   readonly to: readonly MailAddress[]
   readonly cc: readonly MailAddress[]
-  /** Plain text, truncated to the configured cap. */
+  /** Plain text of the message. Nothing cuts it but the per-body-part cap in `imap.ts`. */
   readonly text: string
-  /** Raw HTML from the sender, truncated. The panel renders it in a sandboxed iframe. */
+  /**
+   * Raw HTML from the sender, except that `cid:` images are already inlined as
+   * `data:` URIs — a browser cannot resolve a content id, and the panel would
+   * otherwise have to block every embedded picture. The panel renders it in a
+   * sandboxed iframe.
+   */
   readonly html?: string
+  /**
+   * The parts the message is made of, read from its structure.
+   *
+   * Nothing here was downloaded: an attachment is listed by name, type and size
+   * from the structure the server already described, and its bytes are fetched
+   * only when somebody clicks it.
+   */
   readonly attachments: readonly MailAttachment[]
-  /** True when the source exceeded the fetch cap and a field was dropped or cut. */
+  /** True when one body part was itself past the per-part cap, so it was cut. */
   readonly truncated: boolean
 }
 
@@ -177,6 +213,35 @@ export interface NormalizedMessage {
   readonly summary: MailSummary
   /** Body preview for the trigger prompt and the list; same text as `summary.snippet`. */
   readonly preview: string
+}
+
+/* ──────────────────────────── reading preferences ─────────────────────── */
+
+/**
+ * How the reading pane shows a message, as opposed to which mailbox it came from.
+ *
+ * One record for the whole plugin rather than one per account: whether remote
+ * images may load is a judgement about the *sender*, and the same sender writes
+ * to every mailbox a person has.
+ */
+export interface MailPreferences {
+  /**
+   * Whether a message's remote images load on their own.
+   *
+   * Default true — the mail is yours and the pictures are part of it. Turned off,
+   * every remote image is replaced before the frame sees it (a tracking pixel is
+   * a read receipt), and the pane offers a per-message load plus a sender
+   * whitelist. Images that arrive *with* the message (an inline part, a `data:`
+   * URI) load either way: they cost no request.
+   */
+  readonly loadRemoteImages: boolean
+  /**
+   * Senders whose remote images load even when {@link loadRemoteImages} is off.
+   *
+   * Lowercased bare addresses, matched against the envelope's `From`. A whole
+   * domain is deliberately not allowed: "qq.com" is not a sender.
+   */
+  readonly trustedSenders: readonly string[]
 }
 
 /* ───────────────────────────── persisted state ────────────────────────── */
@@ -244,9 +309,24 @@ export interface PresetChoice {
 export interface MailConfigView {
   readonly fallbackScanSeconds: number
   readonly maxListMessages: number
+  /**
+   * How many rows one account's window may hold, however many pages are loaded.
+   *
+   * The panel needs this to stop offering "load more" at the ceiling: past it the
+   * list stops growing, and a button that does nothing reads as a broken fetch
+   * rather than as the documented bound it is.
+   */
+  readonly maxWindowMessages: number
   readonly accounts: readonly MailAccount[]
   /** Which trigger modes this deployment can actually run, so the drawer greys the rest out. */
   readonly triggerAvailability: { readonly session: boolean; readonly notify: boolean }
+  /**
+   * Whether the "push to the workbench" switch can be turned on at all.
+   *
+   * Its own field, not part of `triggerAvailability`: the switch belongs to no
+   * mode, so folding it in would read as a fourth mode in the drawer.
+   */
+  readonly workbenchAvailable: boolean
   /**
    * What the drawer may offer for the two preset fields.
    *
@@ -255,6 +335,14 @@ export interface MailConfigView {
    * at trigger time — long after the person who typed it has moved on.
    */
   readonly presets: { readonly agents: readonly PresetChoice[]; readonly permissions: readonly PresetChoice[] }
+  /**
+   * How the reading pane treats remote images, and who is trusted.
+   *
+   * Read by the panel on every render rather than cached in the drawer: the
+   * reading pane and the settings card have to agree about it, and they are two
+   * halves of the same document.
+   */
+  readonly preferences: MailPreferences
 }
 
 /** `GET /dsh-mail/state`. */
@@ -310,6 +398,31 @@ export type MailConfigRequest =
   | { readonly op: 'removeAccount'; readonly accountId: string }
   | { readonly op: 'testAccount'; readonly accountId?: string; readonly draft?: DraftAccount }
   | { readonly op: 'setTrigger'; readonly accountId: string; readonly trigger: TriggerConfig }
+  | { readonly op: 'setPreferences'; readonly preferences: { readonly loadRemoteImages: boolean } }
+  /**
+   * Add or remove one sender from the image whitelist.
+   *
+   * One address at a time rather than "here is the whole list": the panel's list
+   * and the reading pane's "加入白名单" button both edit it, and a whole-list write
+   * would let whichever clicked last drop the other's change.
+   */
+  | { readonly op: 'trustSender'; readonly address: string; readonly trusted: boolean }
+
+/**
+ * The one method this plugin calls on `ctx.console`, declared structurally.
+ *
+ * The workbench is an optional plugin: depending on its package for a type
+ * would make "workbench absent" a compile-time problem instead of the normal
+ * runtime case the contract already handles.
+ */
+export interface ConsoleNoticeLike {
+  notify(notice: {
+    readonly title: string
+    readonly body?: string
+    readonly tone?: 'info' | 'success' | 'warn' | 'error'
+    readonly source?: string
+  }): Promise<unknown>
+}
 
 /** An account the panel is testing before it exists. */
 export interface DraftAccount {
@@ -322,8 +435,65 @@ export interface DraftAccount {
 
 /** The answer every mutating route gives. */
 export type RouteResult =
-  | { readonly ok: true; readonly applied?: number; readonly mailboxes?: number }
+  | {
+      readonly ok: true
+      readonly applied?: number
+      readonly mailboxes?: number
+      /** Rows a "load more" page added to the window. */
+      readonly added?: number
+      /** Whether the folder had nothing older left to give. */
+      readonly exhausted?: boolean
+    }
   | { readonly ok: false; readonly code: string; readonly message: string }
+
+/* ─────────────────────────── what other plugins use ───────────────────── */
+
+/**
+ * The answer to "make sure this folder exists".
+ *
+ * A folder that is already there is a success, not a failure: the caller asked
+ * for it to exist, and it does.
+ */
+export type FolderResult =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly code: string; readonly message: string }
+
+/**
+ * The mail capabilities another plugin may use — `ctx.mail`.
+ *
+ * Verbs only, on purpose: a consumer asks for a folder list or hands over an
+ * action, and never gets the connection itself. That keeps the IMAP session,
+ * its credentials and its reconnect policy this plugin's business, and it is
+ * why the service is optional in the Context — a deployment without this plugin
+ * simply has no mail, which is a normal state rather than a broken one.
+ */
+export interface MailService {
+  /** Snapshot of the configured accounts, with their trigger configs. */
+  accounts(): readonly MailAccount[]
+  /** List an account's folders, as the panel's tree shows them. */
+  listMailboxes(accountId: string): Promise<readonly MailboxView[]>
+  /** Create the folder unless it is already there; never throws. */
+  ensureFolder(accountId: string, path: string): Promise<FolderResult>
+  /** Run one action (markRead / flag / move / delete) over a set of UIDs. */
+  applyAction(action: MailAction): Promise<RouteResult>
+  /** Read one message with its body; undefined when it cannot be read. */
+  fetchDetail(accountId: string, folder: string, uid: number): Promise<MailDetail | undefined>
+}
+
+/**
+ * What `mail/received` carries.
+ *
+ * The body is a callback rather than a string because reading it is the one
+ * expensive IMAP round trip in the whole path, and most messages are decided on
+ * their headers: a listener pays for the fetch only when its own rule needs it.
+ */
+export interface MailReceivedPayload {
+  readonly accountId: string
+  readonly accountName: string
+  readonly summary: MailSummary
+  /** Read the message's text; at most one fetch, however often it is called. */
+  readonly readBody: () => Promise<string>
+}
 
 /* ──────────────────────────── plugin configuration ────────────────────── */
 

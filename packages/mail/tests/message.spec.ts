@@ -1,21 +1,20 @@
 /**
  * What one message has to look like by the time the panel sees it: a preview cut
  * on a word boundary, one address shape from three different sources, and a
- * reading pane whose body and attachment list survive a real multipart message.
+ * reading pane assembled out of the parts the server was asked for.
  *
- * The fixtures are real `.eml` files rather than strings, so the parser runs
- * against the same bytes a server hands over.
+ * The reading-pane tests hand over parts the way a FETCH does — bytes still in
+ * their transfer encoding, `Content-Type` and all — because that is the contract
+ * now: what the server answers with, not what a whole `.eml` looks like. Reading
+ * the structure that names those parts is `imap.spec.ts`'s half.
  */
 
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { MailSummary } from '../src/types.ts'
 import {
   addressOf, addressesOf, isFlagged, isUnseen, parseDetail, snippetOf, textOfHtml, toSummary,
+  type MailPart,
 } from '../src/message.ts'
-
-const multipart = readFileSync(new URL('./fixtures/multipart.eml', import.meta.url))
-const plain = readFileSync(new URL('./fixtures/plain.eml', import.meta.url))
 
 /** The row a detail call is built on; the body is what the test is about. */
 function summaryOf(overrides: Partial<MailSummary> = {}): MailSummary {
@@ -31,17 +30,10 @@ function summaryOf(overrides: Partial<MailSummary> = {}): MailSummary {
     flagged: false,
     hasAttachments: false,
     snippet: '',
+    headers: {},
     ...overrides,
   }
 }
-
-describe('the fixture', () => {
-  it('is the multipart message these tests assume', () => {
-    const text = multipart.toString('utf8')
-    expect(text).toContain('boundary="outer-boundary"')
-    expect(text).toContain('filename="report.pdf"')
-  })
-})
 
 describe('snippetOf', () => {
   it('collapses whitespace and trims', () => {
@@ -114,6 +106,7 @@ describe('toSummary', () => {
       size: 1234,
       hasAttachments: true,
       preview: 'the  body\n\nflattened',
+      source: 'List-Id: owner/repo\r\n <repo.owner.github.com>\r\n\r\nbody\r\n',
     })
     expect(summary).toMatchObject({
       accountId: 'acct',
@@ -127,6 +120,9 @@ describe('toSummary', () => {
       hasAttachments: true,
       snippet: 'the body flattened',
     })
+    // The header section the scan already fetched reaches the row unfolded; see
+    // `headers.spec.ts` for the parsing rules themselves.
+    expect(summary.headers['list-id']).toBe('owner/repo <repo.owner.github.com>')
   })
 
   it('falls back on a missing subject, sender and date', () => {
@@ -141,6 +137,7 @@ describe('toSummary', () => {
       size: undefined,
       hasAttachments: false,
       preview: '',
+      source: undefined,
     })
     expect(summary.subject).toBe('(无主题)')
     expect(summary.from).toEqual({ address: '' })
@@ -166,73 +163,192 @@ describe('textOfHtml', () => {
 })
 
 describe('parseDetail', () => {
-  it('gives the text, the HTML and the attachment list', async () => {
-    const detail = await parseDetail({ source: multipart, summary: summaryOf() })
-    expect(detail.subject).toBe('Quarterly report')
-    expect(detail.from).toEqual({ name: 'Alice Example', address: 'alice@example.com' })
-    expect(detail.to).toEqual([{ name: 'Bob Receiver', address: 'bob@example.com' }])
-    expect(detail.cc).toEqual([{ address: 'carol@example.com' }])
+  /** A part as the server hands one over: bytes still in their transfer encoding. */
+  const part = (contentType: string, body: string, extra: Partial<MailPart> = {}): MailPart =>
+    ({ contentType, content: Buffer.from(body), ...extra })
+
+  it('reads the text and the HTML out of the parts it was handed', async () => {
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [{ name: 'Bob Receiver', address: 'bob@example.com' }],
+      cc: [{ address: 'carol@example.com' }],
+      attachments: [{ part: '2', filename: 'report.pdf', contentType: 'application/pdf', size: 2048 }],
+      parts: {
+        text: [part('text/plain; charset=utf-8', 'Hello   world,\nthis is the plain text body of the quarterly report.')],
+        html: [part('text/html; charset=utf-8', '<html><body><p>Hello <b>world</b></p></body></html>')],
+      },
+    })
     expect(detail.text).toContain('plain text body')
     expect(detail.html).toContain('<b>world</b>')
-    expect(detail.truncated).toBe(false)
-    expect(detail.attachments).toHaveLength(1)
-    expect(detail.attachments[0]).toMatchObject({ filename: 'report.pdf', contentType: 'application/pdf' })
-    expect(detail.attachments[0]?.size).toBeGreaterThan(0)
-    // The part has to be an IMAP section — a content id or an index would make
-    // the download route fetch the wrong part (or nothing at all).
-    expect(detail.attachments[0]?.part).toMatch(/^[1-9]\d*(\.\d+)*$/)
+    expect(detail.to).toEqual([{ name: 'Bob Receiver', address: 'bob@example.com' }])
+    expect(detail.cc).toEqual([{ address: 'carol@example.com' }])
+    // The list is the caller's, read from the structure: nothing here parses a
+    // message, and `part` is an IMAP section so the download route can use it.
+    expect(detail.attachments).toEqual([
+      { part: '2', filename: 'report.pdf', contentType: 'application/pdf', size: 2048 },
+    ])
   })
 
-  it('falls back on an empty subject and a missing sender', async () => {
-    const detail = await parseDetail({ source: plain, summary: summaryOf({ subject: '(无主题)', from: { address: '' } }) })
-    expect(detail.subject).toBe('(无主题)')
-    // The fixture carries no From header, so the summary's stand-in survives.
-    expect(detail.from).toEqual({ address: '' })
-    expect(detail.attachments).toEqual([])
+  it('decodes a transfer encoding and a charset it never looked at', async () => {
+    // The reason the parts are written back into a MIME body rather than decoded
+    // here: base64, quoted-printable and the charset table are the parser's job.
+    // A UTF-8 body would prove nothing, so both halves are encoded.
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: {
+        text: [part('text/plain; charset=utf-8', 'caf=C3=A9', { encoding: 'quoted-printable' })],
+        html: [part('text/html; charset=utf-8', Buffer.from('<p>中文正文</p>', 'utf8').toString('base64'), { encoding: 'base64' })],
+      },
+    })
+    expect(detail.text).toContain('café')
+    expect(detail.html).toContain('中文正文')
   })
 
-  it('cuts a body to the default cap and says so', async () => {
-    const limit = 256 * 1024
-    const source = `Subject: big\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n${'word '.repeat(60_000)}`
-    const detail = await parseDetail({ source, summary: summaryOf() })
-    expect(detail.truncated).toBe(true)
-    expect(Buffer.byteLength(detail.text, 'utf8')).toBeLessThanOrEqual(limit)
-    expect(detail.text.length).toBeGreaterThan(limit - 16)
-  })
-
-  it('cuts to a caller cap without leaving half a character behind', async () => {
-    const source = `Subject: cjk\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n${'中'.repeat(2000)}`
-    const detail = await parseDetail({ source, summary: summaryOf(), maxTextBytes: 1000 })
-    expect(detail.truncated).toBe(true)
-    // 1000 bytes hold 333 whole three-byte characters; the 334th is halved.
-    expect(detail.text).toHaveLength(333)
-    expect(detail.text).not.toContain('\uFFFD')
-  })
-
-  it('reads the text out of an HTML-only message', async () => {
-    // QQ — and everything marketing sends — ships one `text/html` part with no
-    // `text/plain` at all, and mailparser leaves `text` empty for those. That is
-    // how a trigger ends up with a subject and nothing to act on.
-    const source = [
-      'Subject: only html',
-      'MIME-Version: 1.0',
-      'Content-Type: text/html; charset=utf-8',
-      '',
-      '<html><body><style>p{color:red}</style><p>尊敬的用户：</p><p>这是一封只有 HTML 的邮件。</p></body></html>',
-    ].join('\r\n')
-    const detail = await parseDetail({ source, summary: summaryOf() })
+  it('reads the words out of an HTML-only body', async () => {
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: { html: [part('text/html; charset=utf-8', '<html><body><style>p{color:red}</style><p>尊敬的用户：</p></body></html>')] },
+    })
     expect(detail.text).toContain('尊敬的用户')
-    expect(detail.text).toContain('这是一封只有 HTML 的邮件')
     expect(detail.text).not.toContain('color:red')
     expect(detail.html).toContain('尊敬的用户')
   })
 
-  it('keeps the summary it was handed and prefers the parsed headers', async () => {
+  it('inlines a cid: image as a data: URI, which is the only form the pane can show', async () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: {
+        html: [part('text/html; charset=utf-8', '<p>看图</p><img src="cid:logo@Example.com">')],
+        inline: [part('image/png', png.toString('base64'), { encoding: 'base64', cid: '<logo@example.com>' })],
+      },
+    })
+    // Case differs between the header and the reference, which is normal.
+    expect(detail.html).toContain(`data:image/png;base64,${png.toString('base64')}`)
+    expect(detail.html).not.toContain('cid:')
+    // The plain-text fallback is read from the markup before the substitution,
+    // so a base64 payload can never leak into what a prompt receives.
+    expect(detail.text).not.toContain('base64')
+    expect(detail.text).toContain('看图')
+  })
+
+  it('leaves a cid: it cannot resolve as written, for the pane to block', async () => {
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: { html: [part('text/html; charset=utf-8', '<img src="cid:missing@example.com">')] },
+    })
+    expect(detail.html).toContain('cid:missing@example.com')
+  })
+
+  it('shows nothing for a message that carries no body at all', async () => {
+    // An attachment-only mail: the pane has a file to offer and no words, which
+    // is what the message is. Nothing is fetched to find that out.
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [{ part: '1', filename: 'archive.zip', contentType: 'application/zip', size: 99 }],
+      parts: {},
+    })
+    expect(detail.text).toBe('')
+    expect(detail.html).toBeUndefined()
+    expect(detail.attachments).toHaveLength(1)
+  })
+
+  it('hands a long body over whole instead of cutting it', async () => {
+    // 300 KB, past the 256 KB this module used to cut at — which is what arrived
+    // as "正文过长", and, for an HTML body, as a message with no pictures: the cut
+    // lands inside the markup and the browser drops whatever followed it.
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: { text: [part('text/plain; charset=utf-8', 'word '.repeat(60_000))] },
+    })
+    expect(Buffer.byteLength(detail.text, 'utf8')).toBeGreaterThan(256 * 1024)
+    expect(detail.text.trimEnd().endsWith('word')).toBe(true)
+  })
+
+  it('joins several parts of one kind, the way the parser does', async () => {
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: {
+        text: [part('text/plain; charset=utf-8', 'first'), part('text/plain; charset=utf-8', 'second')],
+      },
+    })
+    expect(detail.text).toContain('first')
+    expect(detail.text).toContain('second')
+  })
+
+  it('keeps a message that is one part as one part', async () => {
+    // The parser reads an HTML-only body itself when that body is the whole
+    // message, and leaves it to `textOfHtml` when it is one part of a multipart.
+    // Two different texts — which is why the assembled body has to remember
+    // which one the sender sent.
+    const html = '<html><body><p>first</p><p>second</p></body></html>'
+    const whole = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: { html: [part('text/html; charset=utf-8', html, { root: true })] },
+    })
+    const oneOfSeveral = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: { html: [part('text/html; charset=utf-8', html)] },
+    })
+    expect(whole.text).toBe('first\n\nsecond')
+    expect(oneOfSeveral.text).toBe('first\nsecond')
+  })
+
+  it('does not add a line break the sender never wrote', async () => {
+    // The CRLF before a boundary belongs to the boundary (RFC 2046 §5.1.1). A
+    // part fetched on its own already ends with the one that framed it, so the
+    // assembled body must not add a second — the parser would then hand back a
+    // body one line break longer than the sender's.
+    const detail = await parseDetail({
+      summary: summaryOf(),
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: {
+        html: [part('text/html; charset=utf-8', '<p>正文</p>\r\n')],
+        inline: [part('image/png', Buffer.from('89504e47', 'hex').toString('base64'), { encoding: 'base64', cid: '<a@b>' })],
+      },
+    })
+    expect(detail.html).toBe('<p>正文</p>')
+  })
+
+  it('keeps the row it was handed', async () => {
     const summary = summaryOf({ folder: 'Archive', uid: 99, uidValidity: 5 })
-    const detail = await parseDetail({ source: plain, summary })
+    const detail = await parseDetail({
+      summary,
+      to: [],
+      cc: [],
+      attachments: [],
+      parts: { text: [part('text/plain; charset=utf-8', 'hi')] },
+    })
     expect(detail.folder).toBe('Archive')
     expect(detail.uid).toBe(99)
     expect(detail.uidValidity).toBe(5)
-    expect(detail.to).toEqual([{ address: 'someone@example.com' }])
   })
 })

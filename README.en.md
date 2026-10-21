@@ -22,7 +22,7 @@
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.2` | Mounts the MCP servers Codex / Claude Code already declare, and manages every agent tool's skills by **linking** them into dsh's own skills directory; the same package ships the Settings page that configures both |
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | The workbench: dsh's home surface. Its home page lists the plugins that **adopt its panel contract** (card grid / list / compact, search and pinning) and opens them from there — a plugin that has not adopted it never appears. It is also the notification hub: plugins hand a notice to `ctx.console.notify()` and the workbench picks how to deliver it from **interchangeable, multi-select channels** (desktop notification / in-app centre / sound). Its UI stays entirely inside DSH's design system (`ui-primitives` controls and `--dsw-*` tokens) instead of a look of its own |
-| [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.2.0` | A mail panel: read / search / flag / move / delete (**no sending**), and a new message that opens an agent session, lands in one you already have, or just lights up the panel. With the workbench installed it lists there instead of taking a sidebar row of its own |
+| [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | A mail panel: read / search / flag / move / delete (**no sending**). It is also the **mail I/O provider**: other plugins get `ctx.mail` and the `mail/received` event. With the workbench installed it lists there instead of taking a sidebar row of its own |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | Web search through your **signed-in DeepSeek account**, independent of the model the conversation runs on: chat pinned to a gateway or a third-party model still searches, with no extra search key |
 
 Each package's install steps, configuration fields, panel details and known limitations live in its own README (linked above). What follows is what the packages share, and how this repository itself is developed.
@@ -121,7 +121,7 @@ A pnpm monorepo: one directory under `packages/*` is one package.
 |---|---|
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import` (MCP servers + skill import) |
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console` (workbench home + notification hub) |
-| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (mail panel) |
+| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (mail panel and the mail I/O service) |
 
 ```sh
 pnpm install

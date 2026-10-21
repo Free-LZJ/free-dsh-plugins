@@ -88,8 +88,81 @@ function port(value: unknown): number | undefined {
     : undefined
 }
 
-/** One filter group: strings only, trimmed, empties dropped, absent when nothing is left. */
-function filterGroup(value: unknown): readonly string[] | undefined {
+/** Most senders the image whitelist holds; past this the file is the wrong shape for a list. */
+export const MAX_TRUSTED_SENDERS = 200
+
+/**
+ * A sender address as the whitelist stores it.
+ *
+ * Lowercased because the same person writes as `Alice@Example.com` and
+ * `alice@example.com` and means the same sender. The shape check is deliberately
+ * loose — this decides a whitelist entry, not whether a mail can be delivered —
+ * but it does have to be one address: an entry with a comma or a display name in
+ * it would match nothing and be silently useless.
+ * @param value - the address as some layer reported it.
+ * @returns the key to store and compare, or undefined when it is not an address.
+ */
+export function senderKey(value: unknown): string | undefined {
+  const raw = text(value)
+  if (raw === undefined) return undefined
+  const key = raw.toLowerCase()
+  return /^[^\s@<>,;"]+@[^\s@<>,;"]+$/.test(key) ? key : undefined
+}
+
+/**
+ * Read a stored whitelist: addresses only, deduplicated, in the order written.
+ * @param value - the stored list, whatever it turned out to be.
+ * @returns the usable entries, capped at {@link MAX_TRUSTED_SENDERS}.
+ */
+export function trustedSendersOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const senders: string[] = []
+  for (const entry of value) {
+    const key = senderKey(entry)
+    if (key === undefined || seen.has(key)) continue
+    seen.add(key)
+    senders.push(key)
+    if (senders.length >= MAX_TRUSTED_SENDERS) break
+  }
+  return senders
+}
+
+/**
+ * The whitelist with one sender added or removed.
+ *
+ * Adding puts the address first: it is the one a person is about to look for in
+ * the list, and it means the cap drops whatever they stopped using rather than
+ * the entry they just made.
+ * @param current - the stored whitelist.
+ * @param address - the address to add or remove, already normalized.
+ * @param trusted - true to add, false to remove.
+ * @returns the new list.
+ */
+export function withTrustedSender(current: readonly string[], address: string, trusted: boolean): string[] {
+  const rest = trustedSendersOf(current).filter(one => one !== address)
+  return trusted ? [address, ...rest].slice(0, MAX_TRUSTED_SENDERS) : rest
+}
+
+/**
+ * The one preference the drawer can change.
+ *
+ * A whitelist edit travels as its own operation (see `MailConfigRequest`), so
+ * this carries a single flag and nothing else — a "whole preferences object"
+ * would let a stale drawer clear a list it never touched.
+ * @param input - the posted `preferences`.
+ * @returns the flag, or the field that was wrong.
+ */
+export function normalizePreferences(
+  input: unknown,
+): { ok: true; value: { loadRemoteImages: boolean } } | { ok: false; field: string; message: string } {
+  if (!isRecord(input)) return { ok: false, field: 'preferences', message: '必须是对象' }
+  const load = input['loadRemoteImages']
+  if (typeof load !== 'boolean') return { ok: false, field: 'loadRemoteImages', message: '必须是布尔值' }
+  return { ok: true, value: { loadRemoteImages: load } }
+}
+
+/** One filter group: strings only, trimmed, empties dropped, absent when nothing is left. */function filterGroup(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined
   const items = value.flatMap((item) => {
     const kept = text(item)
@@ -192,17 +265,19 @@ export function normalizeTrigger(input: unknown): TriggerConfig {
   const prompt = promptTemplate === undefined ? {} : { promptTemplate }
   const rules = normalizeRules(source.rules)
   const withRules = rules === undefined ? {} : { rules }
+  // A free-standing switch, not a mode: it rides along with whichever mode runs.
+  const notifyWorkbench = source.notifyWorkbench === true ? { notifyWorkbench: true } : {}
   if (mode === 'session') {
     const session = normalizeSession(source.session)
-    if (session === undefined) return { mode: 'panel', filters, ...prompt, ...withRules }
-    return { mode, session, filters, ...prompt, ...withRules }
+    if (session === undefined) return { mode: 'panel', filters, ...prompt, ...withRules, ...notifyWorkbench }
+    return { mode, session, filters, ...prompt, ...withRules, ...notifyWorkbench }
   }
   if (mode === 'notify') {
     const sessionId = text(isRecord(source.notify) ? source.notify.sessionId : undefined)
-    if (sessionId === undefined) return { mode: 'panel', filters, ...prompt, ...withRules }
-    return { mode, notify: { sessionId }, filters, ...prompt, ...withRules }
+    if (sessionId === undefined) return { mode: 'panel', filters, ...prompt, ...withRules, ...notifyWorkbench }
+    return { mode, notify: { sessionId }, filters, ...prompt, ...withRules, ...notifyWorkbench }
   }
-  return { mode, filters, ...prompt, ...withRules }
+  return { mode, filters, ...prompt, ...withRules, ...notifyWorkbench }
 }
 
 /**

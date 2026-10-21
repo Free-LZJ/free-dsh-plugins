@@ -31,3 +31,6 @@ export const CONFIG_PATH = `${ROUTE_PREFIX}/config`
 
 /** Route the panel asks for an immediate scan through. */
 export const REFRESH_PATH = `${ROUTE_PREFIX}/refresh`
+
+/** Route the panel asks for one older page of mail through. */
+export const MORE_PATH = `${ROUTE_PREFIX}/more`

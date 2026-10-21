@@ -21,7 +21,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { MailDetail, MailState, RouteResult } from './types.ts'
 import {
-  ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
+  ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
 } from './paths.ts'
 
 /** Header a mutating request must carry, together with a JSON content type. */
@@ -33,18 +33,21 @@ export const MAX_BODY_BYTES = 64 * 1024
 /**
  * Content-Security-Policy the panel document is served under.
  *
- * `img-src` has to admit `https:` even though the panel itself loads no remote
- * image: a `srcdoc` frame inherits its parent's policy, so a narrower parent
- * would veto the reading pane's "show images" button no matter what the frame's
- * own meta tag says (measured in a real Chromium). Not loading remote images by
- * default is the panel's job — it strips the original URLs before they ever
- * reach the frame.
+ * `img-src` has to admit remote images even though the panel itself loads none:
+ * a `srcdoc` frame inherits its parent's policy and a frame can only tighten it,
+ * so a narrower parent would veto the reading pane's "显示图片" button no matter
+ * what the frame's own meta tag says (measured in a real Chromium). Both schemes
+ * are listed because the mail that arrives uses both, and the frame's own policy
+ * allows `http:` for the same reason it allows `https:` — the button is a
+ * per-message decision about *remote*, not about which scheme is prettier.
+ * Not loading remote images by default is the panel's job — it strips the
+ * original URLs before they ever reach the frame.
  */
 export const PANEL_CSP = [
   "default-src 'none'",
   "script-src 'unsafe-inline'",
   "style-src 'unsafe-inline'",
-  'img-src data: https:',
+  'img-src data: http: https:',
   "connect-src 'self'",
   "frame-src 'self'",
   "base-uri 'none'",
@@ -86,6 +89,16 @@ export interface RouteHost {
    * @param input - `{ accountId? }`; every account when absent.
    */
   refresh(input: unknown): Promise<RouteResult>
+  /**
+   * Fetch one older page, because somebody asked for the history.
+   *
+   * The counterpart of `refresh`, which can only ever walk forwards: a scan
+   * starts above the cursor, so mail older than the window is reachable only
+   * through a pass that is told where to stop.
+   * @param input - `{ accountId?, folder? }`; every account, and the watched
+   * folder, when absent.
+   */
+  more(input: unknown): Promise<RouteResult>
 }
 
 /**
@@ -368,6 +381,7 @@ export function registerRoutes(ctx: Context, host: RouteHost): void {
     mountMutation(ACTION_PATH, 'action', (input) => host.action(input))
     mountMutation(CONFIG_PATH, 'config', (input) => host.config(input))
     mountMutation(REFRESH_PATH, 'refresh', (input) => host.refresh(input))
+    mountMutation(MORE_PATH, 'more', (input) => host.more(input))
   })
 }
 

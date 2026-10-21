@@ -27,9 +27,10 @@
 
 import { ImapFlow, type ImapFlowOptions } from 'imapflow'
 import type {
-  AccountStatus, DraftAccount, MailAccount, MailAction, MailDetail, MailboxView, NormalizedMessage, RouteResult,
+  AccountStatus, DraftAccount, FolderResult, MailAccount, MailAction, MailAttachment, MailDetail, MailboxView,
+  NormalizedMessage, RouteResult,
 } from './types.ts'
-import { parseDetail, previewOf, snippetOf, toSummary } from './message.ts'
+import { type MailPart, parseDetail, previewOf, snippetOf, toSummary, addressesOf } from './message.ts'
 
 /** Version reported in the RFC 2971 ID command, next to the plugin's own name. */
 const CLIENT_VERSION = '0.1.0'
@@ -56,14 +57,18 @@ const MAX_ACTION_UIDS = 500
 const PREVIEW_MAX_BYTES = 2 * 1024
 
 /**
- * Bytes of a message the reading pane will download.
+ * Longest single body part the reading pane will download.
  *
- * RFC 4549 §4.6 is a MUST: check the size before retrieving a message, and never
- * pull an unbounded body. Two megabytes is far past what a pane can show (the
- * text is cut to 256 KB anyway) while still covering the ordinary mail a user
- * opens; anything bigger is cut by the server, and the pane says so.
+ * The bound is on *a part*, not on the message, and that is the whole point. What
+ * used to be capped was the RFC822 source, so a message whose body was seventy
+ * kilobytes and whose PDF was three megabytes came back cut through the middle,
+ * and the pane announced a truncated body it had in fact received in full.
+ * Attachments are not fetched at all any more — they stream when they are
+ * clicked — and what is fetched is the words and the pictures the pane draws.
+ * Sixteen megabytes of *body* is not a mail: a part that reaches this is one
+ * whose beginning is shown, with the notice that says so.
  */
-const MAX_DETAIL_BYTES = 2 * 1024 * 1024
+export const MAX_BODY_PART_BYTES = 16 * 1024 * 1024
 
 /** First reconnect delay, doubling per attempt up to {@link BACKOFF_MAX_MS}. */
 const BACKOFF_BASE_MS = 5_000
@@ -102,22 +107,38 @@ const SUMMARY_QUERY = {
 } as const
 
 /**
- * What the reading pane asks for: the head of the source, parsed on arrival.
+ * What the reading pane asks for first: everything about a message but its bytes.
  *
- * `source` is bounded to {@link MAX_DETAIL_BYTES} rather than `true`: a 30 MB
- * message would otherwise stall the pane and download every byte of itself.
- * `bodyStructure` travels in the same command because a truncated body is only
- * readable against the structure it was cut from (RFC 4549 §4.6, Note).
+ * The structure is what makes the rest possible — it names the parts, their sizes
+ * and their content ids, so a second command can ask for the handful of them that
+ * a reader actually needs. The envelope travels with it because the row is built
+ * from it, and the flags because opening a message is also when it is marked read.
+ * Asking for the whole `source` here is what used to make every attachment cost
+ * its bytes twice: once on the wire, once in the parser.
  */
-const DETAIL_QUERY = {
+const DETAIL_HEAD_QUERY = {
   uid: true,
   flags: true,
   envelope: true,
   internalDate: true,
-  size: true,
   bodyStructure: true,
-  source: { maxLength: MAX_DETAIL_BYTES },
 } as const
+
+/**
+ * What it asks for second: the parts its body is made of, and nothing else.
+ *
+ * One command for all of them, because they are read together; each carries
+ * {@link MAX_BODY_PART_BYTES} rather than `true`, since a cap is required before
+ * the bytes are asked for (RFC 4549 §4.6) and this is the only one left.
+ * @param sections - the parts the structure said the body is made of.
+ * @returns the fetch query.
+ */
+function partsQuery(sections: readonly string[]): Record<string, unknown> {
+  return {
+    uid: true,
+    bodyParts: sections.map(section => ({ key: section, start: 0, maxLength: MAX_BODY_PART_BYTES })),
+  }
+}
 
 /** The slice of imapflow this module uses — injectable so tests never open a socket. */
 export interface ImapClientLike {
@@ -135,6 +156,14 @@ export interface ImapClientLike {
   noop(): Promise<void>
   close(): void
   list(options?: unknown): Promise<readonly { path: string; specialUse?: string; flags?: ReadonlySet<string> }[]>
+  /**
+   * Create a mailbox, and subscribe to it.
+   *
+   * `created: false` is imapflow's answer for a mailbox the server says already
+   * exists (RFC 5530 `ALREADYEXISTS`) — not an error. It answers `undefined`
+   * when the session is not in an authenticated state at all.
+   */
+  mailboxCreate(path: string): Promise<{ path: string; created?: boolean } | undefined>
   status(path: string, query: unknown): Promise<{ messages?: number; unseen?: number } | false>
   getMailboxLock(path: string): Promise<{ release(): void }>
   search(query: unknown, options?: unknown): Promise<number[] | false | undefined>
@@ -155,6 +184,8 @@ export interface ImapClientLike {
     size?: number
     source?: Buffer
     bodyStructure?: unknown
+    /** One entry per `bodyParts` section the server answered for, keyed by section. */
+    bodyParts?: Map<string, Buffer>
   } | false | undefined>
   messageFlagsAdd(range: unknown, flags: string[], options?: unknown): Promise<boolean>
   messageFlagsRemove(range: unknown, flags: string[], options?: unknown): Promise<boolean>
@@ -276,6 +307,15 @@ export interface ScanOptions {
   readonly folder: string
   /** Start UID (inclusive); 1 means "everything". */
   readonly fromUid: number
+  /**
+   * Highest UID to look at, exclusive; absent means "no upper bound".
+   *
+   * This is what makes the pass walk *backwards*. An incremental scan asks for
+   * everything above the cursor, but a window that already holds the newest N
+   * messages has to ask a different question — "the newest N below this one" —
+   * and the open-ended `from:*` range cannot express it.
+   */
+  readonly beforeUid?: number | undefined
   /** Highest UID the caller already processed, or 0. A change in uidValidity resets it. */
   readonly knownUidValidity: number
   readonly timeoutSeconds: number
@@ -387,6 +427,13 @@ function fieldOf(source: unknown, key: string): unknown {
   return (source as Record<string, unknown>)[key]
 }
 
+/** A non-empty trimmed string, or undefined for anything else. */
+function textOf(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length === 0 ? undefined : trimmed
+}
+
 /** Describe any thrown value for a log line or an error code. */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -457,6 +504,187 @@ function hasAttachmentsOf(structure: unknown): boolean {
   return !type.toLowerCase().startsWith('text/') && !type.toLowerCase().startsWith('multipart/')
 }
 
+/** Stand-in name for an attachment whose structure reports none. */
+const NO_FILENAME = '(无文件名)'
+
+/** Content type for a part whose structure reports none. */
+const OCTET_STREAM = 'application/octet-stream'
+
+/** One node of the tree `bodyStructure` reports, as much of it as this module reads. */
+interface StructureNode {
+  /** IMAP section number; absent on the root of a message that is not multipart. */
+  readonly part?: string | undefined
+  readonly type?: string | undefined
+  readonly parameters?: Readonly<Record<string, string>> | undefined
+  readonly disposition?: string | undefined
+  readonly dispositionParameters?: Readonly<Record<string, string>> | undefined
+  /** `Content-ID`, for a part an HTML body names. */
+  readonly id?: string | undefined
+  /** `Content-Transfer-Encoding`, which the part has to be read back with. */
+  readonly encoding?: string | undefined
+  readonly size?: number | undefined
+  readonly childNodes?: readonly StructureNode[] | undefined
+}
+
+/** One part worth asking the server for, before its bytes exist. */
+interface PartPlan {
+  readonly section: string
+  readonly type: string
+  readonly parameters?: Readonly<Record<string, string>> | undefined
+  readonly encoding?: string | undefined
+  /** Set only on a part the HTML names by content id. */
+  readonly cid?: string | undefined
+  readonly size?: number | undefined
+  /** True when this part is the whole message rather than one of a multipart. */
+  readonly root?: boolean | undefined
+}
+
+/** What one message's structure says about the parts its reader needs. */
+export interface MessageLayout {
+  readonly text: readonly PartPlan[]
+  readonly html: readonly PartPlan[]
+  readonly inline: readonly PartPlan[]
+  readonly attachments: readonly MailAttachment[]
+}
+
+/**
+ * Whether a leaf is the message's own body, and which half of it.
+ *
+ * The rule is the one the parser applies to the same tree: a body part has no
+ * `Content-Disposition`, or an inline one. `Content-Disposition: attachment` on a
+ * `text/plain` part is a `.txt` the sender attached, and handing it to the pane
+ * as the message would show a file as the mail.
+ * @param node - one leaf of the structure.
+ * @returns which body it is, or undefined when it is a file.
+ */
+function bodyKindOf(node: StructureNode): 'text' | 'html' | undefined {
+  const type = (node.type ?? '').toLowerCase()
+  if (type !== 'text/plain' && type !== 'text/html') return undefined
+  const disposition = (node.disposition ?? '').toLowerCase()
+  if (disposition !== '' && disposition !== 'inline') return undefined
+  return type === 'text/html' ? 'html' : 'text'
+}
+
+/** One leaf as a plan for fetching it. */
+function planOf(node: StructureNode): PartPlan {
+  // A non-multipart message has no part numbers at all: RFC 3501 §6.4.5 gives it
+  // exactly one part, and `1` addresses it — on the wire and in the download
+  // route's section check alike.
+  const number = textOf(node.part)
+  const section = number ?? '1'
+  const encoding = textOf(node.encoding)
+  return {
+    section,
+    type: textOf(node.type) ?? OCTET_STREAM,
+    ...(node.parameters === undefined ? {} : { parameters: node.parameters }),
+    ...(encoding === undefined ? {} : { encoding }),
+    ...(typeof node.size === 'number' ? { size: node.size } : {}),
+    // No number means the structure described one part, not a tree — which the
+    // assembled body has to keep saying, or the parser reads an HTML-only body
+    // differently from the way it read the message it came from.
+    ...(number === undefined ? { root: true } : {}),
+  }
+}
+
+/** The attachment a leaf describes, for the list the pane draws. */
+function attachmentOf(node: StructureNode, plan: PartPlan): MailAttachment {
+  const filename = textOf(node.dispositionParameters?.['filename']) ?? textOf(node.parameters?.['name'])
+  return {
+    part: plan.section,
+    filename: filename ?? NO_FILENAME,
+    contentType: plan.type,
+    size: plan.size ?? 0,
+  }
+}
+
+/**
+ * Read one message's structure into the parts its reader needs.
+ *
+ * This is what makes opening a message cost its body rather than its size: the
+ * structure already describes every part — how big it is, what it is, what it is
+ * called — so the attachment list is built without downloading an attachment,
+ * and the fetch that follows asks only for the words and the pictures.
+ *
+ * A `message/rfc822` part is left at its wrapper: an attached mail is one
+ * attachment, and walking into it would hand the pane the attached message's body
+ * as if it were this one's.
+ * @param structure - the `bodyStructure` imapflow reported.
+ * @returns the parts to fetch, and the attachment list to draw.
+ */
+export function layoutOf(structure: unknown): MessageLayout {
+  const text: PartPlan[] = []
+  const html: PartPlan[] = []
+  const inline: PartPlan[] = []
+  const attachments: MailAttachment[] = []
+
+  const visit = (raw: unknown): void => {
+    if (raw === null || typeof raw !== 'object') return
+    const node = raw as StructureNode
+    const children = node.childNodes
+    const encapsulated = (node.type ?? '').toLowerCase() === 'message/rfc822'
+    if (Array.isArray(children) && children.length > 0 && !encapsulated) {
+      for (const child of children) visit(child)
+      return
+    }
+    const plan = planOf(node)
+    const kind = bodyKindOf(node)
+    if (kind === undefined) {
+      const cid = textOf(node.id)
+      if (cid !== undefined) inline.push({ ...plan, cid })
+      attachments.push(attachmentOf(node, plan))
+      return
+    }
+    if (kind === 'html') html.push(plan)
+    else text.push(plan)
+  }
+
+  visit(structure)
+  return { text, html, inline, attachments }
+}
+
+/**
+ * One part's `Content-Type` as it is handed back to the parser.
+ *
+ * The parameters are half the part: `charset` is what turns the bytes into text,
+ * and dropping it turns a GB18030 body into mojibake. `name` is left out on
+ * purpose — a body part that carries a file name is one the parser files as an
+ * attachment, which would lose the body it belongs to.
+ * @param plan - the part.
+ * @returns the header value.
+ */
+function contentTypeOf(plan: PartPlan): string {
+  const parameters = Object.entries(plan.parameters ?? {})
+    .filter(([key]) => key.toLowerCase() !== 'name')
+    .map(([key, value]) => `${key}="${value.replace(/["\\]/g, '')}"`)
+  return [plan.type, ...parameters].join('; ')
+}
+
+/**
+ * The plans the server answered for, with their bytes.
+ *
+ * A section the server did not answer is dropped rather than faked: a part that
+ * is gone is a part the pane does not show, and an empty one would render as a
+ * blank image or an empty paragraph.
+ * @param plans - what the structure said to fetch.
+ * @param parts - what came back, keyed by section.
+ * @returns the parts, or undefined when none of them arrived.
+ */
+function materialize(plans: readonly PartPlan[], parts: ReadonlyMap<string, Buffer> | undefined): MailPart[] | undefined {
+  if (parts === undefined) return undefined
+  const built = plans.flatMap((plan): MailPart[] => {
+    const content = parts.get(plan.section) ?? parts.get(plan.section.toUpperCase())
+    if (content === undefined) return []
+    return [{
+      contentType: contentTypeOf(plan),
+      content,
+      ...(plan.encoding === undefined ? {} : { encoding: plan.encoding }),
+      ...(plan.cid === undefined ? {} : { cid: plan.cid }),
+      ...(plan.root === true ? { root: true } : {}),
+    }]
+  })
+  return built.length === 0 ? undefined : built
+}
+
 /**
  * One pass over a folder, on a connection the caller already owns.
  *
@@ -489,6 +717,12 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
   // A failed pass must leave the cursor untouched: `fromUid - 1` is what the
   // caller had before it computed `from`.
   const unadvanced = from - 1
+  // Exclusive upper bound for a backwards pass. A window that inverts
+  // (`before <= from`) is empty and is answered without a command: `UID SEARCH
+  // 1:0` is a malformed range, not an empty one, and some servers answer BAD.
+  const before = options.beforeUid === undefined
+    ? undefined
+    : Math.max(1, Math.trunc(options.beforeUid))
 
   // The SELECT this connection holds has already answered which generation the
   // folder is (UIDVALIDITY). Its UIDNEXT is deliberately not used to decide
@@ -539,7 +773,14 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
     // that last message too — the `uid >= from` filter below is what reads the
     // answer, and without it this becomes "forever new mail" (RFC 3501 §6.4.8
     // Note). One SEARCH per pass is the price of a cursor the server agrees with.
-    const range = `${String(from)}:*`
+    //
+    // `beforeUid` closes the range instead, which is how a backwards pass asks
+    // for "the newest N below what I already hold". An empty window answers
+    // without a command.
+    if (before !== undefined && before <= from) {
+      return { messages: [], uidValidity, maxUid: unadvanced, searchUnreliable: false, refreshed, vanished, counters }
+    }
+    const range = before === undefined ? `${String(from)}:*` : `${String(from)}:${String(before - 1)}`
     const found = await client.search({ uid: range }, { uid: true })
     if (found === false || found === undefined) {
       // `maxUid: fromUid - 1`: the command listed nothing, so nothing may be
@@ -552,9 +793,11 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
     if (uids.length === 0 && counters.total > 0 && from <= 1) {
       // SEARCH says "nothing" while the mailbox says "plenty": enumerate
       // instead. UIDs only — the bodies are fetched in the bounded pass below.
+      // The same range is used, so the fallback cannot walk past a backwards
+      // window's upper bound either.
       searchUnreliable = true
       const everything: number[] = []
-      for await (const message of client.fetch('1:*', { uid: true }, { uid: true })) {
+      for await (const message of client.fetch(range, { uid: true }, { uid: true })) {
         if (Number.isSafeInteger(message.uid)) everything.push(message.uid)
       }
       uids = everything
@@ -565,12 +808,15 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
     // one the user can still see; taking the oldest would walk a 5000-message
     // backlog 100 messages at a time and hand every one of them to the
     // trigger on the way. `.slice(-0)` is `slice(0)` — the whole array — so a
-    // zero cap is its own case.
+    // zero cap is its own case. A backwards window reads the same way: "the N
+    // closest to what the caller already holds" is exactly the page it asked for.
     const limit = Math.max(0, Math.trunc(options.maxMessages))
+    const inWindow = (uid: number): boolean =>
+      Number.isSafeInteger(uid) && uid >= from && (before === undefined || uid < before)
     const batch = limit === 0
       ? []
       : [...new Set(uids)]
-        .filter(uid => Number.isSafeInteger(uid) && uid >= from)
+        .filter(inWindow)
         .sort((a, b) => a - b)
         .slice(-limit)
     if (batch.length === 0) {
@@ -580,7 +826,10 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
     const messages: NormalizedMessage[] = []
     let maxUid = unadvanced
     for await (const message of client.fetch(batch, SUMMARY_QUERY, { uid: true })) {
-      if (!Number.isSafeInteger(message.uid) || message.uid < from) continue
+      // The server answers the batch it was given, but a row outside the window
+      // must never enter the snapshot: it would be a message the caller asked
+      // not to see. `uid < before` is what keeps a backwards page a page.
+      if (!Number.isSafeInteger(message.uid) || !inWindow(message.uid)) continue
       // Only the head of the body was fetched, which is what a preview needs.
       const preview = message.source === undefined ? '' : await previewOf(message.source)
       const summary = toSummary({
@@ -594,6 +843,7 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
         size: message.size,
         hasAttachments: hasAttachmentsOf(message.bodyStructure),
         preview,
+        source: message.source,
       })
       messages.push({ summary, preview: summary.snippet })
       if (message.uid > maxUid) maxUid = message.uid
@@ -603,6 +853,21 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
     // The lock is this pass's own — it is released even when the pass throws,
     // because the connection outlives the pass and must be left SELECTed.
     lock.release()
+    // …and left SELECTed on the folder IDLE announces for. `getMailboxLock` keeps
+    // whatever mailbox the last command selected, and IDLE only reports the
+    // selected one (RFC 2177 §3), so a pass over another folder — which is what
+    // every "load more" page is — would leave the account quietly watching the
+    // wrong mailbox: new INBOX mail would stop arriving until some later pass
+    // happened to switch it back.
+    if (options.folder !== WATCHED_FOLDER) {
+      try {
+        const restore = await client.getMailboxLock(WATCHED_FOLDER)
+        restore.release()
+      } catch {
+        // Failing to restore must not fail a page the caller already holds; the
+        // next scan reselects and reports whatever is actually wrong.
+      }
+    }
   }
 }
 
@@ -644,6 +909,16 @@ export interface MailConnection {
   lastError(): string | undefined
   listMailboxes(): Promise<readonly MailboxView[]>
   /**
+   * Create a folder, unless the server already has one with that name.
+   *
+   * Answers rather than throws, because "the folder could not be created" is a
+   * normal outcome a caller has to act on (offer the user the manual step),
+   * not an exception. A folder that already exists is a success.
+   * @param path - the mailbox path to create.
+   * @returns the folder's final path, or why it could not be created.
+   */
+  mailboxCreate(path: string): Promise<FolderResult>
+  /**
    * One scan pass over a folder, on this connection.
    *
    * Reuses the session instead of opening another one: the account's login, TLS
@@ -653,7 +928,7 @@ export interface MailConnection {
    * @returns what the pass found.
    */
   scan(options: Omit<ScanOptions, 'account' | 'password' | 'timeoutSeconds'>): Promise<ScanOutcome>
-  fetchDetail(folder: string, uid: number, maxTextBytes?: number): Promise<MailDetail | undefined>
+  fetchDetail(folder: string, uid: number): Promise<MailDetail | undefined>
   downloadAttachment(folder: string, uid: number, part: string): Promise<{ filename: string; contentType: string; content: NodeJS.ReadableStream } | undefined>
   applyAction(action: MailAction): Promise<RouteResult>
 }
@@ -848,6 +1123,28 @@ export function createConnection(
       return await scanFolder(requireClient(), { ...options, account, password, timeoutSeconds })
     },
 
+    async mailboxCreate(path: string): Promise<FolderResult> {
+      if (client === undefined) {
+        return { ok: false, code: 'account_offline', message: `mailbox ${account.id} is not connected` }
+      }
+      const current = client
+      try {
+        // imapflow subscribes to the new mailbox on the way out. A mailbox the
+        // server says already exists comes back as `created: false` rather than
+        // as a throw, which is exactly the "make sure it exists" contract.
+        const created = await current.mailboxCreate(path)
+        if (created === undefined) {
+          return { ok: false, code: 'account_offline', message: `mailbox ${account.id} is not authenticated` }
+        }
+        return { ok: true, path: created.path }
+      } catch (error: unknown) {
+        const reason = describe(error)
+        return isOffline(fieldOf(error, 'code'))
+          ? { ok: false, code: 'account_offline', message: reason }
+          : { ok: false, code: 'imap_rejected', message: reason }
+      }
+    },
+
     async listMailboxes(): Promise<readonly MailboxView[]> {
       if (client === undefined) return []
       const current = client
@@ -866,10 +1163,12 @@ export function createConnection(
       return views
     },
 
-    async fetchDetail(folder: string, uid: number, maxTextBytes?: number): Promise<MailDetail | undefined> {
+    async fetchDetail(folder: string, uid: number): Promise<MailDetail | undefined> {
       const current = requireClient()
       const lock = await current.getMailboxLock(folder)
-      let message: Awaited<ReturnType<ImapClientLike['fetchOne']>>
+      let head: Awaited<ReturnType<ImapClientLike['fetchOne']>>
+      let layout: MessageLayout
+      let parts: ReadonlyMap<string, Buffer> | undefined
       let uidValidity = 0
       try {
         // The SELECT the lock just performed is where the generation number
@@ -877,40 +1176,64 @@ export function createConnection(
         // asking STATUS about a mailbox this session has selected is what
         // RFC 3501 §6.3.10 tells clients not to do. It arrives as a BigInt.
         uidValidity = asCount(current.mailbox?.uidValidity) ?? 0
-        message = await current.fetchOne(String(uid), DETAIL_QUERY, { uid: true })
+        head = await current.fetchOne(String(uid), DETAIL_HEAD_QUERY, { uid: true })
+        if (head === false || head === undefined) return undefined
+        // Two commands rather than one, and the second one is the small one: the
+        // structure says which parts the body is made of, and only those are
+        // asked for. This is what a message with a large attachment stops paying
+        // for — its body is fetched, and the attachment waits for a click.
+        layout = layoutOf(head.bodyStructure)
+        const wanted = [...layout.text, ...layout.html, ...layout.inline].map(plan => plan.section)
+        const answered = wanted.length === 0
+          ? undefined
+          : await current.fetchOne(String(uid), partsQuery(wanted), { uid: true })
+        parts = answered === false || answered === undefined ? undefined : answered.bodyParts
       } finally {
         lock.release()
       }
-      if (!message || message.source === undefined) return undefined
       const summary = toSummary({
         accountId: account.id,
         folder,
-        uid: message.uid,
+        uid: head.uid,
         uidValidity,
-        flags: message.flags ?? new Set<string>(),
-        envelope: message.envelope,
-        internalDate: message.internalDate,
-        size: message.size,
-        hasAttachments: hasAttachmentsOf(message.bodyStructure),
+        flags: head.flags ?? new Set<string>(),
+        envelope: head.envelope,
+        internalDate: head.internalDate,
+        size: head.size,
+        hasAttachments: layout.attachments.length > 0,
         preview: '',
+        // Nothing on this path reads a triage header, and the head that carries
+        // them is exactly what is not fetched here — see DETAIL_HEAD_QUERY.
+        source: undefined,
       })
-      const detail = await parseDetail(maxTextBytes === undefined
-        ? { source: message.source, summary }
-        : { source: message.source, summary, maxTextBytes })
-      // The fetch itself was capped (RFC 4549 §4.6), so a body that came back at
-      // the cap — or a message whose RFC822.SIZE says it is bigger than one — was
-      // cut before the parser ever saw it, and the parser cannot tell: the pane's
-      // "content was truncated" notice is the only thing that says so.
-      const capped = message.size === undefined
-        ? message.source.byteLength >= MAX_DETAIL_BYTES
-        : message.size > MAX_DETAIL_BYTES
-      // The list row's preview and paperclip come from the parsed body once it
-      // is in hand, which is both cheaper and more accurate than the structure.
+      const detail = await parseDetail({
+        summary,
+        to: addressesOf(fieldOf(head.envelope, 'to')),
+        cc: addressesOf(fieldOf(head.envelope, 'cc')),
+        // The list comes from the structure, never from a download: an
+        // attachment that had to be fetched to be listed is an attachment the
+        // pane paid for before the user asked for it.
+        attachments: layout.attachments,
+        parts: {
+          text: materialize(layout.text, parts),
+          html: materialize(layout.html, parts),
+          inline: materialize(layout.inline, parts),
+        },
+      })
+      // A part that came back at the cap — or one the structure already said was
+      // bigger than one — was cut before the parser saw it, and the parser cannot
+      // tell. The notice the pane draws is the only thing that says so.
+      const cut = [...layout.text, ...layout.html, ...layout.inline].some((plan) => {
+        const received = parts?.get(plan.section)?.byteLength ?? 0
+        return received >= MAX_BODY_PART_BYTES || (plan.size ?? 0) > MAX_BODY_PART_BYTES
+      })
+      // The list row's preview and paperclip come from the parsed body once it is
+      // in hand, which is more accurate than the structure's own guess.
       return {
         ...detail,
-        truncated: detail.truncated || capped,
+        truncated: cut,
         snippet: snippetOf(detail.text),
-        hasAttachments: detail.attachments.length > 0,
+        hasAttachments: layout.attachments.length > 0,
       }
     },
 

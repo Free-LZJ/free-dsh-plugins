@@ -5,7 +5,9 @@
 
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildPrompt, matchesFilters, promptBody, renderNotice, renderTitle, triggerReadiness } from '../src/rules.ts'
+import {
+  buildPrompt, matchesFilters, promptBody, renderNotice, renderTitle, triggerReadiness,
+} from '../src/rules.ts'
 import type { MailSummary, TriggerConfig } from '../src/types.ts'
 
 /** One message to filter, with the fields a test wants to vary. */
@@ -22,6 +24,7 @@ function mail(over: Partial<MailSummary> = {}): MailSummary {
     flagged: false,
     hasAttachments: false,
     snippet: 'The nightly job exited with code 1',
+    headers: {},
     ...over,
   }
 }

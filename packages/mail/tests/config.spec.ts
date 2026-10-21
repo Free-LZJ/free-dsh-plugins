@@ -4,10 +4,15 @@ import {
   DEFAULT_FALLBACK_SCAN_SECONDS,
   DEFAULT_IMAP_TIMEOUT_SECONDS,
   DEFAULT_MAX_LIST_MESSAGES,
+  MAX_TRUSTED_SENDERS,
   normalizeAccountInput,
   normalizeAction,
   normalizeDraft,
+  normalizePreferences,
   normalizeTrigger,
+  senderKey,
+  trustedSendersOf,
+  withTrustedSender,
 } from '../src/config.ts'
 
 /** The trigger a request that says nothing usable ends up with. */
@@ -24,11 +29,62 @@ describe('DEFAULT_CONFIG', () => {
   })
 })
 
+describe('image preferences', () => {
+  it('normalizes an address the way the whitelist stores it', () => {
+    expect(senderKey('  Alice@Example.COM ')).toBe('alice@example.com')
+    expect(senderKey('张三 <zhang@qq.com>')).toBeUndefined()
+    expect(senderKey('a@b.com, c@d.com')).toBeUndefined()
+    expect(senderKey('')).toBeUndefined()
+    expect(senderKey(42)).toBeUndefined()
+  })
+
+  it('keeps a stored list to usable addresses, deduplicated and capped', () => {
+    expect(trustedSendersOf(['a@b.com', 'A@B.com', 'nope', '', 7])).toEqual(['a@b.com'])
+    expect(trustedSendersOf('not a list')).toEqual([])
+    const many = Array.from({ length: MAX_TRUSTED_SENDERS + 20 }, (_, index) => `user${String(index)}@example.com`)
+    expect(trustedSendersOf(many)).toHaveLength(MAX_TRUSTED_SENDERS)
+  })
+
+  it('adds newest-first and removes without disturbing the rest', () => {
+    expect(withTrustedSender(['old@x.com'], 'new@x.com', true)).toEqual(['new@x.com', 'old@x.com'])
+    // Re-adding an address moves it to the front rather than duplicating it.
+    expect(withTrustedSender(['a@x.com', 'b@x.com'], 'b@x.com', true)).toEqual(['b@x.com', 'a@x.com'])
+    expect(withTrustedSender(['a@x.com', 'b@x.com'], 'a@x.com', false)).toEqual(['b@x.com'])
+    // The cap drops the tail, not the entry just made.
+    const full = Array.from({ length: MAX_TRUSTED_SENDERS }, (_, index) => `user${String(index)}@example.com`)
+    const next = withTrustedSender(full, 'new@example.com', true)
+    expect(next).toHaveLength(MAX_TRUSTED_SENDERS)
+    expect(next[0]).toBe('new@example.com')
+    // The tail is what falls off: newest-first, so the least recently added goes.
+    expect(next).not.toContain(`user${String(MAX_TRUSTED_SENDERS - 1)}@example.com`)
+  })
+
+  it('rejects a preference payload that is not a flag', () => {
+    expect(normalizePreferences({ loadRemoteImages: false })).toEqual({ ok: true, value: { loadRemoteImages: false } })
+    expect(normalizePreferences({ loadRemoteImages: 'off' })).toMatchObject({ ok: false, field: 'loadRemoteImages' })
+    expect(normalizePreferences(undefined)).toMatchObject({ ok: false, field: 'preferences' })
+  })
+})
+
 describe('normalizeTrigger', () => {
   it('falls back to panel for anything it cannot read', () => {
     for (const input of [undefined, null, 42, 'panel', [], { mode: 'bogus' }, { mode: 'SESSION' }, { mode: 'panel' }]) {
       expect(normalizeTrigger(input)).toEqual(PANEL)
     }
+  })
+
+  it('keeps the workbench notification switch as its own field, whatever the mode', () => {
+    expect(normalizeTrigger({ mode: 'panel', notifyWorkbench: true, filters: { unreadOnly: false } }))
+      .toEqual({ mode: 'panel', filters: { unreadOnly: false }, notifyWorkbench: true })
+    expect(normalizeTrigger({
+      mode: 'session',
+      session: { workspacePath: '/ws' },
+      notifyWorkbench: true,
+    })).toEqual({ mode: 'session', session: { workspacePath: '/ws' }, filters: {}, notifyWorkbench: true })
+    // Anything that is not literally `true` is off: a string from a form post
+    // must not turn notifications on.
+    expect(normalizeTrigger({ mode: 'panel', notifyWorkbench: 'yes' })).toEqual(PANEL)
+    expect(normalizeTrigger({ mode: 'panel', notifyWorkbench: false })).toEqual(PANEL)
   })
 
   it('refuses a session trigger whose workspace is not an absolute path', () => {

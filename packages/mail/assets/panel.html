@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: http: https:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>邮件</title>
 <style>:root{
   color-scheme:light;
@@ -118,6 +118,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     #dsh-mail .m-list{flex:1;min-height:0;overflow:auto}
     #dsh-mail .m-bottom{display:flex;flex-direction:column;align-items:center;gap:4px;padding:16px 12px 20px;color:var(--mail-fg-muted);font-size:12px;line-height:18px;text-align:center}
     #dsh-mail .m-bottom img{width:88px;height:auto;display:block}
+    #dsh-mail .m-more{border:1px solid var(--mail-line-strong)}
+    #dsh-mail .m-bottom .m-more{margin-top:6px}
     #dsh-mail .m-row{position:relative;display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;padding:9px 10px;border-radius:0;border-bottom:1px solid var(--mail-line)}
     #dsh-mail .m-row[aria-current=true]{background:var(--mail-selected)}
     #dsh-mail .m-unread-dot{width:8px;height:8px;flex:0 0 auto;margin-top:7px;border-radius:50%;background:transparent}
@@ -156,11 +158,19 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     #dsh-mail .m-attachments{border-top:1px solid var(--mail-line);padding:10px 16px;font-size:13px}
     #dsh-mail .m-attachments a{margin-right:14px}
     #dsh-mail .m-truncated{padding:6px 16px;color:var(--mail-warn);background:var(--mail-warn-weak);font-size:12px}
+    #dsh-mail .m-images-note{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 16px;color:var(--mail-warn);background:var(--mail-warn-weak);border-bottom:1px solid var(--mail-line);font-size:12px}
+    /* 显式 display 会盖过 [hidden] 的 UA 规则，所以这里自己再说一次。 */
+    #dsh-mail .m-images-note[hidden]{display:none}
+    #dsh-mail .m-images-note button{border:1px solid var(--mail-line-strong)}
+    #dsh-mail .m-trust-list{list-style:none;margin:0 0 9px;padding:0;font-size:12px}
+    #dsh-mail .m-trust-list li{display:flex;align-items:center;gap:8px;padding:3px 0;overflow-wrap:anywhere}
+    #dsh-mail .m-trust-list li[data-empty=true]{color:var(--mail-fg-muted)}
     #dsh-mail .m-drawer{position:absolute;top:0;right:0;bottom:0;width:min(560px,100%);display:flex;flex-direction:column;background:var(--mail-surface);border-left:1px solid var(--mail-line-strong);box-shadow:-8px 0 24px #0000001a;z-index:2}
     #dsh-mail .m-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--mail-line);background:var(--mail-surface-2)}
     #dsh-mail .m-drawer-body{flex:1;min-height:0;overflow:auto;padding:12px}
     #dsh-mail .m-card{border:1px solid var(--mail-line);border-radius:9px;padding:12px;margin-bottom:12px}
     #dsh-mail .m-card h3{margin:0 0 10px;font-size:14px}
+    #dsh-mail .m-card h4{margin:12px 0 6px;font-size:13px;color:var(--mail-fg-muted)}
     #dsh-mail .m-card label{display:block;margin-bottom:9px}
     #dsh-mail .m-card label input:not([type=checkbox]),#dsh-mail .m-card label select{display:block;width:100%;margin-top:3px}
     #dsh-mail .m-card fieldset{border:1px solid var(--mail-line);border-radius:7px;padding:9px;margin:0 0 10px}
@@ -217,11 +227,15 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
           <label>移动到 <select class="m-move-target" aria-label="目标文件夹"></select></label>
           <button class="m-act-move" type="button">移动</button>
           <button class="m-act-delete" type="button">删除</button>
-          <button class="m-show-images" type="button" hidden>显示图片</button>
           <span class="m-act-result" role="status"></span>
         </div>
+        <div class="m-images-note" hidden>
+          <span>这封邮件含远程图片（可能是追踪像素，加载即等于回执）。</span>
+          <button class="m-images-load-all" type="button">加载所有图片</button>
+          <button class="m-images-trust" type="button">把发件人加入白名单</button>
+        </div>
         <div class="m-read-body"></div>
-        <div class="m-truncated" hidden>正文过长，已按服务端上限截断。</div>
+        <div class="m-truncated" hidden>邮件过大，超出单封抓取上限，正文只显示了前面一部分。</div>
         <div class="m-attachments" hidden></div>
       </div>
     </section>
@@ -258,6 +272,15 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
             </div>
             <p class="m-form-result" role="status"></p>
           </div>
+        </section>
+
+        <section class="m-card">
+          <h3>工作台通知</h3>
+          <p class="m-hint">与下面「收到新邮件时」的行为互不影响：开了它，每封命中过滤规则的邮件都会往工作台推一条通知（标题「新邮件 · 发件人：主题」），无论那个行为是新建会话、投递提醒还是只在面板标记。</p>
+          <label><input class="m-workbench-notify" type="checkbox"> 有新邮件时推送通知到工作台</label>
+          <p class="m-hint m-workbench-availability" hidden></p>
+          <div class="m-row-actions"><button class="m-workbench-save" type="button">保存通知设置</button></div>
+          <p class="m-workbench-result" role="status"></p>
         </section>
 
         <section class="m-card">
@@ -300,6 +323,18 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
           <div class="m-row-actions"><button class="m-trigger-save" type="button">保存触发配置</button></div>
           <p class="m-trigger-result" role="status"></p>
         </section>
+
+        <section class="m-card">
+          <h3>远程图片</h3>
+          <label><input class="m-images-load" type="checkbox"> 默认加载远程图片</label>
+          <p class="m-hint">关掉后，正文里的远程图片不再自动加载（追踪像素因此不会回执）。随邮件一起到达的图片（内嵌图）不受影响，照常显示；每封被挡下的邮件顶部会给出「加载所有图片」，或者把发件人加进下面的白名单。</p>
+          <h4>发件人白名单</h4>
+          <ul class="m-trust-list"></ul>
+          <label>添加发件人 <input class="m-trust-input" type="text" placeholder="someone@example.com"></label>
+          <div class="m-row-actions"><button class="m-trust-add" type="button">加入白名单</button></div>
+          <p class="m-hint">只认完整地址，不认整个域：白名单里放的是「这个人」，不是「这家服务商」。</p>
+          <p class="m-images-result" role="status"></p>
+        </section>
       </div>
     </aside>
   </div>
@@ -333,7 +368,10 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     readEmpty: '.m-read-empty', readContent: '.m-read-content', subject: '.m-subject',
     date: '.m-date', from: '.m-from', addresses: '.m-addresses', readBar: '.m-read-bar',
     actSeen: '.m-act-seen', actFlag: '.m-act-flag', moveTarget: '.m-move-target',
-    actResult: '.m-act-result', showImages: '.m-show-images', readBody: '.m-read-body',
+    actResult: '.m-act-result', readBody: '.m-read-body',
+    imagesNote: '.m-images-note', imagesLoadAll: '.m-images-load-all', imagesTrust: '.m-images-trust',
+    imagesLoad: '.m-images-load', imagesResult: '.m-images-result',
+    trustList: '.m-trust-list', trustInput: '.m-trust-input', trustAdd: '.m-trust-add',
     truncated: '.m-truncated', attachments: '.m-attachments',
     drawer: '.m-drawer', drawerClose: '.m-drawer-close', accountList: '.m-account-list',
     accountNew: '.m-account-new', accountForm: '.m-account-form', formResult: '.m-form-result',
@@ -341,6 +379,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     triggerSession: '.m-trigger-session', triggerNotify: '.m-trigger-notify',
     triggerUnread: '.m-trigger-unread',
     triggerResult: '.m-trigger-result',
+    notifyToggle: '.m-workbench-notify', notifySave: '.m-workbench-save',
+    notifyResult: '.m-workbench-result', notifyNote: '.m-workbench-availability',
   })) el[name] = root.querySelector(selector);
 
   const view = {
@@ -348,6 +388,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     accountId: '', folder: '', query: '',
     open: null, detail: null, detailError: '', showImages: false,
     editing: null, formOpen: false, drawerSignature: '',
+    loadingMore: false, loadError: '',
   };
   // 最近一次渲染的邮件行，按 `data-i` 下标索引（下标不会被 HTML 属性转义弄坏）。
   let rows = [];
@@ -502,6 +543,12 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
         failed.textContent = '（刷新失败：' + view.refreshError + '）';
         el.status.append(' ', failed);
       }
+      if (view.loadError) {
+        const failed = document.createElement('span');
+        failed.dataset.alert = 'true';
+        failed.textContent = '（加载更早的邮件失败：' + view.loadError + '）';
+        el.status.append(' ', failed);
+      }
       // 列表可能来自上次退出时存下的快照：说出来，免得把缓存当成刚刚同步的结果。
       if (view.data && view.data.cacheAt) {
         const cached = Date.parse(view.data.cacheAt);
@@ -594,12 +641,43 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   }
 
   /**
-   * 列表尾巴。
+   * 当前列表视图对应的文件夹路径。
    *
-   * 面板只拿最近 maxListMessages 封（默认 300）。顶满说明邮箱里还有更老的，
-   * 所以两种情况下那句收尾必须不同——同一个「到底啦」配上一句「没有更早的邮件」
-   * 就会在顶满时撒谎，而顶满恰恰是收件箱大的人的常态。搜索时整条尾巴都不画：
-   * 搜索结果不是列表的末尾，说「到底」同样不对。
+   * 选了具体文件夹就是它；「全部邮件」下画的是收件箱——只有收件箱被常驻扫描，
+   * 别的文件夹要用户点名才会被拉下来。不这样收窄，总数里那些还没同步的文件夹
+   * 会让尾巴永远显示「还有更多」，而点下去只增长一个文件夹，看起来像卡住了。
+   */
+  function viewFolders() {
+    if (view.folder) return [view.folder];
+    const boxes = (view.data ? view.data.mailboxes : []).filter((box) => box.specialUse === '\\Inbox');
+    return boxes.length ? [...new Set(boxes.map((box) => box.path))] : ['INBOX'];
+  }
+
+  /**
+   * 当前视图的「已加载 / 服务器总数」。
+   *
+   * total 是服务器对文件夹的计数，不是内存里那几行——快照只有 maxListMessages
+   * 封，用行数当总数永远显示「到底了」。没同步过的文件夹 total 仍然在，于是它
+   * 天然显示成「还有更多」：点一下就是第一次把它拉下来。
+   */
+  function loadWindow() {
+    const messages = view.data ? view.data.messages : [];
+    const boxes = view.data ? view.data.mailboxes : [];
+    const mine = (one) => !view.accountId || one.accountId === view.accountId;
+    const folders = viewFolders();
+    const loaded = messages.filter((mail) => mine(mail) && folders.includes(mail.folder)).length;
+    const total = boxes
+      .filter((box) => mine(box) && folders.includes(box.path))
+      .reduce((sum, box) => sum + box.total, 0);
+    // 上限是 Host 的：到了它列表就不再增长，这时候还摆一个按钮等于骗人。
+    const max = (view.data && view.data.config.maxWindowMessages) || 0;
+    return { loaded, total, more: total > loaded && !(max > 0 && loaded >= max) };
+  }
+
+  /**
+   * 列表尾巴：能继续往回翻时是一个按钮，翻到底时是小鲸鱼收尾。
+   *
+   * 搜索时整条尾巴不画——搜索结果不是列表的末尾，说「到底」是假话。
    */
   function renderBottom(mails) {
     const end = mails.length > 0 && view.query.trim().length === 0;
@@ -609,17 +687,27 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
       el.bottom.replaceChildren();
       return;
     }
-    const limit = view.data ? view.data.config.maxListMessages : 0;
-    const capped = Boolean(view.data && limit > 0 && view.data.messages.length >= limit);
-    const label = capped ? '到底啦 · 这里只放最近 ' + limit + ' 封邮件' : '到底啦，没有更早的邮件了';
-    // 每次轮询都重建这行会让读屏软件反复念同一句；文案没变就什么都不做。
+    const { more, loaded, total } = loadWindow();
+    // 三种收尾，因为「到底」和「面板装不下了」是两回事：后者再说「没有更早的
+    // 邮件」就是在替一个内存上限撒谎。
+    const label = view.loadingMore ? '正在往前翻…'
+      : more ? '还有更早的邮件'
+        : total > loaded ? '到底啦 · 已加载最近 ' + loaded + ' 封（面板上限）'
+          : '到底啦，没有更早的邮件了';
+    // 每次轮询都重建这行会让读屏软件反复念同一句，也让按钮失去焦点；没变就别动。
     if (el.bottom.dataset.label === label) return;
     el.bottom.dataset.label = label;
     const image = document.createElement('img');
     image.src = WHALE;
     image.alt = '';
     image.draggable = false;
-    el.bottom.replaceChildren(image, text(label));
+    const nodes = [image, text(label)];
+    if (more) {
+      const load = button('加载更早的邮件', 'm-more');
+      load.disabled = Boolean(view.loadingMore);
+      nodes.push(load);
+    }
+    el.bottom.replaceChildren(...nodes);
   }
 
   function renderEmpty() {
@@ -649,13 +737,58 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     const mails = visible();
     if (mails.length === 0) {
       el.empty.hidden = false;
-      el.empty.replaceChildren(text(view.query
-        ? '没有匹配「' + view.query + '」的邮件。'
-        : '这个范围里还没有邮件，或者账号还没同步完；点「刷新」再看一次。'));
+      el.empty.replaceChildren();
+      if (view.query) {
+        el.empty.append(text('没有匹配「' + view.query + '」的邮件。'));
+        return;
+      }
+      const { more } = loadWindow();
+      if (!more) {
+        el.empty.append(text('这个范围里还没有邮件，或者账号还没同步完；点「刷新」再看一次。'));
+        return;
+      }
+      // 这个文件夹的邮件还没进内存。面板默认只把收件箱拉下来，别的文件夹是用户
+      // 点名才拉的，所以这里给出入口而不是一句「没有邮件」。
+      el.empty.append(text(view.loadingMore
+        ? '正在加载这个文件夹的邮件…'
+        : '这个文件夹的邮件还没有加载（面板默认只同步收件箱）。'));
+      const load = button('加载邮件', 'm-more');
+      load.disabled = Boolean(view.loadingMore);
+      el.empty.append(load);
       return;
     }
     el.empty.hidden = true;
     el.empty.replaceChildren();
+  }
+
+  /**
+   * 往回翻一页。
+   *
+   * 不做乐观更新：页面马上会因为 revision 变化拉到新列表，先塞几行假的只是让它
+   * 闪一下。失败留在 `loadError` 里由状态行呈现，按钮本身不会无声无息地弹回去。
+   */
+  async function loadOlder() {
+    if (view.loadingMore) return;
+    view.loadingMore = true;
+    view.loadError = '';
+    renderBottom(visible());
+    renderEmpty();
+    try {
+      const payload = {};
+      if (view.accountId) payload.accountId = view.accountId;
+      // 不传 folder 表示「全部邮件」，Host 按收件箱处理；传了就是这个文件夹，
+      // 一次点击也就是它的第一次同步。
+      if (view.folder) payload.folder = view.folder;
+      await write('/dsh-mail/more', payload);
+      await load();
+    } catch (error) {
+      view.loadError = message(error);
+      renderStatus();
+    } finally {
+      view.loadingMore = false;
+      renderBottom(visible());
+      renderEmpty();
+    }
   }
 
   function renderAll() {
@@ -670,9 +803,94 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
 
   /* ───────────────────────────── 正文 ───────────────────────────── */
 
+  /* ───────────────────────── 远程图片与白名单 ───────────────────────── */
+
+  /** Host 还没回答过偏好时用什么：与 Host 的默认值一致，加载。 */
+  const DEFAULT_PREFS = { loadRemoteImages: true, trustedSenders: [] };
+
+  /** 当前的图片偏好。每次读 `view.data`，因为轮询会把它换掉。 */
+  function preferences() {
+    const stored = view.data && view.data.config ? view.data.config.preferences : null;
+    return stored && Array.isArray(stored.trustedSenders) ? stored : DEFAULT_PREFS;
+  }
+
+  const senderKey = (value) => String(value == null ? '' : value).trim().toLowerCase();
+
+  /** 发件人是否在白名单里。只比对完整地址，与 Host 的归一化规则一致。 */
+  function senderTrusted(detail) {
+    const key = senderKey(detail && detail.from ? detail.from.address : '');
+    return key !== '' && preferences().trustedSenders.indexOf(key) >= 0;
+  }
+
   /**
-   * 邮件正文里的远程图片一律换成透明像素：默认不发出任何外部请求。
-   * `allowRemote` 为真时只放行 `https:`，其余（http、cid、未知协议）仍然阻止。
+   * 这一封邮件的远程图片要不要放行。
+   *
+   * 三种「要」：全局开关开着（默认）、本封点过「加载所有图片」、发件人在白名单里。
+   * 顺序无关，`||` 短路只是省一次查找。
+   */
+  function remoteAllowed(detail) {
+    return view.showImages || preferences().loadRemoteImages !== false || senderTrusted(detail);
+  }
+
+  /** 一行结果文案，顺便管它的错误态。 */
+  function setResult(node, value, failed) {
+    if (!node) return;
+    if (failed) node.dataset.error = 'true';
+    else delete node.dataset.error;
+    node.textContent = value;
+  }
+
+  /**
+   * 把发件人加进/移出白名单。
+   *
+   * 靠 `load()` 取回新偏好（Host 改了偏好会 bump revision，所以这里一定能拿到完整
+   * 状态），再重画正文：白名单生效后这一封的图片应当立刻出现或立刻收回去。
+   */
+  async function trustSender(address, trusted, resultNode) {
+    const key = senderKey(address);
+    if (key === '') { setResult(resultNode, '这封邮件没有可用的发件人地址。', true); return false; }
+    setResult(resultNode, '正在保存…', false);
+    try {
+      await write('/dsh-mail/config', { op: 'trustSender', address: key, trusted: trusted === true });
+      view.drawerSignature = '';
+      await load();
+      renderRead();
+      setResult(resultNode, (trusted ? '已加入白名单：' : '已移出白名单：') + key, false);
+      return true;
+    } catch (error) {
+      setResult(resultNode, message(error), true);
+      return false;
+    }
+  }
+
+  /** 设置抽屉里的图片偏好卡：开关 + 白名单列表。 */
+  function renderPreferences() {
+    const prefs = preferences();
+    el.imagesLoad.checked = prefs.loadRemoteImages !== false;
+    el.trustList.replaceChildren();
+    if (prefs.trustedSenders.length === 0) {
+      const empty = document.createElement('li');
+      empty.dataset.empty = 'true';
+      empty.textContent = '（白名单为空）';
+      el.trustList.append(empty);
+      return;
+    }
+    for (const one of prefs.trustedSenders) {
+      const item = document.createElement('li');
+      item.dataset.address = one;
+      item.append(text(one), button('移除', 'm-trust-remove'));
+      el.trustList.append(item);
+    }
+  }
+
+  /**
+   * 把正文里的远程图片换成透明像素，除非 `allowRemote`。
+   *
+   * `allowRemote` 为真时放行 `http(s)://` 与 `//host/…`，其余（cid、未知协议）仍然阻止。
+   * 这里只管「发不发得出去请求」。http 不单独拦：面板自己就跑在 127.0.0.1 的 http 上，
+   * 拦掉它挡不住任何东西，却会让「加载所有图片」对那些邮件完全不起作用。
+   * `data:` 一律放行：它是随邮件一起到达的字节（内嵌图与 cid 引用已由服务端转成
+   * data:），不是一次对外请求。
    */
   function neutralize(html, allowRemote) {
     let doc;
@@ -680,8 +898,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     if (!doc || !doc.body) return '';
     for (const image of doc.body.querySelectorAll('img')) {
       const source = image.getAttribute('src') || '';
-      if (/^data:image\//i.test(source)) continue;
-      if (allowRemote && /^https:\/\//i.test(source)) continue;
+      if (/^data:/i.test(source)) continue;
+      if (allowRemote && /^(?:https?:)?\/\//i.test(source)) continue;
       image.removeAttribute('srcset');
       image.setAttribute('src', BLANK_PIXEL);
       if (!image.getAttribute('alt')) image.setAttribute('alt', '已阻止远程图片');
@@ -695,11 +913,11 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   }
 
   const hasRemoteImages = (html) =>
-    /<img[^>]+src\s*=\s*["']?https?:/i.test(html) || /url\(\s*['"]?https?:/i.test(html);
+    /<img[^>]+src\s*=\s*["']?(?:https?:)?\/\//i.test(html) || /url\(\s*['"]?(?:https?:)?\/\//i.test(html);
 
-  /** 嵌套文档：仍禁脚本，图片按 `allowRemote` 决定是否放行 https。 */
+  /** 嵌套文档：仍禁脚本，图片按 `allowRemote` 决定是否放行 http(s)。 */
   function buildSrcdoc(html, allowRemote) {
-    const images = allowRemote ? 'img-src data: https:' : 'img-src data:';
+    const images = allowRemote ? 'img-src data: http: https:' : 'img-src data:';
     const csp = "default-src 'none'; " + images + "; style-src 'unsafe-inline'; font-src data:; object-src 'none'; form-action 'none'";
     return '<!doctype html><html><head><meta charset="utf-8">' +
       '<meta http-equiv="Content-Security-Policy" content="' + csp + '">' +
@@ -739,24 +957,27 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     el.readBody.replaceChildren();
     el.truncated.hidden = !(detail && detail.truncated);
     el.attachments.replaceChildren();
+    const remote = (detail && detail.html) ? hasRemoteImages(detail.html) : false;
+    const allowRemote = remote && remoteAllowed(detail);
+    // 只有「有远程图片、又没被放行」时才出来提示：放行时没什么可说的。
+    el.imagesNote.hidden = !(remote && !allowRemote);
     if (!detail) {
       delete el.readBody.dataset.mode;
-      el.showImages.hidden = true;
       el.readBody.append(text(view.detailError ? '读取正文失败：' + view.detailError : '正在读取正文…'));
       return;
     }
     if (detail.html) {
       el.readBody.dataset.mode = 'html';
-      el.showImages.hidden = view.showImages || !hasRemoteImages(detail.html);
       const frame = document.createElement('iframe');
       frame.className = 'm-html-frame';
       frame.setAttribute('sandbox', '');
-      frame.setAttribute('title', '邮件正文（已隔离，脚本与远程图片默认被阻止）');
-      frame.setAttribute('srcdoc', buildSrcdoc(detail.html, view.showImages));
+      frame.setAttribute('title', allowRemote
+        ? '邮件正文（已隔离，脚本被阻止）'
+        : '邮件正文（已隔离，脚本与远程图片被阻止）');
+      frame.setAttribute('srcdoc', buildSrcdoc(detail.html, allowRemote));
       el.readBody.append(frame);
     } else {
       delete el.readBody.dataset.mode;
-      el.showImages.hidden = true;
       const pre = document.createElement('pre');
       pre.className = 'm-text';
       pre.textContent = detail.text || '（这封邮件没有可显示的正文）';
@@ -972,9 +1193,23 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     root.querySelector('.m-trigger-subject').value = (trigger.filters.subject || []).join('\n');
     root.querySelector('.m-trigger-keywords').value = (trigger.filters.keywords || []).join('\n');
     el.triggerUnread.checked = trigger.filters.unreadOnly !== false;
+    el.notifyToggle.checked = trigger.notifyWorkbench === true;
     el.triggerResult.textContent = '';
+    el.notifyResult.textContent = '';
     delete el.triggerResult.dataset.error;
+    delete el.notifyResult.dataset.error;
     syncTriggerMode();
+    syncWorkbenchAvailability();
+  }
+
+  /** 没装工作台时开关不可用，并说明为什么——而不是让人打开一个永远不报错的开关。 */
+  function syncWorkbenchAvailability() {
+    const available = view.data ? view.data.config.workbenchAvailable !== false : true;
+    el.notifyToggle.disabled = !available;
+    if (!available) el.notifyToggle.checked = false;
+    el.notifySave.disabled = !available;
+    el.notifyNote.hidden = available;
+    el.notifyNote.textContent = available ? '' : '未安装工作台（@free-lzj/dsh-console），通知没有地方可送，开关不可用。';
   }
 
   /** 部署缺哪个服务，就把对应模式标灰并说明，而不是等保存时才失败。 */
@@ -1000,15 +1235,18 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   function syncTriggerAvailability() {
     const availability = (view.data && view.data.config.triggerAvailability) || { session: true, notify: true };
     const note = root.querySelector('.m-trigger-availability');
+    // 缺省按「可用」算：旧版 Host 的 /state 里可能还没有这一项，灰掉一个其实
+    // 能用的模式，比多出一个选项更糟。
+    const LABELS = { session: '新建会话', notify: '投递提醒' };
     const missing = [];
     for (const option of el.triggerMode.querySelectorAll('option')) {
       const available = option.value === 'panel' || availability[option.value] === true;
       option.disabled = !available;
-      if (!available) missing.push(option.value === 'session' ? '新建会话' : '投递提醒');
+      if (!available) missing.push(LABELS[option.value] || option.value);
     }
     note.hidden = missing.length === 0;
     note.textContent = missing.length
-      ? '当前 dsh 部署缺少「' + missing.join('」「') + '」需要的服务，这两个模式不可选。'
+      ? '当前 dsh 部署缺少「' + missing.join('」「') + '」需要的服务，这些模式不可选。'
       : '';
   }
 
@@ -1107,17 +1345,19 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     return trigger;
   }
 
-  /** 账号集合变了才重建列表，免得正在输入的表单被轮询清掉。 */
+  /** 账号集合或图片偏好变了才重建列表，免得正在输入的表单被轮询清掉。 */
   function syncDrawer() {
     if (el.drawer.hidden) return;
     const signature = (view.data ? view.data.accounts : [])
-      .map((one) => [one.id, one.name, one.status, one.lastError, one.address].join(':')).join('|');
+      .map((one) => [one.id, one.name, one.status, one.lastError, one.address].join(':')).join('|')
+      + '#' + JSON.stringify(preferences());
     if (signature === view.drawerSignature) return;
     view.drawerSignature = signature;
     renderAccountList();
     syncTriggerAccounts();
     loadTrigger();
     syncTriggerAvailability();
+    renderPreferences();
   }
 
   function openDrawer(open) {
@@ -1176,6 +1416,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   async function saveTrigger() {
     if (!el.triggerAccount.value) return;
     const trigger = triggerFromForm();
+    // 通知开关与所选行为无关，保存时要一并带上，否则会被 Host 归一化丢掉。
+    trigger.notifyWorkbench = el.notifyToggle.checked === true;
     if (trigger.mode === 'session' && !trigger.session.workspacePath) {
       el.triggerResult.dataset.error = 'true';
       el.triggerResult.textContent = '新建会话必须填工作目录（绝对路径）。';
@@ -1201,10 +1443,42 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
 
   /* ───────────────────────────── 事件 ───────────────────────────── */
 
+  async function saveNoticeSetting() {
+    if (!el.triggerAccount.value) return;
+    // 这一张卡只改开关：其余字段取表单里当前的值，保证不会被默认值覆盖。
+    const trigger = triggerFromForm();
+    trigger.notifyWorkbench = el.notifyToggle.checked === true;
+    if (trigger.mode === 'session' && !trigger.session.workspacePath) {
+      el.notifyResult.dataset.error = 'true';
+      el.notifyResult.textContent = '下面的「收到新邮件时」填了新建会话但没填工作目录，先补上再保存。';
+      return;
+    }
+    if (trigger.mode === 'notify' && !trigger.notify.sessionId) {
+      el.notifyResult.dataset.error = 'true';
+      el.notifyResult.textContent = '下面的「收到新邮件时」填了投递提醒但没填目标会话 id，先补上再保存。';
+      return;
+    }
+    el.notifyResult.textContent = '正在保存…';
+    delete el.notifyResult.dataset.error;
+    try {
+      await write('/dsh-mail/config', { op: 'setTrigger', accountId: el.triggerAccount.value, trigger: trigger });
+      el.notifyResult.textContent = trigger.notifyWorkbench ? '已开启：新邮件会推送到工作台。' : '已关闭工作台通知。';
+      view.drawerSignature = '';
+      await load();
+    } catch (error) {
+      el.notifyResult.dataset.error = 'true';
+      el.notifyResult.textContent = message(error);
+    }
+  }
+
   el.status.addEventListener('click', (event) => { if (event.target.closest('.m-retry')) load(); });
   el.empty.addEventListener('click', (event) => {
     if (event.target.closest('.m-retry')) load();
     if (event.target.closest('.m-open-settings')) openDrawer(true);
+    if (event.target.closest('.m-more')) void loadOlder();
+  });
+  el.bottom.addEventListener('click', (event) => {
+    if (event.target.closest('.m-more')) void loadOlder();
   });
   el.refresh.addEventListener('click', () => { void refresh(); });
   el.settings.addEventListener('click', () => openDrawer(el.drawer.hidden));
@@ -1253,7 +1527,34 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     if (!window.confirm('删除这封邮件？是否可恢复取决于邮箱服务商。')) return;
     runAction({ op: 'delete', accountId: view.open.accountId, folder: view.open.folder, uids: [view.open.uid] });
   });
-  el.showImages.addEventListener('click', () => { view.showImages = true; renderRead(); });
+  el.imagesLoadAll.addEventListener('click', () => { view.showImages = true; renderRead(); });
+  el.imagesTrust.addEventListener('click', () => {
+    const detail = view.detail;
+    if (!detail) return;
+    void trustSender(detail.from ? detail.from.address : '', true, el.actResult);
+  });
+  el.imagesLoad.addEventListener('change', async () => {
+    const load = el.imagesLoad.checked === true;
+    setResult(el.imagesResult, '正在保存…', false);
+    try {
+      await write('/dsh-mail/config', { op: 'setPreferences', preferences: { loadRemoteImages: load } });
+      view.drawerSignature = '';
+      await load();
+      renderRead();
+      setResult(el.imagesResult, load ? '已开启：远程图片直接显示。' : '已关闭：远程图片要手动加载。', false);
+    } catch (error) {
+      setResult(el.imagesResult, message(error), true);
+    }
+  });
+  el.trustAdd.addEventListener('click', async () => {
+    const address = el.trustInput.value.trim();
+    if (address === '') { setResult(el.imagesResult, '先填一个发件人地址。', true); return; }
+    if (await trustSender(address, true, el.imagesResult)) el.trustInput.value = '';
+  });
+  el.trustList.addEventListener('click', (event) => {
+    const row = event.target.closest('[data-address]');
+    if (row) void trustSender(row.dataset.address, false, el.imagesResult);
+  });
   el.accountNew.addEventListener('click', () => {
     view.editing = null;
     view.formOpen = true;
@@ -1305,6 +1606,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   });
   el.triggerAccount.addEventListener('change', loadTrigger);
   el.triggerMode.addEventListener('change', syncTriggerMode);
+  el.notifySave.addEventListener('click', saveNoticeSetting);
   root.querySelector('.m-trigger-save').addEventListener('click', saveTrigger);
 
   /** 规则列表是动态渲染的，事件挂在容器上，行里的按钮只管自己那一行。 */

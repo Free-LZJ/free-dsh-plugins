@@ -17,6 +17,7 @@
 // @ts-expect-error -- TS7016: mailparser publishes no declaration file, and there is no @types/mailparser.
 // `expect-error` rather than `ignore` so the day mailparser ships types, the build says so.
 import { simpleParser } from 'mailparser'
+import { parseTriageHeaders } from './headers.ts'
 import type { MailAddress, MailAttachment, MailDetail, MailSummary } from './types.ts'
 
 /** Length of the list preview, in characters. */
@@ -25,14 +26,8 @@ const SNIPPET_LENGTH = 200
 /** Stand-in subject for a message the server reports without one. */
 const NO_SUBJECT = '(无主题)'
 
-/** Stand-in name for an attachment the parser reports without one. */
-const NO_FILENAME = '(无文件名)'
-
 /** Content type for an attachment whose own type the parser could not read. */
 const OCTET_STREAM = 'application/octet-stream'
-
-/** Reading-pane body cap in bytes, applied to the text and the HTML separately. */
-const TEXT_LIMIT = 256 * 1024
 
 /** The `\Seen` flag, as both imapflow and RFC 3501 spell it. */
 const SEEN = '\\Seen'
@@ -63,9 +58,54 @@ interface ParsedAttachment {
   readonly contentType?: string | undefined
   readonly size?: number | undefined
   readonly contentId?: string | undefined
-  /** IMAP-style body part number, e.g. `2` or `2.1`; null for a single-part message. */
-  readonly partId?: string | null | undefined
-  readonly related?: boolean | undefined
+  /** Content id without its angle brackets; what a `cid:` URL in the HTML names. */
+  readonly cid?: string | undefined
+  /** The decoded bytes, when the parser was asked to buffer them (it is, by default). */
+  readonly content?: Buffer | undefined
+}
+
+/**
+ * One MIME part as the server sent it, with what it takes to read it back.
+ *
+ * A part is fetched the way the sender stored it, bytes still in their transfer
+ * encoding, so reproducing `Content-Type` and `Content-Transfer-Encoding` is how
+ * {@link assembleOwnBody} hands the decoding to the one library that already
+ * does it. Decoding here would mean re-implementing base64, quoted-printable and
+ * a charset table — which is exactly where a hand-written mail reader breaks.
+ */
+export interface MailPart {
+  /** The part's own `Content-Type`, parameters included. */
+  readonly contentType: string
+  /** The part's body octets, undecoded. */
+  readonly content: Buffer
+  /** `Content-Transfer-Encoding`, when the structure declared one. */
+  readonly encoding?: string
+  /** `Content-ID`, for the part an HTML body names. */
+  readonly cid?: string
+  /**
+   * True when this part *was* the message rather than one part of a multipart.
+   *
+   * It decides whether the assembled body has one part or a tree, and it is not
+   * a detail: a lone HTML part at the root is a body the parser turns into text
+   * itself, while an HTML part inside a multipart is left as markup and read by
+   * {@link textOfHtml}. Writing a multipart message as a single part would change
+   * both the text a prompt receives and the bytes the pane renders.
+   */
+  readonly root?: boolean
+}
+
+/**
+ * The parts one message's own body is made of, already fetched.
+ *
+ * `text` and `html` are lists because a message may carry several of either
+ * (mailparser joins them, and so does the body assembled from here); `inline`
+ * holds the parts the HTML names by content id, which is what turns `cid:` into
+ * something the reading pane can draw.
+ */
+export interface OwnParts {
+  readonly text?: readonly MailPart[] | undefined
+  readonly html?: readonly MailPart[] | undefined
+  readonly inline?: readonly MailPart[] | undefined
 }
 
 /** A non-empty trimmed string, or undefined. */
@@ -178,7 +218,8 @@ function isoDate(...candidates: readonly unknown[]): string {
  * The two expensive answers — whether there are attachments and what the
  * preview says — are the caller's to produce, because a scan reads them from
  * the body structure and a capped slice of the source rather than from the
- * full message.
+ * full message. The headers are not expensive: the scan already fetched them
+ * inside `source`, and parsing them costs one walk over a couple of kilobytes.
  * @param input - the fields one FETCH reported. `size` is accepted for callers
  *   that already have it; the list shape has no column for it.
  * @returns the list row.
@@ -194,6 +235,8 @@ export function toSummary(input: {
   size: number | undefined
   hasAttachments: boolean
   preview: string
+  /** The fetched head, whose header section carries the triage headers. */
+  source: string | Buffer | undefined
 }): MailSummary {
   return {
     accountId: input.accountId,
@@ -207,20 +250,66 @@ export function toSummary(input: {
     flagged: isFlagged(input.flags),
     hasAttachments: input.hasAttachments,
     snippet: snippetOf(input.preview),
+    headers: parseTriageHeaders(input.source),
   }
 }
 
 /**
- * Shorten one string to a byte cap without leaving half a character behind.
- * @param value - the text to cap.
- * @param limit - the cap in bytes.
- * @returns the text, and whether it was cut.
+ * One `cid:` reference as the key the attachment map is built with.
+ *
+ * A sender may write the content id percent-encoded, and the same id is
+ * referenced with different case across the parts of one mail, so the lookup is
+ * decoded and lowercased. A `%` that is not an escape is kept rather than
+ * throwing: a malformed id means one broken image, not a broken message.
+ * @param raw - what followed `cid:` in the HTML.
+ * @returns the lookup key, or undefined when there is nothing to look up.
  */
-function clamp(value: string, limit: number): { text: string; cut: boolean } {
-  const bytes = Buffer.from(value, 'utf8')
-  if (bytes.byteLength <= limit) return { text: value, cut: false }
-  // The slice can end mid-character; the decoder turns that tail into U+FFFD.
-  return { text: bytes.subarray(0, limit).toString('utf8').replace(/\uFFFD$/, ''), cut: true }
+function cidKey(raw: string): string | undefined {
+  let value = raw.trim()
+  try {
+    value = decodeURIComponent(value)
+  } catch {
+    // Left as written.
+  }
+  const key = value.trim().toLowerCase()
+  return key === '' ? undefined : key
+}
+
+/**
+ * Put the parts a message references inline into its HTML, as `data:` URIs.
+ *
+ * A mail that attaches an image instead of embedding it is rendered by every
+ * mail client (that is what `multipart/related` is for), but `cid:` is not a URL
+ * a browser can resolve: without this the reading pane can only block it. The
+ * bytes are already in hand — the whole source was parsed to get here — so
+ * turning them into `data:` URIs costs nothing but the base64, and it keeps the
+ * frame's policy untouched (no route to open, no origin to allow, no request to
+ * make on behalf of a sender).
+ *
+ * Only references that resolve are replaced; a `cid:` naming a part the parser
+ * did not hand over is left as written for the panel to block, which is what it
+ * already does with every other foreign scheme.
+ * @param html - the message's HTML part, as the sender wrote it.
+ * @param attachments - everything the parser split off the message.
+ * @returns the HTML, with resolvable `cid:` references inlined.
+ */
+function inlineCidImages(html: string, attachments: readonly ParsedAttachment[]): string {
+  const byCid = new Map<string, ParsedAttachment>()
+  for (const attachment of attachments) {
+    const cid = cidKey(attachment.cid ?? attachment.contentId ?? '')
+    if (cid !== undefined && Buffer.isBuffer(attachment.content)) byCid.set(cid, attachment)
+  }
+  if (byCid.size === 0 || !/cid:/i.test(html)) return html
+  // `)` is excluded so a `url(cid:…)` in a style attribute ends in the right
+  // place; `:` cannot appear in base64, so an already-inlined image is never
+  // rescanned by this.
+  return html.replace(/cid:([^"'\s>)]+)/gi, (match, raw: string) => {
+    const key = cidKey(raw)
+    const found = key === undefined ? undefined : byCid.get(key)
+    if (found === undefined || !Buffer.isBuffer(found.content)) return match
+    const type = textOf(found.contentType) ?? OCTET_STREAM
+    return `data:${type};base64,${found.content.toString('base64')}`
+  })
 }
 
 /**
@@ -286,7 +375,8 @@ export function textOfHtml(html: string): string {
 /**
  * The message's own text, or one read out of its HTML when it has none.
  * @param parsed - what the parser made of the source.
- * @param html - the HTML part, already capped, when the message carried one.
+ * @param html - the HTML part, as the sender wrote it (before any substitution),
+ *   when the message carried one.
  * @returns the text to show or to hand over.
  */
 function ownTextOf(parsed: ParsedMail | undefined, html: string | undefined): string {
@@ -295,47 +385,135 @@ function ownTextOf(parsed: ParsedMail | undefined, html: string | undefined): st
   return html === undefined ? '' : textOfHtml(html)
 }
 
+/** Boundary of the alternative section {@link assembleOwnBody} writes. */
+const ALTERNATIVE_BOUNDARY = 'dsh-mail-alternative'
+
+/** Boundary of the related section it writes. */
+const RELATED_BOUNDARY = 'dsh-mail-related'
+
 /**
- * One full source as the reading pane's shape.
+ * The headers one part is handed back with, so the parser reads it as it was.
  *
- * `text` and `html` are each capped independently, and any cut raises
- * `truncated`: the panel shows the cap notice rather than a silently short
- * body. HTML is handed over as the sender wrote it — rendering it safely is
- * the panel's sandboxed iframe's job, not this module's.
- * @param input - the source, the row it belongs to, and an optional cap.
+ * `Content-Type` carries the charset, which is half of what makes the bytes
+ * readable; `Content-Transfer-Encoding` is the other half. `Content-ID` is only
+ * ever set on a part the HTML names.
+ * @param part - the part being written back.
+ * @returns the header block, blank line included.
+ */
+function partHeaders(part: MailPart): string {
+  const lines = [`Content-Type: ${part.contentType}`]
+  if (part.encoding !== undefined) lines.push(`Content-Transfer-Encoding: ${part.encoding}`)
+  if (part.cid !== undefined) lines.push(`Content-ID: ${part.cid}`)
+  return `${lines.join('\r\n')}\r\n\r\n`
+}
+
+/**
+ * One part as it appears inside a multipart body, its opening boundary included.
+ *
+ * The line break before a closing boundary belongs to the boundary, not to the
+ * part (RFC 2046 §5.1.1), so it is added only when the part does not already end
+ * with one. Adding it unconditionally would hand the parser a body with a line
+ * break the sender never wrote, every time.
+ * @param part - the part to write.
+ * @param boundary - the boundary it sits between.
+ * @returns the chunk.
+ */
+function partChunk(part: MailPart, boundary: string): Buffer {
+  const broken = part.content.length > 0 && part.content[part.content.length - 1] === 0x0a
+  return Buffer.concat([
+    Buffer.from(`--${boundary}\r\n${partHeaders(part)}`),
+    part.content,
+    Buffer.from(broken ? '' : '\r\n'),
+  ])
+}
+
+/** A multipart body of one subtype, wrapping the chunks it is given. */
+function multipart(subtype: string, boundary: string, chunks: readonly Buffer[]): Buffer {
+  return Buffer.concat([
+    Buffer.from(`Content-Type: multipart/${subtype}; boundary="${boundary}"\r\n\r\n`),
+    ...chunks,
+    Buffer.from(`--${boundary}--\r\n`),
+  ])
+}
+
+/**
+ * The parts of a message's own body, written back as one MIME body.
+ *
+ * The reading pane reads a message by asking the server for its own parts rather
+ * than for the message (see `imap.ts`), so the parser has to be handed something
+ * that means the same thing as what was skipped. What it is handed is the
+ * smallest body that does: the plain text and the related block — HTML plus the
+ * pictures it names — side by side inside an `alternative`, which is the tree
+ * real mail uses and the one the parser reads `text` and `html` out of.
+ *
+ * A message that *is* a single part stays a single part — the message was one
+ * when it arrived, and it is the shape the parser turns an HTML-only body into
+ * text from. A message that carried its body inside a multipart keeps that tree
+ * even when only one part of it survived the fetch, for the same reason.
+ * @param input - the parts the server answered with; any of them may be absent.
+ * @returns the body to parse, or undefined when the message has none.
+ */
+export function assembleOwnBody(input: OwnParts): Buffer | undefined {
+  const text = input.text ?? []
+  const html = input.html ?? []
+  const inline = input.inline ?? []
+  const related = [...html, ...inline]
+  const total = text.length + related.length
+  if (total === 0) return undefined
+  if (total === 1) {
+    const only = (text[0] ?? related[0]) as MailPart
+    if (only.root === true) return Buffer.concat([Buffer.from(partHeaders(only)), only.content])
+  }
+  // Two or more parts of the same block go inside a `related` of their own; a
+  // lone one sits directly in the alternative rather than in a wrapper around
+  // nothing.
+  const relatedBlock = related.length <= 1
+    ? related.map(part => partChunk(part, ALTERNATIVE_BOUNDARY))
+    : [Buffer.concat([
+        Buffer.from(`--${ALTERNATIVE_BOUNDARY}\r\n`),
+        multipart('related', RELATED_BOUNDARY, related.map(part => partChunk(part, RELATED_BOUNDARY))),
+      ])]
+  return multipart('alternative', ALTERNATIVE_BOUNDARY, [
+    ...text.map(part => partChunk(part, ALTERNATIVE_BOUNDARY)),
+    ...relatedBlock,
+  ])
+}
+
+/**
+ * One message's own parts as the reading pane's shape.
+ *
+ * An attachment is never downloaded to be shown or even to be listed: the parts
+ * fetched are the ones the body is made of, and the list comes from the structure
+ * the server already described. That is what keeps a three-megabyte message
+ * holding a three-megabyte PDF from costing anything to open.
+ *
+ * Nothing is cut here either. The only bound left is on a single body part, and
+ * it belongs to the caller (`MAX_BODY_PART_BYTES` in `imap.ts`), which is why
+ * `truncated` is the caller's to decide.
+ * @param input - the parts, the headers, and the row the message belongs to.
  * @returns the message with its body and attachment list.
  */
 export async function parseDetail(input: {
-  source: Buffer | string
   summary: MailSummary
-  maxTextBytes?: number
-}): Promise<MailDetail> {
-  const parsed = await simpleParser(input.source) as ParsedMail | undefined
-  const limit = input.maxTextBytes ?? TEXT_LIMIT
-  const html = typeof parsed?.html === 'string' ? clamp(parsed.html, limit) : undefined
-  const text = clamp(ownTextOf(parsed, html?.text), limit)
-
-  const attachments: readonly MailAttachment[] = (parsed?.attachments ?? []).map((attachment, index) => ({
-    // `partId` is the parser's IMAP-style body part number, which is exactly
-    // what `download()` asks the server for; `contentId` is *not* a section and
-    // a server rejects it, so it only stands in for a message the parser could
-    // not number, and the plain index only for a structure neither reported.
-    part: textOf(attachment.partId) ?? textOf(attachment.contentId) ?? String(index),
-    filename: textOf(attachment.filename) ?? NO_FILENAME,
-    contentType: textOf(attachment.contentType) ?? OCTET_STREAM,
-    size: typeof attachment.size === 'number' ? attachment.size : 0,
-  }))
+  /** To and Cc as the envelope reported them: the assembled body carries no message headers. */
+  to: readonly MailAddress[]
+  cc: readonly MailAddress[]
+  /** The attachment list, read from the structure rather than from a download. */
+  attachments: readonly MailAttachment[]
+  parts: OwnParts
+}): Promise<Omit<MailDetail, 'truncated'>> {
+  const own = assembleOwnBody(input.parts)
+  const parsed = own === undefined ? undefined : await simpleParser(own) as ParsedMail | undefined
+  const raw = typeof parsed?.html === 'string' ? parsed.html : undefined
+  const text = ownTextOf(parsed, raw)
+  const html = raw === undefined ? undefined : inlineCidImages(raw, parsed?.attachments ?? [])
 
   return {
     ...input.summary,
-    subject: textOf(parsed?.subject) ?? input.summary.subject,
-    from: addressesOf(parsed?.from)[0] ?? input.summary.from,
-    date: isoDate(parsed?.date, input.summary.date),
-    to: addressesOf(parsed?.to),
-    cc: addressesOf(parsed?.cc),
-    text: text.text,
-    ...(html === undefined ? {} : { html: html.text }),
-    attachments,
-    truncated: text.cut || (html?.cut ?? false),
+    to: input.to,
+    cc: input.cc,
+    text,
+    ...(html === undefined ? {} : { html }),
+    attachments: input.attachments,
   }
 }

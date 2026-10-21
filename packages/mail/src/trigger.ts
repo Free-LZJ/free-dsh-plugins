@@ -14,8 +14,13 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { buildPrompt, matchesFilters, renderTitle, triggerReadiness, type TriggerAvailability } from './rules.ts'
-import type { MailSummary, PresetChoice, RouteResult, TriggerConfig, TriggerRule } from './types.ts'
+import {
+  buildPrompt, matchesFilters, renderNoticeParts, renderTitle, triggerReadiness,
+  type TriggerAvailability,
+} from './rules.ts'
+import type {
+  ConsoleNoticeLike, MailSummary, PresetChoice, RouteResult, TriggerConfig, TriggerRule,
+} from './types.ts'
 
 /** Everything the trigger needs from the host. Injected so tests never touch cordis. */
 export interface TriggerHost {
@@ -65,11 +70,21 @@ export interface TriggerHost {
     ): Promise<{ agent: { followup(input: unknown): void } } | { error: unknown }>
   }
   readonly defaultModel: { currentSelection(): { provider: string; model: string } }
+  /**
+   * The workbench, when this deployment has one. Optional and probed per
+   * delivery rather than read once: the Loader row order is the user's, so the
+   * workbench may mount after this plugin does.
+   */
+  readonly console?: ConsoleNoticeLike
   readonly log: (message: string) => void
 }
 
 /** The failure codes `fire` normalizes every throw into. */
-type FailureCode = 'session_failed' | 'session_not_found' | 'preset_not_found' | 'invalid_config'
+type FailureCode =
+  | 'session_failed'
+  | 'session_not_found'
+  | 'preset_not_found'
+  | 'invalid_config'
 
 /**
  * The message the plugin posts into a session.
@@ -144,6 +159,18 @@ export function triggerAvailability(host: Partial<TriggerHost>): { session: bool
 }
 
 /**
+ * Whether the workbench notice switch can be turned on at all.
+ *
+ * Separate from {@link triggerAvailability} because it is a different axis: the
+ * switch belongs to no mode, it rides along with whichever one is chosen.
+ * @param host - the host slice, possibly missing the workbench.
+ * @returns true when a workbench answers and can take a notice.
+ */
+export function workbenchAvailable(host: Partial<TriggerHost>): boolean {
+  return wired(host.console, 'notify')
+}
+
+/**
  * The action one message takes, decided against the account's rules.
  *
  * First match wins, in the order the drawer lists them — the only ordering a
@@ -191,6 +218,10 @@ export async function resolveTrigger(
       ...(session === undefined ? {} : { session }),
       ...(notify === undefined ? {} : { notify }),
       ...(promptTemplate === undefined ? {} : { promptTemplate }),
+      // The workbench switch rides along or it is silently lost: `fire` reads it
+      // off the resolved trigger, so dropping it here would lose the notice the
+      // switch was turned on for.
+      ...(trigger.notifyWorkbench === true ? { notifyWorkbench: true } : {}),
       filters: {},
     }
   }
@@ -304,7 +335,13 @@ export async function presetChoices(
 /** One account's trigger, wired to the host it was created with. */
 export interface Triggerer {
   /** Hand one matched message over. Never throws. */
-  fire(accountId: string, trigger: TriggerConfig, summary: MailSummary, body: string): Promise<RouteResult>
+  fire(
+    accountId: string,
+    trigger: TriggerConfig,
+    summary: MailSummary,
+    body: string,
+    accountName?: string,
+  ): Promise<RouteResult>
 }
 
 /**
@@ -345,6 +382,38 @@ export function createTriggerer(host: TriggerHost): Triggerer {
     if ('error' in resolved) return fail('session_not_found', messageOf(resolved.error))
     resolved.agent.followup(mailMessage(buildPrompt(summary, body, trigger.promptTemplate), accountId, summary))
     return { ok: true }
+  }
+
+  /**
+   * Push one notice to the workbench, whatever the mode is about to do.
+   *
+   * Best effort by design: a workbench that is missing or misbehaving must not
+   * stop the message from reaching its session, which is the more important of
+   * the two and the one the account actually configured. The failure goes to the
+   * log; the switch stays on, so the next message tries again.
+   * @param summary - the message that matched.
+   * @param accountName - the mailbox it arrived on.
+   */
+  async function pushNotice(summary: MailSummary, accountName: string | undefined): Promise<boolean> {
+    const workbench = host.console
+    if (workbench === undefined) {
+      fail('invalid_config', '推送工作台通知已开启，但未安装工作台（@free-lzj/dsh-console）')
+      return false
+    }
+    const notice = renderNoticeParts(summary, accountName)
+    try {
+      await workbench.notify({
+        title: notice.title,
+        ...(notice.body === undefined ? {} : { body: notice.body }),
+        source: notice.source,
+      })
+      return true
+    } catch (error) {
+      // The contract says notify() never rejects; a workbench that does anyway
+      // must not take the scan pass — or the session — down with it.
+      host.log(`[mail] workbench notice failed: ${messageOf(error)}`)
+      return false
+    }
   }
 
   /** Mode A: one new root session for one message. */
@@ -412,8 +481,15 @@ export function createTriggerer(host: TriggerHost): Triggerer {
       trigger: TriggerConfig,
       summary: MailSummary,
       body: string,
+      accountName?: string,
     ): Promise<RouteResult> {
+      // The notice switch is independent of the mode, and it is not part of
+      // whether the mode can run: pushing a notice and waking an agent are two
+      // different asks, and turning one on must not disable the other.
+      if (trigger.notifyWorkbench === true) await pushNotice(summary, accountName)
       try {
+        // Probe the optional services per message: a service whose Loader row is
+        // applied after this one becomes usable without a restart.
         const available: TriggerAvailability = triggerAvailability(host)
         const readiness = triggerReadiness(trigger, available)
         if (!readiness.ok) return fail('invalid_config', readiness.reason ?? '触发配置不可用')
