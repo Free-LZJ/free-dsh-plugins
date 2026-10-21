@@ -768,6 +768,11 @@ export function apply(ctx: Context): void {
       for (const account of targets) {
         lastScanAt.set(account.id, 0)
         void scan(account.id)
+        // The folder tree is a cache filled when the connection came up, so a
+        // folder renamed on the server keeps its old name here and then fails to
+        // open. This is the one moment the user asks for the server's view as it
+        // is now, so the tree is re-listed alongside the scan.
+        void service.listMailboxes(account.id)
       }
       return { ok: true }
     },
