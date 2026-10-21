@@ -133,6 +133,54 @@ const DETAIL: MailDetail = {
   truncated: false,
 }
 
+/** The last message 垃圾邮件 holds: read, so the rail shows its total, "1". */
+const JUNK_MESSAGE: MailSummary = {
+  accountId: 'acc-1',
+  folder: '垃圾邮件',
+  uid: 31,
+  uidValidity: 7,
+  subject: '限时优惠',
+  from: { address: 'spam@example.com' },
+  date: '2026-08-12T08:00:00.000Z',
+  seen: true,
+  flagged: false,
+  hasAttachments: false,
+  snippet: '免费领取',
+  headers: {},
+}
+
+/** That message as the reading pane fetches it: the delete button acts on it. */
+const JUNK_DETAIL: MailDetail = {
+  ...JUNK_MESSAGE,
+  to: [{ address: 'me@qq.com' }],
+  cc: [],
+  text: '限时优惠',
+  html: '',
+  attachments: [],
+  truncated: false,
+}
+
+/** Both folders, with that one message in the junk folder. */
+const JUNK_STATE: MailState = {
+  ...STATE,
+  mailboxes: [
+    { accountId: 'acc-1', path: 'INBOX', specialUse: '\\Inbox', unseen: 1, total: 9 },
+    { accountId: 'acc-1', path: '垃圾邮件', specialUse: '\\Junk', unseen: 0, total: 1 },
+  ],
+  messages: [...STATE.messages, JUNK_MESSAGE],
+}
+
+/** What the Host answers once that message is gone: the folder is empty. */
+const JUNK_EMPTY: MailState = {
+  ...JUNK_STATE,
+  revision: 2,
+  mailboxes: [
+    { accountId: 'acc-1', path: 'INBOX', specialUse: '\\Inbox', unseen: 1, total: 9 },
+    { accountId: 'acc-1', path: '垃圾邮件', specialUse: '\\Junk', unseen: 0, total: 0 },
+  ],
+  messages: [...STATE.messages],
+}
+
 /* ──────────────────────────────── harness ─────────────────────────────── */
 
 /** The same mailbox, with a different answer to "may remote images load". */
@@ -149,6 +197,14 @@ interface Reply {
 /** Who answers which route. An absent `message` answers 404. */
 interface Routes {
   readonly state: Reply
+  /**
+   * The answer to `/state` once the panel has posted something.
+   *
+   * An action changes what the Host holds, and the panel reads that back instead
+   * of guessing it: without this the second read would hand the panel the state
+   * from before the action, which is not what a fixed Host answers.
+   */
+  readonly afterWrite?: Reply
   readonly message?: Reply
 }
 
@@ -191,11 +247,15 @@ async function renderPanel(
           writes.push({ url, body: JSON.parse(String(init.body)) as unknown })
           return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
         }
-        const reply = url.startsWith('/dsh-mail/message') ? routes.message : routes.state
+        const reply = url.startsWith('/dsh-mail/message')
+          ? routes.message
+          : writes.length > 0 ? routes.afterWrite ?? routes.state : routes.state
         const status = reply?.status ?? (reply ? 200 : 404)
         const body = reply ? reply.body : { error: 'no fixture for ' + url }
         return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) }
       }) as unknown as typeof window.fetch
+      // Deleting asks before it deletes, and jsdom does not implement the question.
+      window.confirm = () => true
     },
   })
   await settle(dom.window)
@@ -261,6 +321,46 @@ describe('the mail panel document', () => {
       search.dispatchEvent(new done.window.Event('input', { bubbles: true }))
     }
     expect(done.window.document.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+  })
+
+  it('empties the folder its last message was deleted from, rail and list alike', async () => {
+    // The reported bug: 垃圾邮件 held one message, deleting it left "1" on the
+    // rail and the list still ending in the whale's "到底啦" instead of the empty
+    // state — the counters and the empty state are read back from the Host, and
+    // the panel never asked again after its own optimistic edit.
+    const panel = await renderPanel({
+      state: { body: JUNK_STATE },
+      afterWrite: { body: JUNK_EMPTY },
+      message: { body: JUNK_DETAIL },
+    })
+    const doc = panel.window.document
+    const junkCount = (): string | null | undefined =>
+      doc.querySelector<HTMLElement>('.m-folders [data-folder="垃圾邮件"] .m-count')?.textContent
+    doc.querySelector<HTMLElement>('.m-folders [data-folder="垃圾邮件"]')?.click()
+    await settle(panel.window, 60)
+    expect(junkCount()).toBe('1')
+    expect(doc.querySelectorAll('.m-row').length).toBe(1)
+
+    doc.querySelector<HTMLElement>('.m-row')?.click()
+    await settle(panel.window, 60)
+    doc.querySelector<HTMLButtonElement>('.m-act-delete')?.click()
+    await settle(panel.window, 80)
+
+    expect(panel.writes.find((one) => one.url === '/dsh-mail/action')?.body)
+      .toMatchObject({ op: 'delete', accountId: 'acc-1', folder: '垃圾邮件', uids: [31] })
+    // The rail follows the folder it emptied, instead of keeping the number born
+    // at the last LIST.
+    expect(junkCount()).toBe('0')
+    expect(doc.querySelectorAll('.m-row').length).toBe(0)
+    // An empty list ends in its empty state, not in the tail that says the list
+    // reached its bottom while nothing is on it.
+    expect(doc.querySelector('.m-bottom')?.hasAttribute('hidden')).toBe(true)
+    const empty = doc.querySelector('.m-empty')
+    expect(empty?.hasAttribute('hidden')).toBe(false)
+    expect(empty?.textContent).toContain('还没有邮件')
+    // The stale total would have read as "this folder has not been loaded yet"
+    // and offered a button for a folder with nothing left to load.
+    expect(empty?.textContent).not.toContain('还没有加载')
   })
 
   it('lets a folder nothing has loaded yet pull its first page', async () => {

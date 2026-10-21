@@ -1095,6 +1095,11 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
       renderList();
       renderEmpty();
       renderRead();
+      // 列表这一行是本地说没就没的，文件夹计数和空态不是：它们读服务端的数字，
+      // 只有再问一次才会跟着动。少了这一趟，删掉最后一封之后文件夹上还留着那个
+      // 「1」，空态也照着旧计数说「这个文件夹的邮件还没有加载」，而尾巴还停在
+      // 「到底啦」——说的是一份已经不存在的列表。
+      await load();
     } catch (error) {
       el.actResult.dataset.error = 'true';
       el.actResult.textContent = message(error);

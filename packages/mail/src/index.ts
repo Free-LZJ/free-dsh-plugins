@@ -29,6 +29,7 @@ import {
   DEFAULT_CONFIG, normalizeAccountInput, normalizeAction, normalizeDraft,
   normalizePreferences, normalizeTrigger, senderKey, withTrustedSender,
 } from './config.ts'
+import { counterDeltas, type CounterMove } from './counters.ts'
 import {
   createConnection, imapFactoryFor, probeAccount, WATCHED_FOLDER,
   type ImapFactory, type MailConnection, type MailFlagUpdate,
@@ -353,6 +354,32 @@ export function apply(ctx: Context): void {
       ? { ...box, unseen: counters.unseen, total: counters.total }
       : box)))
     touch()
+  }
+
+  /**
+   * Move the tree by the rows an action just changed.
+   *
+   * The counterpart of {@link updateMailboxCounters} for the edits the panel
+   * makes itself: those are the server's absolute numbers, this is a delta, and
+   * a delta is clamped at zero because the row it names may have been trimmed
+   * out of the window while the folder's counters still count it. Folders the
+   * tree does not list (a move target that has not been re-listed yet) are left
+   * for the next list rather than invented here.
+   * @param accountId - the account whose tree moves.
+   * @param moves - what the action moved, per folder.
+   */
+  function moveTreeCounters(accountId: string, moves: readonly CounterMove[]): void {
+    const current = mailboxes.get(accountId)
+    if (current === undefined || moves.length === 0) return
+    const byFolder = new Map(moves.map(move => [move.folder, move]))
+    mailboxes.set(accountId, current.map((box) => {
+      const move = byFolder.get(box.path)
+      return move === undefined ? box : {
+        ...box,
+        total: Math.max(0, box.total + move.total),
+        unseen: Math.max(0, box.unseen + move.unseen),
+      }
+    }))
   }
 
   /**
@@ -697,27 +724,39 @@ export function apply(ctx: Context): void {
     fallback.unref()
   }
 
-  /** Keep the snapshot honest after the panel changes a flag or moves a message. */
+  /**
+   * Keep the snapshot and the folder tree honest after the panel changed a flag
+   * or moved a message.
+   *
+   * The tree needs the same edit the list got: its counters are the server's own
+   * numbers, and a folder nothing ever scans (垃圾邮件 is listed, never watched)
+   * keeps the numbers it was born with until something moves them.
+   */
   function applyActionLocally(action: MailAction): void {
     const current = snapshots.get(action.accountId) ?? []
     const touched = new Set(action.uids)
+    // A UID means nothing without its folder (RFC 3501 §2.3.1.1): without this
+    // check, deleting uid 5 in 垃圾邮件 also hid INBOX's row with the same number.
+    const named = (message: MailSummary): boolean => message.folder === action.folder && touched.has(message.uid)
+    // Read before the rows move: the tree is moved by the rows this matches.
+    const moves = counterDeltas(action, current)
     if (action.op === 'delete' || action.op === 'move') {
-      snapshots.set(action.accountId, current.filter(message => !touched.has(message.uid)))
-      // Without this the panel's next poll would be told "nothing changed" and the
-      // row the user just acted on would stay on screen.
-      touch()
-      return
+      snapshots.set(action.accountId, current.filter(message => !named(message)))
+    } else {
+      snapshots.set(action.accountId, current.map((message) => {
+        if (!named(message)) return message
+        switch (action.op) {
+          case 'markRead': return { ...message, seen: true }
+          case 'markUnread': return { ...message, seen: false }
+          case 'flag': return { ...message, flagged: true }
+          case 'unflag': return { ...message, flagged: false }
+          default: return message
+        }
+      }))
     }
-    snapshots.set(action.accountId, current.map((message) => {
-      if (!touched.has(message.uid)) return message
-      switch (action.op) {
-        case 'markRead': return { ...message, seen: true }
-        case 'markUnread': return { ...message, seen: false }
-        case 'flag': return { ...message, flagged: true }
-        case 'unflag': return { ...message, flagged: false }
-        default: return message
-      }
-    }))
+    moveTreeCounters(action.accountId, moves)
+    // Without this the panel's next poll would be told "nothing changed" and the
+    // row the user just acted on would stay on screen.
     touch()
   }
 
