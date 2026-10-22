@@ -125,7 +125,11 @@ function readCodexServer(
 ): ForeignMcpServer | string {
   const type = nonEmptyString(table.values.get('type'))
   if (type !== undefined && !STDIO_TYPES.has(type) && !HTTP_TYPES.has(type)) return `unsupported transport "${type}"`
-  if (type === undefined || STDIO_TYPES.has(type)) {
+  const url = nonEmptyString(table.values.get('url'))
+  // `codex mcp add <name> --url <url>` writes no `type`, so an absent type is
+  // decided by the keys: a `url` means remote, otherwise stdio.
+  const remote = type === undefined ? url !== undefined : HTTP_TYPES.has(type)
+  if (!remote) {
     const command = nonEmptyString(table.values.get('command'))
     if (command === undefined) return 'missing "command"'
     const args = stringList(table.values.get('args'))
@@ -144,7 +148,6 @@ function readCodexServer(
       env: { ...inherited, ...declared },
     }
   }
-  const url = nonEmptyString(table.values.get('url'))
   if (url === undefined) return 'missing "url"'
   const declaredHeaders = readStringTable(table.values.get('http_headers'), headerTable, 'http_headers')
   if (typeof declaredHeaders === 'string') return declaredHeaders

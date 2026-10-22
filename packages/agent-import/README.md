@@ -82,7 +82,7 @@ dsh plugin --profile web add @free-lzj/dsh-agent-import
 
 ## 行为
 
-- **Codex**：读 `<home>/config.toml` 的 `[mcp_servers.<name>]` 及其 `env` / `http_headers` 子表，以及 `<home>/skills` 下的技能目录。`type` 为 `stdio` 或缺省表示本地程序，`http` / `streamable-http` 表示远端；`env_vars` 从 `process.env` 取值的变量并到 `env` 之下，`bearer_token_env_var` 变成 `Authorization: Bearer` 头。
+- **Codex**：读 `<home>/config.toml` 的 `[mcp_servers.<name>]` 及其 `env` / `http_headers` 子表，以及 `<home>/skills` 下的技能目录。`type` 为 `http` / `streamable-http` 表示远端，`stdio` 或缺省表示本地程序；缺省时按键判断——写了 `url`（`codex mcp add --url` 的写法）就是远端，否则是本地。`env_vars` 从 `process.env` 取值的变量并到 `env` 之下，`bearer_token_env_var` 变成 `Authorization: Bearer` 头。
 - **Claude Code**：读 `~/.claude.json` 的用户级 `mcpServers`、同一文件里 `projects.<path>.mcpServers` 的工作区覆盖，以及项目级 `<project>/.mcp.json`；技能目录来自 `<configDir>/skills` 与 `<project>/.claude/skills`。工作区键做路径归一化后匹配。
 - **服务器命名**：外部名字归一化到 dsh 的 `[A-Za-z0-9_-]{1,32}` 命名空间；冲突时按声明顺序变成 `name`、`name-2`，超过 32 字符保留原名加六位十六进制摘要。
 - **技能导入**：每个已知来源的技能目录都被扫成一张表（`<root>/<name>/SKILL.md`，或 `<root>/<name>.md`），按 frontmatter 的 `name` 归并——dsh 也是按 `name` 而不是目录名寻址技能。`realpath` 相同（同一份文件，例如经 CC Switch 中转的多个工具）只算一条候选，因此不会为同一份技能重复建链。
@@ -155,10 +155,16 @@ pnpm run test      # 在本仓库根目录运行 vitest
 - 外部 **MCP 声明**只在激活时读取（本插件自身配置除外）：Codex / Claude Code 侧改了服务器声明需要重载或重启。**技能目录是按请求现读的**，在外部增删技能后刷新设置页即可看到。
 - 不展开两边工具自己的插件市场（如 Codex `plugin.json`）。
 - Codex 的 `startup_timeout_sec` 在 dsh 侧没有对应项；Claude Code 的 `sse` 传输不支持。
+- 远端服务器只能带静态头部（`http_headers`、`bearer_token_env_var`）。需要 OAuth 授权的远端（如 Notion 的 `https://mcp.notion.com/mcp`）会被导入并挂载，但连不上（401 `Bearer realm="OAuth"`）：dsh 的 `mcp-client` 目前没有 OAuth 授权流程，Codex 侧已授权的凭据存在它自己的加密 secrets 里，无法复用。这类服务器要么在外部改走 stdio 桥（如 `npx mcp-remote <url>`），要么等 `mcp-client` 支持 OAuth。
 - **Windows 上的文件型技能**：技能若是一个 `.md` 文件而不是目录（`<root>/<name>.md`），建符号链接需要 Windows 开发者模式。本插件**不会**退化成复制或硬链接（硬链接无法被识别为链接，会让「移除」失效并让技能看起来是本地文件），而是跳过并报 `unsupported`，设置页说明原因。目录型技能在 Windows 上用 junction，任何权限下都能导入。
 - **与 `@michengai/dsh-skills-manager` 并存**：那个插件会跳过 `~/.dsh/skills` 下的符号链接，启用/停用状态存在它自己的 `~/.dsh/skills-manager/state.json` 里，因此它既看不到也不管理本插件导入的技能；两者互不感知，同一批技能建议只用其一管理。
 
 ## 更新日志
+
+### 0.3.3
+
+- 修：Codex 里用 `codex mcp add <name> --url <url>` 声明的远端 MCP（`config.toml` 里只有 `url`、没有 `type`，如 Notion、Linear 这类托管服务）此前被判成缺 `command` 的本地服务器而整条跳过，设置页里根本看不到。现在缺省 `type` 按键判断：有 `url` 就是远端，否则才是本地。
+- 已知限制里补上「远端只能是静态头部」的边界：需要 OAuth 授权流程的远端（Notion 的 `https://mcp.notion.com/mcp`）虽然现在会被导入，但 dsh 的 `mcp-client` 没有 OAuth，仍会 401，需要外部走 stdio 桥。
 
 ### 0.3.2
 

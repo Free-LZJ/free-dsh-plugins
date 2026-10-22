@@ -61,6 +61,19 @@ describe('readCodexServers — stdio declarations', () => {
 })
 
 describe('readCodexServers — remote declarations', () => {
+  it('reads a declaration that spells only a url, as `codex mcp add --url` writes it', () => {
+    const read = readCodexServers('[mcp_servers.notion]\nurl = "https://mcp.notion.com/mcp"', 'config.toml', {})
+    expect(read.servers).toEqual([{
+      transport: 'streamable-http',
+      name: 'notion',
+      source: 'codex',
+      origin: 'config.toml',
+      url: 'https://mcp.notion.com/mcp',
+      headers: {},
+    }])
+    expect(read.notes).toEqual([])
+  })
+
   it('reads a streamable HTTP server with inline headers', () => {
     const text = [
       '[mcp_servers.remote]',
