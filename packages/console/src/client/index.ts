@@ -29,9 +29,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: the sidebar's `sidebar.panellist` declaration.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { CONSOLE_PANEL_ID, type ConsoleLayout, type ConsoleNoticeRecord } from '../protocol.ts'
+import { CONSOLE_PANEL_ID, type ConsoleLayout, type ConsoleNoticeRecord, type WorkbenchState } from '../protocol.ts'
 import type { ConsoleClientService } from './contract.ts'
 import { bindSelector, link } from './link.ts'
+import { WorkbenchLink } from './workbench/link.ts'
+import type { WorkbenchFace } from './workbench/board.tsx'
 import { PanelRegistry, panelRows, type PanelRow } from './registry.ts'
 import { ConsoleIcon, ConsoleShell } from './shell.tsx'
 import { ConsoleSettingsRow } from './settings-row.tsx'
@@ -77,6 +79,22 @@ export function apply(ctx: ClientContext): void {
 
   const registry = new PanelRegistry()
   const face = createPageFace()
+  const workbenchLink = new WorkbenchLink()
+  const useBoard = bindSelector<WorkbenchState | undefined>(workbenchLink)
+  const workbenchFace: WorkbenchFace = {
+    useBoard,
+    ingest: (event) => workbenchLink.ingest(event),
+    dispatch: (cardId, executor) => workbenchLink.act({
+      action: 'dispatch',
+      cardId,
+      ...(executor === undefined ? {} : { executor }),
+    }),
+    move: (cardId, column) => workbenchLink.act({ action: 'move', cardId, column }),
+    interrupt: (sessionId, text) => workbenchLink.act({ action: 'interrupt', sessionId, text }),
+    pause: (sessionId) => workbenchLink.act({ action: 'pause', sessionId }),
+    resume: (sessionId) => workbenchLink.act({ action: 'resume', sessionId }),
+    end: (sessionId) => workbenchLink.act({ action: 'end', sessionId }),
+  }
   let liveNotices: readonly ConsoleNoticeRecord[] = []
 
   /**
@@ -141,6 +159,13 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'console: host link')
 
+  ctx.effect(() => {
+    workbenchLink.open()
+    return () => {
+      workbenchLink.dispose()
+    }
+  }, 'console: workbench link')
+
   ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main',
     key: CONSOLE_PANEL_ID,
@@ -164,6 +189,7 @@ export function apply(ctx: ClientContext): void {
         void link.clearNotices()
       },
       liveNotices: () => liveNotices,
+      workbench: workbenchFace,
     }),
   }, ConsoleShell)), 'console: home list')
 

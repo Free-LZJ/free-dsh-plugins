@@ -28,9 +28,16 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 // Type-only: the `ctx.webServer` service merge the routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { registerBuiltinChannels, type PageSurfaces } from './builtin-channels.ts'
+import { STATE_DIR } from './store.ts'
 import { ConsoleHost } from './console-host.ts'
 import { BUILTIN_CHANNELS, type ConsoleLayout } from './protocol.ts'
 import { registerRoutes, type RouteHost } from './routes.ts'
+import { WorkbenchBoard } from './workbench/board.ts'
+import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
+import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
+import { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
+import { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
+import { registerWorkbenchRoutes } from './workbench/routes.ts'
 
 export { ConsoleHost } from './console-host.ts'
 export type { ConsoleEvent, ConsoleHostOptions } from './console-host.ts'
@@ -40,8 +47,18 @@ export { PresenceGate, registerBuiltinChannels } from './builtin-channels.ts'
 export type { BuiltinChannelWiring, PageSurfaces } from './builtin-channels.ts'
 export * from './paths.ts'
 export * from './protocol.ts'
-export { STATE_DIR } from './store.ts'
+export { STATE_DIR }
 export type { ConsolePrefs } from './store.ts'
+export { WorkbenchBoard } from './workbench/board.ts'
+export type { ActionResult, IngestResult, WorkbenchBoardOptions } from './workbench/board.ts'
+export { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
+export type { Classifier } from './workbench/classifier.ts'
+export { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
+export type { Connector } from './workbench/connectors.ts'
+export { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
+export type { Executor, ExecutorHandle, SessionSink } from './workbench/executors.ts'
+export { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
+export type { RouteRule, RoutingTable } from './workbench/routing.ts'
 
 // Type-only: the `ctx.console` service every adopting plugin injects.
 declare module '@deepseek-ai/cordis' {
@@ -57,10 +74,15 @@ declare module '@deepseek-ai/cordis' {
 /** Channel ids accepted by the configuration, in the settings row's order. */
 const CHANNEL_IDS = [...BUILTIN_CHANNELS]
 
+/** Connector ids accepted by the configuration, in the board's list order. */
+const CONNECTOR_IDS = builtinConnectors().map((connector) => connector.id)
+
 /** Configuration as written by a user, before the schema resolves defaults. */
 type ConfigInput = {
   channels?: string[]
   layout?: ConsoleLayout
+  workbenchConnectors?: string[]
+  workbenchClassifier?: string
 }
 
 /** Live workbench configuration, resolved by the Loader row. */
@@ -69,6 +91,10 @@ export interface Config {
   channels: string[]
   /** View the home list opens with. */
   layout: ConsoleLayout
+  /** Board connectors switched on; an id nobody implements is dropped with a warning. */
+  workbenchConnectors: string[]
+  /** Classifier id the board routes with; an unknown id falls back to the rule classifier. */
+  workbenchClassifier: string
 }
 
 export const Config = Schema.object({
@@ -78,6 +104,12 @@ export const Config = Schema.object({
   layout: Schema.union(['grid', 'list', 'compact'] as const)
     .default('grid')
     .description('View the home list opens with.'),
+  workbenchConnectors: Schema.array(Schema.union(CONNECTOR_IDS.map((id) => Schema.const(id))))
+    .default(['mail', 'webhook'])
+    .description('Board connectors switched on (mail and webhook work in v0; dingtalk and jira are placeholders).'),
+  workbenchClassifier: Schema.string()
+    .default(RULE_CLASSIFIER_ID)
+    .description('Classifier id the board routes with.'),
 }) as Schema<ConfigInput, Config>
 
 /**
@@ -105,6 +137,38 @@ export function apply(ctx: Context, config: Config): void {
     chime: () => false,
   }
   registerBuiltinChannels(host.channels, { gate: host.presence, pages })
+
+  // The board's assembly: implementations register here, the board itself
+  // never names one. A companion plugin adds an executor, a classifier, or a
+  // connector by registering with the registries on its own mount, not by
+  // editing this file — the same extension shape as the notification channels.
+  const classifiers = new ClassifierRegistry()
+  classifiers.register(new RuleClassifier())
+  const executors = new ExecutorRegistry()
+  executors.register(new SimulatedExecutor('dsh', 'DSH（模拟）'))
+  executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
+  const connectors = new ConnectorRegistry()
+  for (const connector of builtinConnectors()) connectors.register(connector)
+  const routing = new RoutingTableStore(join(home, STATE_DIR, 'routing.json'), defaultRoutingTable(), (line) => {
+    ctx.logger.warn(line)
+  })
+  // A user finds an editable routing document instead of an absent one; a
+  // failure only means the built-in table keeps serving.
+  void routing.ensureFile(defaultRoutingTable())
+  const board = new WorkbenchBoard({
+    homeDir: home,
+    classifiers,
+    executors,
+    connectors,
+    routing,
+    enabledConnectors: () => config.workbenchConnectors,
+    classifierId: () => config.workbenchClassifier,
+    warn: (line) => {
+      ctx.logger.warn(line)
+    },
+  })
+  host.attachWorkbench(board)
+  registerWorkbenchRoutes(ctx, { board })
 
   // The Loader row can be re-applied live; reflect the new view preference
   // without a restart.
@@ -139,4 +203,5 @@ export function apply(ctx: Context, config: Config): void {
   registerRoutes(ctx, routeHost)
 
   ctx.logger.info(`console: workbench mounted (channels: ${host.channels.list().map((channel) => channel.id).join(', ')})`)
+  ctx.logger.info(`console: board mounted (connectors: ${connectors.list().map((connector) => connector.id).join(', ')})`)
 }

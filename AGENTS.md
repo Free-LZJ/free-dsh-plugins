@@ -15,7 +15,7 @@ packages/
     cordis.patch.yml   #   dsh.bundle 补丁：dsh plugin add 时插入的唯一 Loader 行
     tsdown.config.ts   #   两半的打包形态（平台模块表在这）
   mail/                # @free-lzj/dsh-mail          邮箱面板（接入工作台后从工作台进入）+ 新邮件交给 agent
-  console/             # @free-lzj/dsh-console       工作台首页 + 通知接口；对外导出 panel 契约
+  console/             # @free-lzj/dsh-console       工作台首页 + 通知接口 + 任务看板（看板/会话/连接器/规则在 src/workbench/）；对外导出 panel 契约
     src/index.ts       #   Host 半边：ctx.console 服务、通知渠道注册表
     src/client/        #   浏览器半边：首页列表、通知中心、设置行
     src/client/contract.ts  # 跨插件契约（消费方 import 的是它）

@@ -26,6 +26,7 @@ import { LAYOUTS, LAYOUT_ORDER, type HomeListProps } from './home.tsx'
 import type { Translate } from './locales.ts'
 import type { PanelRow } from './registry.ts'
 import { CLS } from './styles.ts'
+import { WorkbenchSection, type WorkbenchFace } from './workbench/board.tsx'
 
 /** Everything the shell reads and calls, injected by the plugin's `apply`. */
 export interface ShellInjected {
@@ -45,6 +46,11 @@ export interface ShellInjected {
   readonly clearNotices: () => void
   /** Notices raised while this page is open, newest first. */
   readonly liveNotices: () => readonly ConsoleNoticeRecord[]
+  /**
+   * The board face, when the Host mounted a board. Optional so a workbench
+   * without one — and every existing spec face — renders the home list alone.
+   */
+  readonly workbench?: WorkbenchFace
 }
 
 /**
@@ -72,7 +78,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @returns the shell.
  */
 export function ConsoleShell(props: ConsoleShellProps): ReactNode {
-  const { t, useRows, useNotices, layout, open, togglePin, setLayout, clearNotices, liveNotices } = props
+  const { t, useRows, useNotices, layout, open, togglePin, setLayout, clearNotices, liveNotices, workbench } = props
   const rows = useRows((all) => all)
   const stored = useNotices((all) => all)
   const [query, setQuery] = useState('')
@@ -115,6 +121,7 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
         </div>
       </header>
       <div className={CLS.body}>
+        {workbench !== undefined && <WorkbenchSection face={workbench} t={t} />}
         <Layout {...homeProps} />
       </div>
     </div>

@@ -57,6 +57,30 @@ export const CLS = {
   rowDesc: 'dshc-row-desc',
   selector: 'dshc-selector',
   chevron: 'dshc-chevron',
+  wbRoot: 'dshc-wb-root',
+  wbTitle: 'dshc-wb-title',
+  wbHint: 'dshc-wb-hint',
+  wbColumns: 'dshc-wb-columns',
+  wbColumn: 'dshc-wb-column',
+  wbColumnTitle: 'dshc-wb-column-title',
+  wbCards: 'dshc-wb-cards',
+  wbCard: 'dshc-wb-card',
+  wbCardTitle: 'dshc-wb-card-title',
+  wbCardMeta: 'dshc-wb-card-meta',
+  wbCardActions: 'dshc-wb-card-actions',
+  wbSession: 'dshc-wb-session',
+  wbSubtitle: 'dshc-wb-subtitle',
+  wbEmpty: 'dshc-wb-empty',
+  wbSessionList: 'dshc-wb-session-list',
+  wbLogs: 'dshc-wb-logs',
+  wbLog: 'dshc-wb-log',
+  wbRow: 'dshc-wb-row',
+  wbSim: 'dshc-wb-sim',
+  wbAnswer: 'dshc-wb-answer',
+  wbMeta: 'dshc-wb-meta',
+  wbMetaList: 'dshc-wb-meta-list',
+  wbMetaItem: 'dshc-wb-meta-item',
+  wbMetaNote: 'dshc-wb-meta-note',
 } as const
 
 /** Id of the one style element the workbench installs, keyed so a reload replaces it. */
@@ -105,6 +129,33 @@ const CSS = `
 .${CLS.selector}{display:inline-flex;align-items:center;gap:12px;height:36px;padding:0 14px;border:0;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-module-platform);font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary);cursor:pointer}
 .${CLS.selector}:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .${CLS.chevron}{flex:none}
+/* The board: three columns over the home list, then the session focus, the
+   simulator, and the meta lists. Same materials as the home cards, so the
+   board reads as another workbench surface rather than a second product. */
+.${CLS.wbRoot}{display:flex;flex-direction:column;gap:12px;margin-bottom:16px;padding-bottom:16px;border-bottom:0.5px solid var(--dsw-alias-border-l2)}
+.${CLS.wbTitle}{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.wbHint}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.wbColumns}{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.${CLS.wbColumn}{display:flex;flex-direction:column;gap:8px;min-width:0;padding:10px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2)}
+.${CLS.wbColumnTitle}{margin:0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.wbCards}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.${CLS.wbCard}{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}
+.${CLS.wbCardTitle}{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.wbCardMeta}{display:flex;flex-wrap:wrap;gap:4px}
+.${CLS.wbCardActions}{display:flex;gap:6px}
+.${CLS.wbSession}{display:flex;flex-direction:column;gap:8px}
+.${CLS.wbSubtitle}{margin:0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.wbEmpty}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.wbSessionList}{display:flex;flex-wrap:wrap;gap:6px}
+.${CLS.wbLogs}{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto;margin:0;padding:8px 12px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2);list-style:none}
+.${CLS.wbLog}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap}
+.${CLS.wbRow}{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.${CLS.wbSim}{display:flex;flex-direction:column;gap:8px}
+.${CLS.wbAnswer}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.${CLS.wbMeta}{display:flex;flex-direction:column;gap:8px}
+.${CLS.wbMetaList}{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.${CLS.wbMetaItem}{font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.${CLS.wbMetaNote}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 `
 
 /**
