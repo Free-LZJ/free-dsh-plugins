@@ -109,7 +109,11 @@ async function handleOverview(ctx: Context, req: IncomingMessage, res: ServerRes
   }
   try {
     const settings = await readSettings()
-    const registry = ctx.workspaceRegistry
+    // `ctx.get`, not the property accessor: the registry is an optional
+    // collaborator here — a profile may mount this plugin without the Workspace
+    // registry — and the accessor would demand an `inject` dependency the routes
+    // cannot afford to lose.
+    const registry = ctx.get('workspaceRegistry')
     const repos = new Map<string, RepoOverview>()
     for (const workspace of registry?.list() ?? []) {
       try {

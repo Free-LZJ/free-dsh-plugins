@@ -61,7 +61,7 @@ afterEach(() => {
  * @param directories - registered Workspace directories.
  * @returns the registrations, keyed by path.
  */
-async function mount(directories: readonly string[] = []): Promise<Map<string, Registered>> {
+async function mount(directories: readonly string[] | undefined = []): Promise<Map<string, Registered>> {
   const ctx = new Context()
   const routes = new Map<string, Registered>()
   ctx.provide('webServer', {
@@ -72,14 +72,18 @@ async function mount(directories: readonly string[] = []): Promise<Map<string, R
       }
     },
   })
-  ctx.provide('workspaceRegistry', {
-    list: () => directories.map((path, index) => ({
-      id: `ws-${index}`,
-      path,
-      title: path,
-      sessionIds: [],
-    })),
-  })
+  // `undefined` mounts no registry at all: the profile shape that must degrade
+  // instead of throwing.
+  if (directories !== undefined) {
+    ctx.provide('workspaceRegistry', {
+      list: () => directories.map((path, index) => ({
+        id: `ws-${index}`,
+        path,
+        title: path,
+        sessionIds: [],
+      })),
+    })
+  }
   await ctx.plugin({ apply }).await()
   return routes
 }
@@ -169,6 +173,17 @@ describe('overview', () => {
 
   it('skips a Workspace that is not a repository instead of failing the read', async () => {
     const routes = await mount([scratch()])
+    const answer = await call(route(routes, OVERVIEW_PATH), { method: 'GET', headers: {} })
+    expect(answer.status).toBe(200)
+    expect((JSON.parse(answer.body) as OverviewResult).repos).toEqual([])
+  })
+
+  it('answers an empty overview when no Workspace registry is mounted', async () => {
+    // The regression this case exists for: reading the registry through the
+    // `ctx.workspaceRegistry` accessor without an `inject` declaration throws
+    // "cannot get property … without inject", so the page failed instead of
+    // showing nothing.
+    const routes = await mount(undefined)
     const answer = await call(route(routes, OVERVIEW_PATH), { method: 'GET', headers: {} })
     expect(answer.status).toBe(200)
     expect((JSON.parse(answer.body) as OverviewResult).repos).toEqual([])

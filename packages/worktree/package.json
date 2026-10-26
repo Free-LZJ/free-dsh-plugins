@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-worktree",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Start a new DSH session inside a fresh Git worktree, created under the repository's own .agents/worktrees and kept next to the checkout it came from",
   "repository": {
     "type": "git",
