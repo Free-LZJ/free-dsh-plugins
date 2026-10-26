@@ -24,6 +24,7 @@
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | The workbench: dsh's home surface. Its home page lists the plugins that **adopt its panel contract** (card grid / list / compact, search and pinning) and opens them from there — a plugin that has not adopted it never appears. It is also the notification hub: plugins hand a notice to `ctx.console.notify()` and the workbench picks how to deliver it from **interchangeable, multi-select channels** (desktop notification / in-app centre / sound). Its UI stays entirely inside DSH's design system (`ui-primitives` controls and `--dsw-*` tokens) instead of a look of its own |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.2.0` | A mail panel: read / search / flag / move / delete (**no sending**), and a new message that opens an agent session, lands in one you already have, or just lights up the panel. With the workbench installed it lists there instead of taking a sidebar row of its own |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | Web search through your **signed-in DeepSeek account**, independent of the model the conversation runs on: chat pinned to a gateway or a third-party model still searches, with no extra search key |
+| [`@free-lzj/dsh-worktree`](packages/worktree/README.md) | `0.1.0` | **Pick a worktree when starting a session**: the New Session row offers one control that branches a separate checkout (`<repo>/.agents/worktrees/<name>`) from the repository's latest commit and opens the session inside it, leaving the original checkout untouched. The layout matches the official "Git Worktrees" bundle, so both can be installed |
 
 Each package's install steps, configuration fields, panel details and known limitations live in its own README (linked above). What follows is what the packages share, and how this repository itself is developed.
 
@@ -68,6 +69,7 @@ Every package declares `dsh.bundle` (its patch file is the `cordis.patch.yml` be
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 dsh plugin --profile web add @free-lzj/dsh-console
 dsh plugin --profile web add @free-lzj/dsh-mail
+dsh plugin --profile web add @free-lzj/dsh-worktree
 ```
 
 **Pick the profile you actually run**: `dsh web` uses `web`. The Electron Desktop app uses `desktop` — it is not a different client but the same `dsh-web-app` composition plus a **bundled** dsh runtime of its own, serving the page through the Host's own `ctx.webServer` on a local port, so both halves work there too; only the profile and the global CLI do not carry over:
@@ -91,6 +93,7 @@ pnpm run build
 
 dsh plugin --profile web add "<absolute path>/packages/agent-import"
 dsh plugin --profile web add "<absolute path>/packages/mail"
+dsh plugin --profile web add "<absolute path>/packages/worktree"
 # or run pnpm pack first and install the .tgz file
 ```
 
@@ -122,12 +125,13 @@ A pnpm monorepo: one directory under `packages/*` is one package.
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import` (MCP servers + skill import) |
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console` (workbench home + notification hub) |
 | [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (mail panel) |
+| [`packages/worktree`](packages/worktree) | `@free-lzj/dsh-worktree` (new session in a fresh Git worktree) |
 
 ```sh
 pnpm install
 pnpm run typecheck   # every package, both halves
 pnpm run build       # tsc for types, tsdown for lib/index.js (Node half) and lib/client.js (browser half)
-pnpm run test        # vitest: 37 spec files / 608 tests
+pnpm run test        # vitest: 47 spec files / 679 tests
 ```
 
 Build before testing: the artifacts have contract specs of their own (registration id, the `dsh.client` declaration, `exports["./client"]`, that nothing in the browser entry takes a value from the Host half, and that `console`'s contract artifact stays an inlinable plain module), and one of them reports as skipped without `lib/`.

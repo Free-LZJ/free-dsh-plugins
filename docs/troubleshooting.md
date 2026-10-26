@@ -29,6 +29,27 @@
 - 页面里出现两份 React 或两个插槽注册表，通常是 `tsdown.config.ts` 的 `PLATFORM_MODULES` 少了某个平台模块，导致它被内联。改 `PLATFORM_MODULES` 前先确认该模块确实由页面 module table 提供。
 - 浏览器半边 import 了 Host 半边的运行时值，会把 Node 依赖打进浏览器包并大概率在页面里抛错。契约测试会拦；看到这个报错就回到 `src/client/**` 把 import 改成只取类型。
 
+## `Property 'slots' does not exist on type 'Context'`（或 `PropsRuntime<'…'>` 约束成 `never`）
+
+现象：源码看起来没问题，`pnpm run typecheck` 报上面两条之一，且换回上一版依赖就消失。
+
+原因不在代码：**同一个包在 pnpm 里有两份物理副本**。DSH 的服务（`ctx.slots`、`ctx.locale`、`ctx.workspace`…）和插槽表（`SlotMap`、`LocaleNamespaceMap`）都是 TypeScript 的模块增强（`declare module '@deepseek-ai/cordis'` / `'@deepseek-ai/dsh-client-ui-slots'`），增强只并入**同一份物理模块**。当某个包钉 0.2.x 预发布、其他包还是 0.1.x 时，pnpm 的隐藏提升目录里可能只有旧版，于是 `dsh-client-locale` 之类的包把增强写进旧副本，你自己的文件读的是新副本 —— 服务"不存在"，`SlotMap` 是空的。
+
+判断：
+
+```powershell
+# 两份以上就是这个问题
+Get-ChildItem node_modules\.pnpm -Directory | Where-Object Name -like "*dsh-client-ui-slots*"
+```
+
+三种解法，按代价从低到高：
+
+1. **给这个包加路径映射**（`worktree` 包就是这么做的）：`tsconfig.json` 里把 `@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-slots` 指到本包自己的 `node_modules` 那一份，让所有增强落到同一模块。
+2. **整仓统一版本**：所有包的 `@deepseek-ai/dsh-*` 开发依赖升到同一个 0.2.x 预发布，并统一 `@deepseek-ai/cordis` 版本（各包 peer 的 `~4.0.5` 说明 4.0.5 是共同可满足的版本）。
+3. 只对某个包做 `pnpm.overrides` —— 会牵连别的包，最后仍要回到方案 2。
+
+统一版本后可以把方案 1 的 `paths` 删掉；保留也不会错，只是多一层说明。
+
 ## 本地装成 `link:` 后整行不激活
 
 现象：`dsh plugin add "<本仓库绝对路径>/packages/<包名>"`（或插件市场里装目录）返回安装成功，但激活那一步打印

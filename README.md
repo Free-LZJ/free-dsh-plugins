@@ -24,6 +24,7 @@
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | **工作台**：dsh 的首页。首页列出**接入它面板契约**的插件（卡片宫格 / 列表 / 紧凑，可搜索、可置顶）并从那里打开——没接入的插件不会出现；同时是**通知出口**——插件把通知交给 `ctx.console.notify()`，由工作台从**可替换、可多选**的渠道里挑怎么送达（桌面通知 / 应用内消息 / 提示音）。界面完全用 DSH 的设计系统（`ui-primitives` 控件 + `--dsw-*` token），不另起一套 |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.2.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**），新邮件按账号配置新建 agent 会话、投递到指定会话或只高亮。装了工作台时它列在工作台里，不再单独占侧边栏 |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
+| [`@free-lzj/dsh-worktree`](packages/worktree/README.md) | `0.1.0` | **新开会话时选工作树**：首屏一个「新建工作树会话」，从当前仓库的最新提交建独立检出（`<仓库>/.agents/worktrees/<名字>`）并在里面开会话，原检出不动。检出布局与官方实验 bundle「Git 工作树」一致，可共存 |
 
 每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是这些包共有的约定，以及本仓库自身的开发说明。
 
@@ -87,6 +88,7 @@ dsh 自带的搜索只在**会话本身跑在 `deepseek-account` 路由**时才�
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 dsh plugin --profile web add @free-lzj/dsh-console
 dsh plugin --profile web add @free-lzj/dsh-mail
+dsh plugin --profile web add @free-lzj/dsh-worktree
 ```
 
 **Profile 要选你实际在跑的那个**：`dsh web` 用 `web`。Electron 桌面端用 `desktop` —— 它不是另一个客户端，而是同一套 `dsh-web-app` 组合外加一份**自带版本**的 dsh 运行时，页面由 Host 自己的 `ctx.webServer` 在本机端口上提供，所以两个半边照常工作，只是 profile 与全局 CLI 不通用：
@@ -98,7 +100,7 @@ dsh plugin --profile desktop add @free-lzj/dsh-mail
 
 > **加载时机**：Host 半边是启动时加载的 JS，**改了要重启** `dsh web`（桌面端预览版同理）；浏览器半边刷新页面即可。
 
-> **兼容性预检**：三个包的 peer 范围都覆盖 0.1.7 起的 0.1.x 与含预发布在内的 0.2.x 运行时（桌面端自带的那份也在其中）。运行时不落在范围里时，dsh 启动的预检会把该行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "…": …`），插件与页面都不出现，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
+> **兼容性预检**：`console`、`mail`、`agent-import` 的 peer 范围覆盖 0.1.7 起的 0.1.x 与含预发布在内的 0.2.x 运行时（桌面端自带的那份也在其中）；`worktree` 用到的首屏选项位是 0.2.x 才有的，只声明 0.2.x。运行时不落在范围里时，dsh 启动的预检会把该行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "…": …`），插件与页面都不出现，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
 
 ### 从本仓库安装（改插件本身时才需要）
 
@@ -113,6 +115,7 @@ dsh plugin --profile web add "<本仓库绝对路径>/packages/console"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/mail"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/web-search-account"
+dsh plugin --profile web add "<本仓库绝对路径>/packages/worktree"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
 
@@ -147,12 +150,13 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console`（工作台首页 + 通知出口） |
 | [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（邮箱面板） |
 | [`packages/web-search-account`](packages/web-search-account) | `@free-lzj/dsh-web-search-account`（搜索走已登录账号，仅 Host 半边） |
+| [`packages/worktree`](packages/worktree) | `@free-lzj/dsh-worktree`（新会话时新建 Git 工作树） |
 
 ```sh
 pnpm install
 pnpm run typecheck   # 每个包，两个半边一起
 pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js（Node 半边）、lib/client.js（浏览器半边）
-pnpm run test        # vitest：37 个 spec 文件 / 608 个测试
+pnpm run test        # vitest：47 个 spec 文件 / 679 个测试
 ```
 
 先 `build` 再 `test`：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口没有向 Host 半边取值，以及 `console` 的契约产物仍是可被内联的普通模块），没有 `lib/` 时其中一条会显示为 skipped。

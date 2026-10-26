@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    // The browser half renders `.tsx`; the Host half stays plain TypeScript.
+    "jsx": "react-jsx",
+    // One physical copy of each merged module.
+    //
+    // This package pins the 0.2.x harness pre-release, while the other packages
+    // in this repository still build against 0.1.x, so pnpm links two copies of
+    // `@deepseek-ai/cordis` and `@deepseek-ai/dsh-client-ui-slots` in the store.
+    // Module augmentation (the `ctx.slots`/`ctx.locale` services and the
+    // `SlotMap`/`LocaleNamespaceMap` keys) merges only into the identical
+    // physical module, and without these mappings the declarations land on the
+    // other copy — the symptom is "Property 'slots' does not exist on type
+    // 'Context'". Pointing every import at this package's own copy, which is the
+    // version this package's peers actually run, makes the merges land.
+    "paths": {
+      "@deepseek-ai/cordis": ["./node_modules/@deepseek-ai/cordis"],
+      "@deepseek-ai/dsh-client-ui-slots": ["./node_modules/@deepseek-ai/dsh-client-ui-slots"]
+    }
+  },
+  "include": ["src", "tests"]
+}
