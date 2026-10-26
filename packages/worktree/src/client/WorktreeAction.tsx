@@ -42,6 +42,8 @@ export interface WorktreeActionInjected {
   removeWorktree: (dir: string, path: string) => Promise<{ removed: string; branch?: string }>
   /** Register the checkout as a Workspace; resolves the Workspace id. */
   registerWorkspace: (path: string) => Promise<string>
+  /** Drop the Workspace registration that names this checkout, if any. */
+  forgetWorkspace: (path: string) => Promise<void>
   /** Open (or reuse) the blank Session in that Workspace. */
   openWorkspace: (workspaceId: string) => Promise<void>
 }
@@ -68,7 +70,7 @@ function messageOf(reason: unknown): string {
  */
 export function WorktreeAction({
   sessionId, useWorkspaces, createWorktree, listWorktrees, removeWorktree,
-  registerWorkspace, openWorkspace, t,
+  registerWorkspace, forgetWorkspace, openWorkspace, t,
 }: WorktreeActionProps) {
   const dir = useWorkspaces(state => state.items.find(item => item.sessionIds.includes(sessionId))?.path)
   const [open, setOpen] = useState(false)
@@ -157,6 +159,9 @@ export function WorktreeAction({
     setArmed(undefined)
     setError(undefined)
     void removeWorktree(dir, path)
+      // The checkout is gone; its Workspace registration would otherwise be a
+      // sidebar row pointing at nothing, so it goes too.
+      .then(() => forgetWorkspace(path))
       .then(() => { refresh() })
       .catch((reason: unknown) => {
         // Removal can half-succeed: the checkout is gone and the branch stayed.

@@ -1,21 +1,29 @@
 /**
- * Worktree picker for DSH — browser half.
+ * Worktrees and Workspaces for DSH — browser half.
  *
- * One contribution: the New Session row's worktree control. Creating the
- * checkout is a Host job (the page cannot run `git`), while adopting it is the
- * harness's own business — the checkout is registered through the Workspace
- * controller and opened through the Workspace UI, the very two steps the
- * directory picker performs, so a worktree session is indistinguishable from any
- * other session afterwards.
+ * Two contributions, one package because they answer the same question twice:
+ * which checkout a Session runs in.
+ *
+ * - The **worktree control**, in the New Session row and the Session title bar.
+ *   Creating a checkout is a Host job (the page cannot run `git`); adopting it is
+ *   the harness's own business — registered through the Workspace controller and
+ *   opened through the Workspace UI, the very steps the directory picker
+ *   performs, so a worktree session is indistinguishable afterwards.
+ * - The **Workspaces page**, which lists what DSH has registered and drops a
+ *   registration. Nothing there touches a file: DSH keeps the folder and every
+ *   Session log, and the Sessions become ungrouped.
  *
  * @module @free-lzj/dsh-worktree/client
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { IconFolderOpenRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import {
   CREATE_PATH, LIST_PATH, MUTATION_HEADER, REMOVE_PATH,
@@ -24,18 +32,34 @@ import {
 import { NS, en, zh, type WorktreeKey } from './locales.ts'
 import { installStyles } from './styles.ts'
 import { WorktreeAction, type WorktreeActionInjected } from './WorktreeAction.tsx'
+import { WorkspacesPanel, type WorkspacesPanelInjected } from './WorkspacesPanel.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Worktree picker copy. */
+    /** Worktree picker and Workspaces page copy. */
     worktree: WorktreeKey
   }
 }
 
 export type { WorktreeActionInjected, WorktreeActionProps } from './WorktreeAction.tsx'
+export type { WorkspacesPanelInjected, WorkspacesPanelProps } from './WorkspacesPanel.tsx'
 
 /** Required services: slots, dictionaries, the Workspace controller, and Workspace navigation. */
 export const inject = ['slots', 'locale', 'workspaces', 'uiWorkspace']
+
+/** The `main` panel key the sidebar row selects. */
+const PANEL_KEY = 'workspaces'
+
+/**
+ * Compare two Workspace paths the way Windows does.
+ * @param left - first path.
+ * @param right - second path.
+ * @returns whether they name the same directory.
+ */
+function samePath(left: string, right: string): boolean {
+  const norm = (value: string): string => value.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  return norm(left) === norm(right)
+}
 
 /**
  * Create one worktree through the Host.
@@ -91,29 +115,71 @@ async function removeOnHost(dir: string, path: string): Promise<RemoveWorktreeRe
 }
 
 /**
- * Client plugin body: register the dictionaries, the stylesheet, and the Hero
- * control.
+ * Client plugin body: dictionaries, stylesheet, the worktree control in both of
+ * its seats, and the Workspaces page with its sidebar row.
  * @param ctx - client root context.
  */
 export function apply(ctx: Context): void {
+  const t = ctx.locale.bind(NS)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'worktree: dictionaries')
   ctx.effect(installStyles, 'worktree: stylesheet')
+
+  /** Drop the registration that names this checkout, if the user made one. */
+  const forget = async (path: string): Promise<void> => {
+    const match = ctx.workspaces.list.getSnapshot().items.find(item => samePath(item.path, path))
+    if (match !== undefined) await ctx.workspaces.delete(match.workspaceId)
+  }
+
+  const face = (): WorktreeActionInjected => ({
+    createWorktree: (dir, name) => createOnHost(dir, name),
+    listWorktrees: dir => listOnHost(dir),
+    removeWorktree: (dir, path) => removeOnHost(dir, path),
+    registerWorkspace: async (path) => (await ctx.workspaces.create({ path })).workspaceId,
+    openWorkspace: async (workspaceId) => {
+      // The id is this plugin's own return value from the controller; the brand
+      // is nominal typing only.
+      await ctx.uiWorkspace.openWorkspace(workspaceId as Parameters<typeof ctx.uiWorkspace.openWorkspace>[0])
+    },
+    forgetWorkspace: path => forget(path),
+  })
+
   ctx.slots.inject('conversation.hero.options', () => ctx.slots.register({
     name: 'conversation.hero.options',
     id: 'worktree',
     // The row is read left to right: workspace, preset, then this option.
     order: 100,
     locale: NS,
-    inject: (): WorktreeActionInjected => ({
-      createWorktree: (dir, name) => createOnHost(dir, name),
-      listWorktrees: dir => listOnHost(dir),
-      removeWorktree: (dir, path) => removeOnHost(dir, path),
-      registerWorkspace: async (path) => (await ctx.workspaces.create({ path })).workspaceId,
-      openWorkspace: async (workspaceId) => {
-        // The id is this plugin's own return value from the controller; the
-        // brand is nominal typing only.
-        await ctx.uiWorkspace.openWorkspace(workspaceId as Parameters<typeof ctx.uiWorkspace.openWorkspace>[0])
+    inject: face,
+  }, WorktreeAction))
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+    name: 'conversation.session.header.actions',
+    id: 'worktree',
+    // After the shipped session actions, which group around the title itself.
+    order: 100,
+    locale: NS,
+    inject: face,
+  }, WorktreeAction))
+
+  // The panel seat and its sidebar row. Both names are the shell's own slots; the
+  // `as never` casts are the price of registering into another package's slot
+  // table, which this package's type program cannot see (same shape the workbench
+  // contract uses for its adopters).
+  ctx.slots.inject('main', () => ctx.slots.register({
+    name: 'main',
+    key: PANEL_KEY,
+    locale: NS,
+    inject: (): WorkspacesPanelInjected => ({
+      remove: async (workspaceId) => {
+        // The controller's id brand is nominal typing only.
+        await ctx.workspaces.delete(workspaceId as Parameters<typeof ctx.workspaces.delete>[0])
       },
     }),
-  }, WorktreeAction))
+  } as never, WorkspacesPanel as never))
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+    name: 'sidebar.panellist',
+    id: PANEL_KEY,
+    order: 45,
+    locale: NS,
+    label: () => t('panel'),
+  } as never, IconFolderOpenRegular as never))
 }

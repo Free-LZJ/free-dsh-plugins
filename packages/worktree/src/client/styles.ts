@@ -25,6 +25,11 @@ export const CLS = {
   rowMeta: 'dshw-row-meta',
   rowActions: 'dshw-row-actions',
   error: 'dshw-error',
+  panel: 'dshw-panel',
+  panelHeader: 'dshw-panel-header',
+  panelTitle: 'dshw-panel-title',
+  panelBody: 'dshw-panel-body',
+  tag: 'dshw-tag',
 } as const
 
 /** The style element's identity, so a second apply does not add a second copy. */
@@ -44,6 +49,11 @@ const CSS = `
 .${CLS.rowMeta}{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.rowActions}{display:flex;flex:none;align-items:center;gap:4px}
 .${CLS.error}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);word-break:break-all}
+.${CLS.panel}{box-sizing:border-box;display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base)}
+.${CLS.panelHeader}{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 20px;border-bottom:0.5px solid var(--dsw-alias-border-l3)}
+.${CLS.panelTitle}{margin:0;font-size:14px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.panelBody}{flex:1;min-height:0;overflow-y:auto;padding:12px 20px 32px}
+.${CLS.tag}{flex:none;padding:0 6px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-2);font-size:11px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 `
 
 /**

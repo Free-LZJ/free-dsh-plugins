@@ -1,5 +1,5 @@
 /**
- * Worktree picker copy, in the two locales the shell ships.
+ * Worktree picker and Workspace manager copy, in the two locales the shell ships.
  *
  * @module @free-lzj/dsh-worktree/client/locales
  */
@@ -29,6 +29,18 @@ export const zh = {
   mainCheckout: '主检出',
   external: '外部检出',
   listed: '共 {count} 个',
+
+  panel: '工作区',
+  panelTitle: '工作区',
+  panelHint: '移除只删注册：不动文件夹、不删会话，里面的会话变成未分组。',
+  panelEmpty: '还没有工作区。',
+  panelLoading: '读取中…',
+  workspaceSessions: '{count} 个会话',
+  workspaceWorktree: '工作树',
+  workspaceMissing: '目录不存在',
+  removeRegistration: '移除',
+  confirmRemoval: '确认移除',
+  removed: '已移除 {title}',
 } as const
 
 /** English dictionary, key-identical to the Chinese source of truth. */
@@ -53,6 +65,18 @@ export const en: Record<WorktreeKey, string> = {
   mainCheckout: 'Main checkout',
   external: 'External checkout',
   listed: '{count} in total',
+
+  panel: 'Workspaces',
+  panelTitle: 'Workspaces',
+  panelHint: 'Removing drops the registration only: no files, no sessions; the sessions inside become ungrouped.',
+  panelEmpty: 'No workspaces yet.',
+  panelLoading: 'Reading…',
+  workspaceSessions: '{count} sessions',
+  workspaceWorktree: 'Worktree',
+  workspaceMissing: 'Directory missing',
+  removeRegistration: 'Remove',
+  confirmRemoval: 'Confirm',
+  removed: 'Removed {title}',
 }
 
 /** Key domain of the `worktree` namespace (zh is the source of truth). */
