@@ -57,6 +57,12 @@ tarball 走普通安装路径（`node_modules` 下的实体目录），不进「
 
 `vitest.config.ts` 的 `setupFiles` 在 jsdom 环境下安装模块表，`server.deps.inline` 把 `@deepseek-ai/dsh-client-*` 交给 Vite 转换。改动这两处或 `tests/support/` 下的接线后必须跑全量测试。
 
-## 新邮件触发不生效
+## 新邮件没有按分诊规则处理
 
-`mail` 包的同封邮件只处理一次，账本是 `文件夹:UIDVALIDITY:UID`。重连、重启、重复投递都不会二次触发；改了 IMAP 文件夹或账号后 UIDVALIDITY 会变，旧的账本条目自然失效，这是预期行为。
+按顺序排查：
+
+1. **先看 Loader 行**：分诊的开关在 `id: mail` 这一行的 `config.triage` 里（`enabled` / `dryRun` / `undoWindowSeconds` / `runHistoryLimit` / `runRetentionDays` / `repoRoot`）。`dryRun: true` 只记录命中、不执行动作，看起来就像「规则没生效」。
+2. **规则文件的问题会写进 Host 日志**：路径是 `$DSH_HOME/mail/triage/rules.yml`。出现 `规则文件有问题，已保留上一份可用规则` 表示整份文件没被采用（YAML 解析失败、正则编译失败）；出现 `丢弃了一条规则（…）` 表示只有那一条写歪，其余规则照常工作（`when` 写成对象、`then` 为空、`id` 重复都会走到这条）。
+3. **同一封邮件只处理一次**：账本是 `文件夹:UIDVALIDITY:UID`，重连、重启、重复投递都不会二次触发；改了 IMAP 文件夹或账号后 UIDVALIDITY 会变，旧的账本条目自然失效，这是预期行为。分诊只对 `INBOX` 生效，其他文件夹既不触发也不进分诊。
+4. **分诊视图空白但 Host 正常**：先按「设置页 / 面板不出现」排查浏览器半边（`dsh.client` 声明与 `exports["./client"]`）；分诊视图由邮件面板顶栏进入，它的路由挂在 `/dsh-mail/triage/*`，写请求要带 `x-dsh-mail: 1` 与 JSON content-type，跨站请求会被 403 挡掉。
+

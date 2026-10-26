@@ -21,8 +21,8 @@
 | Package | Version | What it adds to dsh |
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.3` | Mounts the MCP servers Codex / Claude Code already declare, and manages every agent tool's skills by **linking** them into dsh's own skills directory; the same package ships the Settings page that configures both |
-| [`@free-lzj/dsh-console`](packages/console/README.md) | `0.1.0` | The workbench: dsh's home surface. Its home page lists the plugins that **adopt its panel contract** (card grid / list / compact, search and pinning) and opens them from there — a plugin that has not adopted it never appears. It is also the notification hub: plugins hand a notice to `ctx.console.notify()` and the workbench picks how to deliver it from **interchangeable, multi-select channels** (desktop notification / in-app centre / sound). Its UI stays entirely inside DSH's design system (`ui-primitives` controls and `--dsw-*` tokens) instead of a look of its own |
-| [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | A mail panel: read / search / flag / move / delete (**no sending**). It is also the **mail I/O provider**: other plugins get `ctx.mail` and the `mail/received` event. With the workbench installed it lists there instead of taking a sidebar row of its own |
+| [`@free-lzj/dsh-console`](packages/console/README.md) | `0.2.0` | The workbench: dsh's home surface. Its first block is the **attention queue** — what needs a decision right now, each item carrying its own buttons and state (apply / dismiss / later) — followed by the plugins that **adopt its panel contract**, and the **sessions working right now** so you can see what is being done on your behalf. It is also the notice *and item* hub: `ctx.console.notify()` is a plain notice, while `ctx.console.raise()` is an **item that can be handled** (a plugin registers its action handler under a `kind`, and a click is routed back to it). Delivery goes through **interchangeable, multi-select channels** (desktop notification / in-app / sound). Its UI stays entirely inside DSH's design system (`ui-primitives` controls and `--dsw-*` tokens) instead of a look of its own. It also gives agents two tools: `console_notify` to reach you, and `open_session` to mount a workspace and start a session in a given directory |
+| [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | A mail panel: read / search / flag / move / delete (**no sending**). It is also the **mail I/O provider** (`ctx.mail`). It brings **rule-based triage**: each new message is routed by headers / regex / attachments / model judgement into mark read, move, open a session, run a script, call MCP or send HTTP, with a **run history and undo**. With the workbench installed it lists there instead of taking a sidebar row of its own |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | Web search through your **signed-in DeepSeek account**, independent of the model the conversation runs on: chat pinned to a gateway or a third-party model still searches, with no extra search key |
 
 Each package's install steps, configuration fields, panel details and known limitations live in its own README (linked above). What follows is what the packages share, and how this repository itself is developed.
@@ -121,13 +121,13 @@ A pnpm monorepo: one directory under `packages/*` is one package.
 |---|---|
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import` (MCP servers + skill import) |
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console` (workbench home + notification hub) |
-| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (mail panel and the mail I/O service) |
+| [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail` (mail panel, the mail I/O service, and rule-based triage) |
 
 ```sh
 pnpm install
 pnpm run typecheck   # every package, both halves
 pnpm run build       # tsc for types, tsdown for lib/index.js (Node half) and lib/client.js (browser half)
-pnpm run test        # vitest: 37 spec files / 608 tests
+pnpm run test        # vitest: 47 spec files / 753 tests (one skipped on Windows)
 ```
 
 Build before testing: the artifacts have contract specs of their own (registration id, the `dsh.client` declaration, `exports["./client"]`, that nothing in the browser entry takes a value from the Host half, and that `console`'s contract artifact stays an inlinable plain module), and one of them reports as skipped without `lib/`.
