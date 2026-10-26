@@ -21,6 +21,9 @@ packages/
     src/client/contract.ts  # 跨插件契约（消费方 import 的是它）
     src/protocol.ts    #   两半共用的类型（Host 与浏览器都 import）
   web-search-account/  # @free-lzj/dsh-web-search-account  用已登录账号联网搜索（仅 Host 半边）
+  worktree/            # @free-lzj/dsh-worktree         新会话时从当前仓库建 Git 工作树、在其中打开会话
+    src/index.ts       #   Host 半边：git worktree 创建 + 一条 HTTP 路由
+    src/client/        #   浏览器半边：首屏「新建工作树会话」控件
 examples/              # dsh web --patch 用的 overlay 示例
 docs/                  # 项目级文档（不是约束）
 rules/                 # 开发规则（约束的唯一权威位置）

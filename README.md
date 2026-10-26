@@ -24,6 +24,7 @@
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.2.0` | **工作台**：dsh 的首页。第一块是**注意力队列**——「现在需要我决定什么」，每条都带按钮与状态（执行 / 忽略 / 稍后），下面才是**接入它面板契约**的插件列表；再下面是**正在跑的会话**（它现在在替你干什么）。同时是**通知与条目出口**：`ctx.console.notify()` 是纯通知，`ctx.console.raise()` 是**能被处理的条目**（插件按 `kind` 注册动作处理器，点击被路由回去）。送达渠道**可替换、可多选**（桌面通知 / 应用内 / 提示音）。界面完全用 DSH 的设计系统（`ui-primitives` 控件 + `--dsw-*` token），不另起一套。另给会话里的 agent 两个工具：`console_notify` 主动通知你、`open_session` 在指定目录建工作区并开会话 |
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**）；同时是**邮件 I/O 提供方**（`ctx.mail`）。再带一套**规则分诊**：把新邮件按邮件头 / 正则 / 附件 / 模型判断分流到已读、移动、开会话、脚本、MCP、HTTP，带**命中记录与撤销**。装了工作台时它列在工作台里，不再单独占侧边栏 |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
+| [`@free-lzj/dsh-worktree`](packages/worktree/README.md) | `0.1.0` | **新开会话时选工作树**：首屏一个「新建工作树会话」，从当前仓库的最新提交建独立检出（`<仓库>/.agents/worktrees/<名字>`）并在里面开会话，原检出不动。检出布局与官方实验 bundle「Git 工作树」一致，可共存 |
 
 每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是这些包共有的约定，以及本仓库自身的开发说明。
 
@@ -87,6 +88,7 @@ dsh 自带的搜索只在**会话本身跑在 `deepseek-account` 路由**时才�
 dsh plugin --profile web add @free-lzj/dsh-agent-import
 dsh plugin --profile web add @free-lzj/dsh-console
 dsh plugin --profile web add @free-lzj/dsh-mail
+dsh plugin --profile web add @free-lzj/dsh-worktree
 ```
 
 **Profile 要选你实际在跑的那个**：`dsh web` 用 `web`。Electron 桌面端用 `desktop` —— 它不是另一个客户端，而是同一套 `dsh-web-app` 组合外加一份**自带版本**的 dsh 运行时，页面由 Host 自己的 `ctx.webServer` 在本机端口上提供，所以两个半边照常工作，只是 profile 与全局 CLI 不通用：
@@ -98,7 +100,7 @@ dsh plugin --profile desktop add @free-lzj/dsh-mail
 
 > **加载时机**：Host 半边是启动时加载的 JS，**改了要重启** `dsh web`（桌面端预览版同理）；浏览器半边刷新页面即可。
 
-> **兼容性预检**：三个包的 peer 范围都覆盖 0.1.7 起的 0.1.x 与含预发布在内的 0.2.x 运行时（桌面端自带的那份也在其中）。运行时不落在范围里时，dsh 启动的预检会把该行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "…": …`），插件与页面都不出现，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
+> **兼容性预检**：`console`、`mail`、`agent-import` 的 peer 范围覆盖 0.1.7 起的 0.1.x 与含预发布在内的 0.2.x 运行时（桌面端自带的那份也在其中）；`worktree` 用到的首屏选项位是 0.2.x 才有的，只声明 0.2.x。运行时不落在范围里时，dsh 启动的预检会把该行**整行禁用**（stderr 打印 `dsh: disabling profile plugin row "…": …`），插件与页面都不出现，看起来像没装上。用 `dsh plugin --profile <profile> allow-version <包@版本> --dsh-version <运行时版本> --accept-risk` 对精确版本授权即可放行。
 
 ### 从本仓库安装（改插件本身时才需要）
 
@@ -113,6 +115,7 @@ dsh plugin --profile web add "<本仓库绝对路径>/packages/console"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/mail"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/web-search-account"
+dsh plugin --profile web add "<本仓库绝对路径>/packages/worktree"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
 
@@ -147,6 +150,7 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console`（工作台首页 + 通知出口） |
 | [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（邮箱面板 + 邮件 I/O 服务 + 规则分诊） |
 | [`packages/web-search-account`](packages/web-search-account) | `@free-lzj/dsh-web-search-account`（搜索走已登录账号，仅 Host 半边） |
+| [`packages/worktree`](packages/worktree) | `@free-lzj/dsh-worktree`（新会话时新建 Git 工作树） |
 
 ```sh
 pnpm install
