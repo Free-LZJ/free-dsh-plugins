@@ -6,21 +6,21 @@
  * declaration that never arrives, so a wrong slot key, a missing locale
  * namespace, or a dropped `inject` list makes the control vanish from a real
  * deployment while every unit test stays green. This spec drives the plugin
- * against a real slot registry and a real locale runtime and asserts the entry
+ * against a real slot registry and a real locale runtime and asserts the entries
  * the shell would render.
  */
 
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-// The three faces below ship as browser bundles the shell loads through its
-// module table, so the imports are side effects and the exports come from it.
+// The faces below ship as browser bundles the shell loads through its module
+// table, so the imports are side effects and the exports come from it.
 import '@deepseek-ai/dsh-client-locale/client'
 import '@deepseek-ai/dsh-client-ui-renderer/client'
 import { apply, inject } from '../src/client/index.ts'
-import type { WorktreeActionInjected } from '../src/client/index.ts'
+import type { WorktreeActionInjected, WorktreesPanelInjected } from '../src/client/index.ts'
 import { NS } from '../src/client/locales.ts'
 import { WorktreeAction } from '../src/client/WorktreeAction.tsx'
-import { WorkspacesPanel } from '../src/client/WorkspacesPanel.tsx'
+import { WorktreesPanel } from '../src/client/WorktreesPanel.tsx'
 
 /** The module table the shared vitest setup installs for browser bundles. */
 interface TestModuleTable {
@@ -44,7 +44,7 @@ const localeModule = clientModule<typeof import('@deepseek-ai/dsh-client-locale/
 /** The slot registry instance face this spec types its bench against. */
 type SlotRegistry = InstanceType<typeof renderer.SlotRegistry>
 
-/** What the stand-in Workspace services recorded. */
+/** What the stand-in services recorded. */
 interface Recorded {
   /** Paths passed to the Workspace controller. */
   readonly registered: string[]
@@ -52,10 +52,12 @@ interface Recorded {
   readonly opened: string[]
   /** Workspace ids passed to the controller's delete. */
   readonly removed: string[]
+  /** Panel keys passed to the layout service. */
+  readonly panels: string[]
 }
 
 /**
- * Mount the registry, the dictionaries and stand-in Workspace services.
+ * Mount the registry, the dictionaries and stand-in services.
  * @returns the context, the registry, the locale runtime and what was recorded.
  */
 async function bench(): Promise<{
@@ -69,7 +71,7 @@ async function bench(): Promise<{
   const locale = new localeModule.LocaleRuntime(ctx)
   locale.setLocale('zh')
   ctx.provide('locale', locale)
-  const recorded: Recorded = { registered: [], opened: [], removed: [] }
+  const recorded: Recorded = { registered: [], opened: [], removed: [], panels: [] }
   ctx.provide('workspaces', {
     list: {
       getSnapshot: () => ({
@@ -100,21 +102,22 @@ async function bench(): Promise<{
       recorded.opened.push(workspaceId)
     },
   })
+  ctx.provide('layout', {
+    selectPanel: (id: string) => {
+      recorded.panels.push(id)
+    },
+  })
   return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, recorded }
 }
 
-/** The two seats this plugin occupies. */
+/** The seats this plugin occupies. */
 const HERO_ROW = 'conversation.hero.options'
 const HEADER_ACTIONS = 'conversation.session.header.actions'
-
-/** The Workspaces page and its sidebar row. */
 const PANEL = 'main'
 const PANEL_ROW = 'sidebar.panellist'
 
 /**
- * Declare every holder of the slots this plugin occupies: the Conversation
- * content factory's New Session row, the Session header's action band, the main
- * panel, and the global panel list.
+ * Declare every holder of the slots this plugin occupies.
  * @param slots - the registry to declare them on.
  */
 function declareSeats(slots: SlotRegistry): void {
@@ -137,10 +140,10 @@ function declareSeats(slots: SlotRegistry): void {
 
 describe('worktree client apply', () => {
   it('declares the services it uses', () => {
-    expect(inject).toEqual(['slots', 'locale', 'workspaces', 'uiWorkspace'])
+    expect(inject).toEqual(['slots', 'locale', 'workspaces', 'uiWorkspace', 'layout'])
   })
 
-  it('occupies both the New Session row and the Session header with one localized entry each', async () => {
+  it('occupies the New Session row and the Session header with the create control', async () => {
     const { ctx, slots, locale } = await bench()
     declareSeats(slots)
 
@@ -155,30 +158,9 @@ describe('worktree client apply', () => {
       expect(entry.component).toBe(WorktreeAction)
       expect(entry.options).toMatchObject({ id: 'worktree', order: 100 })
       expect(entry.locale).toBe(NS)
-      // The control renders its own text inside the button, so the registration
-      // carries no projected label for the shell to draw.
       expect(entry.options.label).toBeUndefined()
     }
     expect(locale.bind(NS)('trigger')).toBe('工作树')
-  })
-
-  it('registers the checkout and forgets it again when the checkout goes', async () => {
-    const { ctx, slots, recorded } = await bench()
-    declareSeats(slots)
-    await ctx.plugin({ inject: [...inject], apply }).await()
-    await vi.waitFor(() => { expect(slots.entries(HERO_ROW)).toHaveLength(1) })
-    const entry = slots.entries(HERO_ROW)[0]!
-
-    const face = (entry.inject as unknown as () => WorktreeActionInjected)()
-    const workspaceId = await face.registerWorkspace('D:/repo/.agents/worktrees/one')
-    await face.openWorkspace(workspaceId)
-    // The registration naming the removed checkout is dropped with it, so the
-    // sidebar keeps no row pointing at a directory that is gone.
-    await face.forgetWorkspace('D:\\repo\\.agents\\worktrees\\one')
-
-    expect(recorded.registered).toEqual(['D:/repo/.agents/worktrees/one'])
-    expect(recorded.opened).toEqual(['ws-worktree'])
-    expect(recorded.removed).toEqual(['ws-tree'])
   })
 
   it('occupies the main panel and its sidebar row', async () => {
@@ -190,8 +172,36 @@ describe('worktree client apply', () => {
       expect(slots.entries(PANEL)).toHaveLength(1)
       expect(slots.entries(PANEL_ROW)).toHaveLength(1)
     })
-    expect(slots.entries(PANEL)[0]!.component).toBe(WorkspacesPanel)
-    expect(slots.entries(PANEL_ROW)[0]!.options).toMatchObject({ id: 'workspaces', order: 45 })
+    expect(slots.entries(PANEL)[0]!.component).toBe(WorktreesPanel)
+    expect(slots.entries(PANEL_ROW)[0]!.options).toMatchObject({ id: 'worktrees', order: 45 })
+  })
+
+  it('registers a checkout, opens it, and switches to the manager on request', async () => {
+    const { ctx, slots, recorded } = await bench()
+    declareSeats(slots)
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    await vi.waitFor(() => { expect(slots.entries(HERO_ROW)).toHaveLength(1) })
+
+    const face = (slots.entries(HERO_ROW)[0]!.inject as unknown as () => WorktreeActionInjected)()
+    const workspaceId = await face.registerWorkspace('D:/repo/.agents/worktrees/one')
+    await face.openWorkspace(workspaceId)
+    face.openManager()
+
+    expect(recorded.registered).toEqual(['D:/repo/.agents/worktrees/one'])
+    expect(recorded.opened).toEqual(['ws-worktree'])
+    expect(recorded.panels).toEqual(['worktrees'])
+  })
+
+  it('drops the registration naming a removed checkout', async () => {
+    const { ctx, slots, recorded } = await bench()
+    declareSeats(slots)
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    await vi.waitFor(() => { expect(slots.entries(PANEL)).toHaveLength(1) })
+
+    const face = (slots.entries(PANEL)[0]!.inject as unknown as () => WorktreesPanelInjected)()
+    await face.forgetWorkspace('D:\\repo\\.agents\\worktrees\\one')
+
+    expect(recorded.removed).toEqual(['ws-tree'])
   })
 
   it('collapses every entry on teardown', async () => {

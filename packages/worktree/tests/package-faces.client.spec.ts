@@ -143,7 +143,7 @@ describe('package faces', () => {
     // The Hero control lives on the Workspace controller's `workspaces` service
     // and navigates through `uiWorkspace`; both must be declared or the shell
     // never resolves the fiber.
-    expect([...(exports.inject as readonly string[])]).toEqual(['slots', 'locale', 'workspaces', 'uiWorkspace'])
+    expect([...(exports.inject as readonly string[])]).toEqual(['slots', 'locale', 'workspaces', 'uiWorkspace', 'layout'])
     expect(exports.apply).toBeTypeOf('function')
 
     // The purity rule the merge makes a directory rule instead of a package

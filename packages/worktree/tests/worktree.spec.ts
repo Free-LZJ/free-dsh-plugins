@@ -161,7 +161,7 @@ describe('removeWorktree', () => {
     const outside = join(scratch(), 'beside')
     git(repo, ['worktree', 'add', '-b', 'beside', outside, 'HEAD'])
 
-    await expect(removeWorktree(repo, outside, false)).rejects.toThrow(/worktrees/)
+    await expect(removeWorktree(repo, outside, false)).rejects.toThrow(/工作树目录/)
     expect(existsSync(outside)).toBe(true)
   })
 

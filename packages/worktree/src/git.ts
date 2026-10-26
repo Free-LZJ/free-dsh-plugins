@@ -14,7 +14,7 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdir, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { WORKTREE_PARENT } from './protocol.ts'
 
@@ -32,6 +32,10 @@ export interface CreatedWorktree {
   readonly branch: string
   /** Top level of the repository it was branched from. */
   readonly repo: string
+  /** What the branch starts at: an upstream ref, or `HEAD`. */
+  readonly base: string
+  /** A fetch or upstream problem that did not stop the creation. */
+  readonly warning?: string
 }
 
 /**
@@ -78,6 +82,30 @@ export function worktreeName(requested: string | undefined): string {
   return trimmed
 }
 
+/** How one creation should behave, from the plugin settings. */
+export interface CreateOptions {
+  /** Absolute directory holding every checkout; empty means the default inside the repository. */
+  readonly parent?: string
+  /** Fetch upstream refs and branch from them instead of local `HEAD`. */
+  readonly fetch?: boolean
+}
+
+/**
+ * Where a repository's checkouts live.
+ *
+ * The default keeps them inside the repository (the official layout, already
+ * ignored). A configured directory keeps them outside, one subdirectory per
+ * repository, so the same branch name in two repositories cannot collide.
+ * @param repo - repository top level.
+ * @param configured - the settings value, if any.
+ * @returns absolute parent directory for this repository's checkouts.
+ */
+function managedParent(repo: string, configured?: string): string {
+  return configured === undefined || configured === ''
+    ? join(repo, ...WORKTREE_PARENT.split('/'))
+    : join(configured, basename(repo))
+}
+
 /**
  * Create one worktree from a directory's repository.
  *
@@ -88,9 +116,14 @@ export function worktreeName(requested: string | undefined): string {
  * under a narrower filesystem policy than its own Host process runs with.
  * @param dir - directory inside the repository to branch from.
  * @param requested - requested name; omitted means generate one.
- * @returns the created checkout.
+ * @param options - checkout location and whether to start from upstream.
+ * @returns the created checkout and any non-fatal warning.
  */
-export async function createWorktree(dir: string, requested?: string): Promise<CreatedWorktree> {
+export async function createWorktree(
+  dir: string,
+  requested?: string,
+  options: CreateOptions = {},
+): Promise<CreatedWorktree> {
   if (!isAbsolute(dir)) throw new Error('当前会话的工作目录不是绝对路径')
   let info
   try {
@@ -102,23 +135,51 @@ export async function createWorktree(dir: string, requested?: string): Promise<C
 
   const repo = resolve(await git(['rev-parse', '--show-toplevel'], dir))
   const name = worktreeName(requested)
-  const parent = join(repo, ...WORKTREE_PARENT.split('/'))
+  const parent = managedParent(repo, options.parent)
   const path = join(parent, name)
   if (await exists(path)) throw new Error(`该工作树已存在：${path}`)
 
-  // The ignore file is written only when this module created the parent, so a
-  // repository that already ignores or commits `.agents/worktrees` keeps its
-  // own rules. `*` is what the official runtime writes.
+  let warning: string | undefined
+  let base = 'HEAD'
+  if (options.fetch === true) {
+    try {
+      await git(['fetch', '--all', '--prune'], repo)
+    } catch (error: unknown) {
+      // Offline or no remote: still usable, just not up to date.
+      warning = `拉取上游失败，已从本地 HEAD 创建：${gitFailure(error, 'fetch')}`
+    }
+    const upstream = await upstreamRef(repo)
+    if (upstream !== undefined) base = upstream
+  }
+
+  // The ignore file is written only when this module created the parent inside
+  // the repository: outside it there is nothing to ignore, and a repository that
+  // already ignores or commits `.agents/worktrees` keeps its own rules.
+  const insideRepository = parent.startsWith(repo)
   const freshParent = !(await exists(parent))
   await mkdir(parent, { recursive: true })
-  if (freshParent) await writeFile(join(parent, '.gitignore'), '*\n', 'utf8')
+  if (insideRepository && freshParent) await writeFile(join(parent, '.gitignore'), '*\n', 'utf8')
 
   try {
-    await git(['worktree', 'add', '-b', name, path, 'HEAD'], repo)
+    await git(['worktree', 'add', '-b', name, path, base], repo)
   } catch (error: unknown) {
     throw new Error(gitFailure(error, '创建失败'))
   }
-  return { path, branch: name, repo }
+  return { path, branch: name, repo, base, ...warning === undefined ? {} : { warning } }
+}
+
+/**
+ * The current branch's upstream, when it has one.
+ * @param repo - repository top level.
+ * @returns the upstream ref (e.g. `origin/develop`), or undefined.
+ */
+async function upstreamRef(repo: string): Promise<string | undefined> {
+  try {
+    const ref = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repo)
+    return ref === '' ? undefined : ref
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -152,6 +213,10 @@ export interface WorktreeEntry {
 
 /**
  * Resolve a directory to its repository's top level.
+ *
+ * A filesystem root is refused even when Git reports it as a repository: a stray
+ * `.git` at `C:\` makes `rev-parse` answer `C:/` for every unrelated directory
+ * below it, and "this drive is my repository" is never what the caller meant.
  * @param dir - any directory inside the repository.
  * @returns the resolved top level.
  */
@@ -164,7 +229,31 @@ async function repositoryRoot(dir: string): Promise<string> {
     throw new Error(`目录不存在：${dir}`)
   }
   if (!info.isDirectory()) throw new Error(`不是文件夹：${dir}`)
-  return resolve(await git(['rev-parse', '--show-toplevel'], dir))
+  const root = resolve(await git(['rev-parse', '--show-toplevel'], dir))
+  if (dirname(root) === root) throw new Error(`不在 Git 仓库内：${dir}`)
+  return root
+}
+
+/**
+ * The main checkout of the repository a directory belongs to.
+ *
+ * A linked checkout reports itself as `--show-toplevel`, so every checkout of one
+ * repository would otherwise become its own section. The shared Git directory
+ * (`<main>/.git`) names the repository that owns all of them.
+ * @param dir - any directory inside the repository, linked checkout included.
+ * @returns the main checkout's top level.
+ */
+export async function primaryRoot(dir: string): Promise<string> {
+  const repo = await repositoryRoot(dir)
+  let common: string
+  try {
+    common = await git(['rev-parse', '--git-common-dir'], repo)
+  } catch {
+    return repo
+  }
+  const absolute = resolve(repo, common)
+  const parent = dirname(absolute)
+  return parent === absolute ? repo : parent
 }
 
 /**
@@ -184,8 +273,8 @@ function samePath(left: string, right: string): boolean {
  * @param path - checkout path.
  * @returns whether it is inside `<repo>/.agents/worktrees`.
  */
-function isManaged(repo: string, path: string): boolean {
-  const rest = relative(join(repo, ...WORKTREE_PARENT.split('/')), path)
+function isManaged(repo: string, path: string, configured?: string): boolean {
+  const rest = relative(managedParent(repo, configured), path)
   return rest !== '' && !rest.startsWith('..') && !isAbsolute(rest)
 }
 
@@ -194,7 +283,10 @@ function isManaged(repo: string, path: string): boolean {
  * @param dir - any directory inside the repository.
  * @returns the repository top level and its checkouts, main checkout first.
  */
-export async function listWorktrees(dir: string): Promise<{ repo: string; worktrees: WorktreeEntry[] }> {
+export async function listWorktrees(
+  dir: string,
+  options: { readonly parent?: string } = {},
+): Promise<{ repo: string; worktrees: WorktreeEntry[] }> {
   const repo = await repositoryRoot(dir)
   const text = await git(['worktree', 'list', '--porcelain'], repo)
   const worktrees: WorktreeEntry[] = []
@@ -220,7 +312,7 @@ export async function listWorktrees(dir: string): Promise<{ repo: string; worktr
       // not under the managed parent while still being this repository's.
       main: worktrees.length === 0,
       locked,
-      managed: isManaged(repo, path),
+      managed: isManaged(repo, path, options.parent),
     })
   }
   return { repo, worktrees }
@@ -244,13 +336,14 @@ export async function removeWorktree(
   dir: string,
   target: string,
   deleteBranch: boolean,
+  options: { readonly parent?: string } = {},
 ): Promise<{ removed: string; branch?: string }> {
   const repo = await repositoryRoot(dir)
-  const { worktrees } = await listWorktrees(repo)
+  const { worktrees } = await listWorktrees(repo, options)
   const entry = worktrees.find(candidate => samePath(candidate.path, target))
   if (entry === undefined) throw new Error(`不是这个仓库的工作树：${target}`)
   if (entry.main) throw new Error('不能删除仓库自己的主检出')
-  if (!entry.managed) throw new Error(`只删除 ${WORKTREE_PARENT} 下的工作树：${entry.path}`)
+  if (!entry.managed) throw new Error(`只删除工作树目录下的检出：${entry.path}`)
   if (entry.locked) throw new Error(`该工作树被 Git 锁定：${entry.path}`)
 
   try {

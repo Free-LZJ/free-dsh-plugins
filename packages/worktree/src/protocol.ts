@@ -12,17 +12,19 @@
 /** Where the browser asks for a new worktree. */
 export const CREATE_PATH = '/dsh-worktrees/create'
 
-/** Where the browser reads the repository's checkouts. */
-export const LIST_PATH = '/dsh-worktrees/list'
+/** Where the browser reads every repository's checkouts plus the plugin settings. */
+export const OVERVIEW_PATH = '/dsh-worktrees/overview'
 
 /** Where the browser asks for one checkout to be removed. */
 export const REMOVE_PATH = '/dsh-worktrees/remove'
 
+/** Where the browser reads and writes the plugin settings. */
+export const SETTINGS_PATH = '/dsh-worktrees/settings'
+
 /**
- * The parent directory every checkout is created under, relative to the
- * repository root. The official worktree runtime uses the same layout, so a
- * checkout made here nests under its repository in the sidebar exactly like one
- * made by `create_worktree`.
+ * The default parent directory, relative to the repository root. The official
+ * worktree runtime uses the same layout, so a checkout made here nests under its
+ * repository in the sidebar exactly like one made by `create_worktree`.
  */
 export const WORKTREE_PARENT = '.agents/worktrees'
 
@@ -31,6 +33,19 @@ export const MUTATION_HEADER = 'x-dsh-worktrees'
 
 /** Largest body the routes read; every payload here is one path and one name. */
 export const MAX_BODY_BYTES = 4 * 1024
+
+/** What the Host remembers between sessions. */
+export interface WorktreeSettings {
+  /**
+   * Absolute directory that holds every checkout, or empty for the default
+   * `<repo>/.agents/worktrees`. A configured directory keeps each repository's
+   * checkouts in a subdirectory named after the repository, so two repositories
+   * with the same branch name never collide.
+   */
+  readonly parent: string
+  /** Fetch upstream refs (and branch from them) before creating a checkout. */
+  readonly fetchBeforeCreate: boolean
+}
 
 /** One create request from the browser. */
 export interface CreateWorktreeRequest {
@@ -48,6 +63,10 @@ export interface CreateWorktreeResult {
   readonly branch: string
   /** Top level of the repository the checkout was branched from. */
   readonly repo: string
+  /** What the new branch starts at: an upstream ref, or `HEAD`. */
+  readonly base: string
+  /** A fetch or upstream problem that did not stop the creation. */
+  readonly warning?: string
 }
 
 /** One checkout as the browser lists it. */
@@ -62,16 +81,24 @@ export interface WorktreeSummary {
   readonly main: boolean
   /** Git holds a lock on it, so it cannot be removed without a force. */
   readonly locked: boolean
-  /** Whether it lives under this repository's managed parent, i.e. is removable here. */
+  /** Whether it lives under a managed parent, i.e. is removable here. */
   readonly managed: boolean
 }
 
-/** What a list request answers. */
-export interface ListWorktreesResult {
-  /** Top level of the repository the request resolved to. */
+/** Every checkout of one repository. */
+export interface RepoOverview {
+  /** Top level of the repository. */
   readonly repo: string
   /** Its checkouts, the repository's own first. */
   readonly worktrees: readonly WorktreeSummary[]
+}
+
+/** What the management page reads in one request. */
+export interface OverviewResult {
+  /** Settings the page edits. */
+  readonly settings: WorktreeSettings
+  /** One entry per distinct repository among the registered Workspaces. */
+  readonly repos: readonly RepoOverview[]
 }
 
 /** One removal request from the browser. */
@@ -90,6 +117,14 @@ export interface RemoveWorktreeResult {
   readonly removed: string
   /** Branch that was dropped with it, when one was. */
   readonly branch?: string
+}
+
+/** One settings write from the browser. */
+export interface SettingsRequest {
+  /** Absolute directory, or empty to restore the default. */
+  readonly parent?: string
+  /** Whether to fetch upstream refs before creating a checkout. */
+  readonly fetchBeforeCreate?: boolean
 }
 
 /** Failure answer: one sentence, never the request echoed back. */

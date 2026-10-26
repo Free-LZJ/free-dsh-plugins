@@ -14,11 +14,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { createWorktree, listWorktrees, removeWorktree } from './git.ts'
+// Type-only: the `ctx.workspaceRegistry` merge the overview reads.
+import type {} from '@deepseek-ai/dsh-workspace'
+import { createWorktree, listWorktrees, primaryRoot, removeWorktree } from './git.ts'
 import {
-  CREATE_PATH, LIST_PATH, MAX_BODY_BYTES, MUTATION_HEADER, REMOVE_PATH,
-  type CreateWorktreeRequest, type RemoveWorktreeRequest,
+  CREATE_PATH, MAX_BODY_BYTES, MUTATION_HEADER, OVERVIEW_PATH, REMOVE_PATH, SETTINGS_PATH,
+  type CreateWorktreeRequest, type OverviewResult, type RemoveWorktreeRequest, type RepoOverview,
+  type SettingsRequest,
 } from './protocol.ts'
+import { readSettings, writeSettings } from './store.ts'
 
 /**
  * Whether a request came from the page this server sent, so a document on
@@ -51,7 +55,7 @@ export function isMutationRequest(req: IncomingMessage): boolean {
 }
 
 /**
- * Mount the three routes this plugin needs: create, list and remove.
+ * Mount the routes this plugin needs: create, overview, remove, settings.
  * @param ctx - the Host plugin context.
  */
 export function registerRoutes(ctx: Context): void {
@@ -66,8 +70,9 @@ export function registerRoutes(ctx: Context): void {
       inner.effect(() => inner.webServer.register({ kind: 'exact', path, handler }), label)
     }
     mount(CREATE_PATH, (req, res) => handleCreate(ctx, req, res), 'worktrees.create-route')
-    mount(LIST_PATH, (req, res) => handleList(ctx, req, res), 'worktrees.list-route')
+    mount(OVERVIEW_PATH, (req, res) => handleOverview(ctx, req, res), 'worktrees.overview-route')
     mount(REMOVE_PATH, (req, res) => handleRemove(ctx, req, res), 'worktrees.remove-route')
+    mount(SETTINGS_PATH, (req, res) => handleSettings(req, res), 'worktrees.settings-route')
   })
 }
 
@@ -84,33 +89,86 @@ function allowedOrigin(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 /**
- * Answer one list request.
+ * Answer one overview request — every distinct repository among the registered
+ * Workspaces, with its checkouts and the settings the page edits.
  *
- * A `GET` carries the repository directory in its query string: the browser asks
- * about the workspace it already has open, and nothing here mutates anything.
- * @param ctx - the Host plugin context, for logging.
+ * The registry is the right source: a Workspace is a directory the user already
+ * opened, so the page lists exactly the repositories they work in, and repeated
+ * directories (a repository registered through several of its subdirectories)
+ * collapse onto one entry.
+ * @param ctx - the Host plugin context.
  * @param req - the incoming request.
  * @param res - the response to write.
  */
-async function handleList(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleOverview(ctx: Context, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!allowedOrigin(req, res)) return
   if (req.method !== 'GET') {
     res.setHeader('allow', 'GET')
     respond(res, 405, { error: 'method not allowed' })
     return
   }
-  const url = new URL(req.url ?? '/', 'http://localhost')
-  const dir = url.searchParams.get('dir')
-  if (dir === null || dir === '') {
-    respond(res, 400, { error: 'dir must be a non-empty path' })
+  try {
+    const settings = await readSettings()
+    const registry = ctx.workspaceRegistry
+    const repos = new Map<string, RepoOverview>()
+    for (const workspace of registry?.list() ?? []) {
+      try {
+        // One section per repository, even when several registered Workspaces are
+        // checkouts of it (each linked checkout reports itself as its own root).
+        const repo = await primaryRoot(workspace.path)
+        const key = repo.toLowerCase()
+        if (repos.has(key)) continue
+        const { worktrees } = await listWorktrees(repo, settings)
+        repos.set(key, { repo, worktrees })
+      } catch {
+        // A Workspace whose directory is gone, or is not a repository, simply
+        // contributes no section. Its registration is the page's to remove, not
+        // this read's to report as an error.
+      }
+    }
+    const result: OverviewResult = { settings, repos: [...repos.values()] }
+    respond(res, 200, result)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    ctx.logger.warn(`worktrees: overview failed: ${message}`)
+    respond(res, 400, { error: message })
+  }
+}
+
+/**
+ * Answer one settings read or write.
+ * @param req - the incoming request.
+ * @param res - the response to write.
+ */
+async function handleSettings(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!allowedOrigin(req, res)) return
+  if (req.method === 'GET') {
+    respond(res, 200, await readSettings())
+    return
+  }
+  if (req.method !== 'POST') {
+    res.setHeader('allow', 'GET, POST')
+    respond(res, 405, { error: 'method not allowed' })
+    return
+  }
+  if (!isMutationRequest(req)) {
+    respond(res, 403, { error: `a mutating request needs ${MUTATION_HEADER}: 1 and a JSON content type` })
+    return
+  }
+  const body = await readJsonBody(req)
+  if (!body.ok) {
+    respond(res, body.status, { error: body.error })
+    return
+  }
+  const request = readSettingsRequest(body.value)
+  if (!request.ok) {
+    respond(res, 400, { error: request.error })
     return
   }
   try {
-    respond(res, 200, await listWorktrees(dir))
+    respond(res, 200, await writeSettings(request.value))
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error)
-    ctx.logger.warn(`worktrees: list failed: ${message}`)
-    respond(res, 400, { error: message })
+    respond(res, 400, { error: error instanceof Error ? error.message : String(error) })
   }
 }
 
@@ -142,7 +200,13 @@ async function handleRemove(ctx: Context, req: IncomingMessage, res: ServerRespo
     return
   }
   try {
-    respond(res, 200, await removeWorktree(request.value.dir, request.value.path, request.value.deleteBranch === true))
+    const settings = await readSettings()
+    respond(res, 200, await removeWorktree(
+      request.value.dir,
+      request.value.path,
+      request.value.deleteBranch === true,
+      { parent: settings.parent },
+    ))
   } catch (error: unknown) {
     // A removal can fail after the checkout is already gone (the branch was
     // unmerged), so the sentence Git produced is the useful answer either way.
@@ -183,7 +247,11 @@ async function handleCreate(ctx: Context, req: IncomingMessage, res: ServerRespo
     return
   }
   try {
-    respond(res, 200, await createWorktree(request.value.dir, request.value.name))
+    const settings = await readSettings()
+    respond(res, 200, await createWorktree(request.value.dir, request.value.name, {
+      parent: settings.parent,
+      fetch: settings.fetchBeforeCreate,
+    }))
   } catch (error: unknown) {
     // The message is this plugin's own sentence about a repository it may not
     // be able to change; it never echoes the request body back verbatim.
@@ -241,6 +309,33 @@ function readRemoveRequest(value: unknown): RemoveCommand {
       dir: body.dir,
       path: body.path,
       ...body.deleteBranch === undefined ? {} : { deleteBranch: body.deleteBranch },
+    },
+  }
+}
+
+/** One accepted settings write. */
+type SettingsCommand =
+  | { readonly ok: true; readonly value: SettingsRequest }
+  | { readonly ok: false; readonly error: string }
+
+/**
+ * Validate one settings payload before anything is written.
+ * @param value - the parsed JSON body.
+ * @returns the request, or why it was refused.
+ */
+function readSettingsRequest(value: unknown): SettingsCommand {
+  const body = (value ?? {}) as Record<string, unknown>
+  if (body.parent !== undefined && typeof body.parent !== 'string') {
+    return { ok: false, error: 'parent must be a string when present' }
+  }
+  if (body.fetchBeforeCreate !== undefined && typeof body.fetchBeforeCreate !== 'boolean') {
+    return { ok: false, error: 'fetchBeforeCreate must be a boolean when present' }
+  }
+  return {
+    ok: true,
+    value: {
+      ...body.parent === undefined ? {} : { parent: body.parent },
+      ...body.fetchBeforeCreate === undefined ? {} : { fetchBeforeCreate: body.fetchBeforeCreate },
     },
   }
 }
