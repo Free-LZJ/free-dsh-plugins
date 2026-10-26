@@ -51,9 +51,15 @@ describe('the Host state', () => {
     const host = bench('nowhere')
     expect(host.state()).toEqual({
       notices: [],
+      // 待处理条目数由 Host 算，界面不自己数——所以它也在状态里。
+      awaiting: 0,
       availableChannels: [],
       layout: 'grid',
       pinned: [],
+      // 没接会话服务时首页只是少一块，不是坏掉。
+      running: [],
+      // 还没做过任何自动化的事。
+      log: [],
       revision: 0,
     })
   })

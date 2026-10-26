@@ -59,6 +59,19 @@ describe('console contract', () => {
     expect(suite.sidebarIds()).toEqual(['mail'])
   })
 
+  it('survives a second load of the same plugin without the first being withdrawn', async () => {
+    // 这一条盯的是一个**真机故障**：`main` 是键控槽，同键**同优先级**再注册会直接抛
+    // `keyed slot "main" already has an entry for key "mail" at priority 0`。
+    // 客户端半边会被热重载，而上一轮的槽条目不一定被回收；撞上就抛错、面板注册不上，
+    // 界面上是干净的空白，什么原因都看不到。这里故意不卸载第一次的 fiber，直接再 mount
+    // 一次，模拟那个「旧条目还在」的时刻。
+    const suite = await bench()
+    await mountAdopter(suite)
+    await expect(mountAdopter(suite)).resolves.toBeDefined()
+    // 仍然是同一个键（键控槽里同键只该有一条可见的），而且注册没有抛。
+    expect(suite.mainKeys()).toEqual(['mail'])
+  })
+
   it('takes only the sidebar row away from a workbench that is already there', async () => {
     const suite = await bench()
     const adopted: string[] = []

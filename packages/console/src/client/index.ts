@@ -148,14 +148,56 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({
       useRows,
       useNotices,
+      awaiting: () => link.getSnapshot()?.awaiting ?? 0,
+      running: () => link.getSnapshot()?.running ?? [],
+      log: () => link.getSnapshot()?.log ?? [],
       layout: () => link.layoutPreference(),
+      /**
+       * 打开一个面板。
+       *
+       * 为什么不是一行 `selectPanel`：那个调用**会抛**（`layout.selectPanel: main panel "x"
+       * is not registered`），而这里原来把抛吞掉了——于是「点进去什么也没有」，用户看到的
+       * 是空白，看不到原因。
+       *
+       * 补注册要小心：`main` 是**键控**槽，同键同优先级再注册会直接抛
+       * （`keyed slot "main" already has an entry for key "x" at priority 0`）。所以先看
+       * 这条键在不在注册表里——在，就说明问题不是「没注册」，补一次只会制造错误；不在，
+       * 才按**更低的优先级**（`priority` 越低越先渲染）补一次，这样即便还有一条僵尸条目
+       * 也能盖住它。
+       * @param panel - 被打开的那一行。
+       * @returns 成功，或者一句能显示给人看的原因。
+       */
       open: (panel: PanelRow) => {
-        try {
-          ctx.layout.selectPanel(panel.id as Parameters<typeof ctx.layout.selectPanel>[0])
-        } catch {
-          // An id nothing registered (a plugin that withdrew between paint and
-          // click) must not take the workbench down with it.
+        const select = (): boolean => {
+          try {
+            ctx.layout.selectPanel(panel.id as Parameters<typeof ctx.layout.selectPanel>[0])
+            return true
+          } catch {
+            return false
+          }
         }
+        if (select()) return { ok: true }
+        const descriptor = registry.get(panel.id)?.descriptor
+        if (descriptor === undefined) {
+          return { ok: false, message: `「${panel.title}」没有注册到 main 槽，工作台手里也没有它的渲染器` }
+        }
+        const slots = ctx.slots as unknown as {
+          entries?: (name: string) => readonly { options?: { key?: string } }[]
+        }
+        const present = (slots.entries?.('main') ?? [])
+          .some(entry => entry.options?.key === panel.id)
+        if (present) {
+          return { ok: false, message: `「${panel.title}」在 main 槽里，但布局不肯显示它（selectPanel 被拒）` }
+        }
+        try {
+          ctx.slots.register(
+            { name: 'main', key: panel.id, locale: NS, priority: -1 } as never,
+            descriptor.render as never,
+          )
+        } catch (error: unknown) {
+          return { ok: false, message: error instanceof Error ? error.message : String(error) }
+        }
+        return select() ? { ok: true } : { ok: false, message: `补注册「${panel.title}」之后仍然打不开` }
       },
       togglePin: (panel: PanelRow) => link.setPinned(panel.id, !panel.pinned),
       setLayout: (layout: ConsoleLayout) => link.setLayout(layout),
@@ -163,6 +205,8 @@ export function apply(ctx: ClientContext): void {
         liveNotices = []
         void link.clearNotices()
       },
+      actOnItem: (id: string, actionId: string) => link.actOnItem({ op: 'act', id, actionId }),
+      dismissItem: (id: string) => link.actOnItem({ op: 'dismiss', id }),
       liveNotices: () => liveNotices,
     }),
   }, ConsoleShell)), 'console: home list')

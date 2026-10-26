@@ -12,7 +12,7 @@ import { Readable, Writable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
 import { isMutationRequest, isSameOrigin, registerRoutes, type RouteHost } from '../src/routes.ts'
-import { CONFIG_PATH, EVENTS_PATH, STATE_PATH } from '../src/paths.ts'
+import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from '../src/paths.ts'
 import type { ConsoleHost } from '../src/console-host.ts'
 import type { ConsoleState } from '../src/protocol.ts'
 
@@ -69,9 +69,12 @@ function request(options: {
 /** The state a route answers with in these tests. */
 const STATE: ConsoleState = {
   notices: [],
+  awaiting: 0,
   availableChannels: [{ id: 'desktop', enabled: true }, { id: 'inapp', enabled: true }],
   layout: 'grid',
   pinned: [],
+  running: [],
+  log: [],
   revision: 1,
 }
 
@@ -153,9 +156,9 @@ async function call(route: Benchmark, req: IncomingMessage): Promise<RecordedRes
 type Benchmark = Bench
 
 describe('console routes', () => {
-  it('mounts the three paths the page speaks to', () => {
+  it('mounts the four paths the page speaks to', () => {
     const { routes } = bench()
-    expect([...routes.keys()].sort()).toEqual([CONFIG_PATH, EVENTS_PATH, STATE_PATH].sort())
+    expect([...routes.keys()].sort()).toEqual([CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH].sort())
   })
 
   it('answers state to a same-origin read', async () => {

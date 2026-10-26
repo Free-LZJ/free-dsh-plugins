@@ -34,6 +34,19 @@ export type { ConsoleClientService, ConsolePanelDescriptor, StandalonePanelOptio
 export { CONSOLE_SERVICE, consoleService }
 
 /**
+ * 本页面里已经发生过多少次面板注册。
+ *
+ * 只用来给每次注册一个**唯一的、递减的**优先级，见 {@link useConsolePanel} 的注释。
+ */
+let loadSeq = 0
+
+/** 取下一个序号。 */
+function nextLoadSeq(): number {
+  loadSeq += 1
+  return loadSeq
+}
+
+/**
  * Register a panel with the workbench when it is reachable, and keep a classic
  * sidebar row when it is not.
  *
@@ -55,19 +68,34 @@ export function useConsolePanel(
   descriptor: ConsolePanelDescriptor,
   fallback: StandalonePanelOptions,
 ): void {
+  // 每次注册都往下借一格优先级。
+  //
+  // `main` 是**键控**槽，外壳的规则是：同键**同优先级**再注册直接抛
+  // `keyed slot "main" already has an entry for key "x" at priority 0`；同键不同优先级
+  // 允许，且**优先级越低越先渲染**。
+  //
+  // 为什么需要这一层：客户端半边会被热重载，而上一次加载留下的槽条目不一定被回收。那种
+  // 僵尸条目会让下一次注册抛错——于是面板「注册了但打不开」，界面上就是一片空白，且没有
+  // 任何可见的原因（这条在真机上实测到过）。递减的优先级让每一次加载都能盖住上一次，
+  // 从根上不依赖「旧的被干净回收」这个假设。
+  const priority = -nextLoadSeq()
   ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
-    name: 'main', key: descriptor.id, locale: fallback.locale,
+    name: 'main', key: descriptor.id, locale: fallback.locale, priority,
   } as never, descriptor.render as never)), `${descriptor.id}: panel`)
 
   let row: (() => void) | undefined
   const mountRow = (): void => {
     if (row !== undefined) return
+    // 同一个 `priority` 也要给这一行：`sidebar.panellist` 是**列表**槽，同 id 同优先级
+    // 再注册一样会抛（`list slot "sidebar.panellist" already has an entry with id "x"`）。
+    // 没有它，第二次加载会先从这一行炸起来，`apply` 就此中断——真机上表现为「面板没了」。
     row = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
       name: 'sidebar.panellist',
       id: descriptor.id,
       order: fallback.order ?? 40,
       locale: fallback.locale,
       label: fallback.label,
+      priority,
     } as never, fallback.Icon as never))
   }
 

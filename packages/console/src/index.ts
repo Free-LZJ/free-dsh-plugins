@@ -29,8 +29,9 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { registerBuiltinChannels, type PageSurfaces } from './builtin-channels.ts'
 import { ConsoleHost } from './console-host.ts'
-import { BUILTIN_CHANNELS, type ConsoleLayout } from './protocol.ts'
+import { BUILTIN_CHANNELS, type ConsoleLayout, type RunningSession } from './protocol.ts'
 import { registerRoutes, type RouteHost } from './routes.ts'
+import { registerAgentTools } from './tools.ts'
 
 export { ConsoleHost } from './console-host.ts'
 export type { ConsoleEvent, ConsoleHostOptions } from './console-host.ts'
@@ -91,6 +92,7 @@ export function apply(ctx: Context, config: Config): void {
     homeDir: home,
     channels: () => config.channels,
     layout: () => config.layout,
+    runningSessions: async () => await readRunningSessions(ctx),
   })
 
   /**
@@ -138,5 +140,44 @@ export function apply(ctx: Context, config: Config): void {
 
   registerRoutes(ctx, routeHost)
 
+  // 工具注册表可能比本插件晚挂载（Loader 行的顺序由用户的 profile 决定），所以跟随它
+  // 出现，而不是在 apply 时判断一次就放弃（`rules/design-patterns.md`）。
+  ctx.inject(['tools'], (inner) => {
+    inner.effect(() => registerAgentTools(inner, host), 'console: agent tools')
+  })
+
   ctx.logger.info(`console: workbench mounted (channels: ${host.channels.list().map((channel) => channel.id).join(', ')})`)
+}
+
+/** 会话服务里本插件用得到的那部分。 */
+interface SessionControllerLike {
+  list?(request?: unknown, signal?: unknown): Promise<{
+    readonly items?: readonly {
+      readonly sessionId?: string
+      readonly running?: boolean
+      readonly cwd?: string
+      readonly projections?: { readonly values?: { readonly title?: string } }
+    }[]
+  }>
+}
+
+/**
+ * 现在有哪些会话在干活。
+ *
+ * 结构化声明而不是 import 会话控制器的类型：那是**可选**依赖——没挂它的部署只是首页
+ * 少一块，不该因此起不来（`rules/design-patterns.md`）。
+ * @param ctx - Host 上下文。
+ * @returns 正在运行的会话；读不到时给空数组。
+ */
+async function readRunningSessions(ctx: Context): Promise<readonly RunningSession[]> {
+  const controller = ctx.get('sessionController') as SessionControllerLike | undefined
+  if (controller?.list === undefined) return []
+  const page = await controller.list({})
+  return (page.items ?? [])
+    .filter(item => item.running === true && typeof item.sessionId === 'string')
+    .map(item => ({
+      sessionId: item.sessionId as string,
+      title: item.projections?.values?.title?.trim() ?? '',
+      ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
+    }))
 }

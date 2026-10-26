@@ -18,9 +18,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import type { ConsoleHost } from './console-host.ts'
+import type { ConsoleHost, ItemResult } from './console-host.ts'
 import type { ConsoleLayout, ConsoleState } from './protocol.ts'
-import { CONFIG_PATH, EVENTS_PATH, STATE_PATH } from './paths.ts'
+import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from './paths.ts'
 
 /** Header a mutating request must carry, together with a JSON content type. */
 export const MUTATION_HEADER = 'x-dsh-console'
@@ -190,6 +190,36 @@ export function registerRoutes(ctx: Context, host: RouteHost): void {
       }
       respond(res, 200, { ok: true })
     }, 'saving configuration'), 'console.config-route')
+
+    register(ITEM_PATH, guard(async (req, res) => {
+      if (req.method !== 'POST') {
+        res.setHeader('allow', 'POST')
+        respond(res, 405, { error: 'method not allowed' })
+        return
+      }
+      if (!isMutationRequest(req)) {
+        respond(res, 403, { error: `a mutating request needs ${MUTATION_HEADER}: 1 and a JSON content type` })
+        return
+      }
+      const body = await readJsonBody(req)
+      if (!body.ok) {
+        respond(res, body.status, { error: body.error })
+        return
+      }
+      const command = readItemCommand(body.value)
+      if (!command.ok) {
+        respond(res, 400, { error: command.error })
+        return
+      }
+      const result = await command.apply(host)
+      // A refusal carries the reason so the page can show it next to the item; the
+      // item itself is untouched either way (a failed action must stay actionable).
+      if (!result.ok) {
+        respond(res, 400, { error: result.message ?? 'rejected' })
+        return
+      }
+      respond(res, 200, { ok: true })
+    }, 'acting on an item'), 'console.item-route')
   })
 }
 
@@ -197,6 +227,46 @@ export function registerRoutes(ctx: Context, host: RouteHost): void {
 type ConfigCommand =
   | { readonly ok: true; apply(host: RouteHost): Promise<void> }
   | { readonly ok: false; readonly error: string }
+
+/** One accepted item command. */
+type ItemCommand =
+  | { readonly ok: true; apply(host: RouteHost): Promise<ItemResult> }
+  | { readonly ok: false; readonly error: string }
+
+/**
+ * Validate one item payload.
+ *
+ * The three verbs are the whole vocabulary of a work queue: pick an action, say "not
+ * mine", or say "later". Nothing here writes anything itself — `act` is handed back
+ * to the plugin that raised the item.
+ * @param value - the parsed JSON body.
+ * @returns the command, or why it was refused.
+ */
+function readItemCommand(value: unknown): ItemCommand {
+  const body = (value ?? {}) as Record<string, unknown>
+  const id = body.id
+  if (typeof id !== 'string' || id === '') return { ok: false, error: 'id must not be empty' }
+  switch (body.op) {
+    case 'act': {
+      const actionId = body.actionId
+      if (typeof actionId !== 'string' || actionId === '') {
+        return { ok: false, error: 'act needs an actionId' }
+      }
+      return { ok: true, apply: async (host) => await host.console.actOn(id, actionId) }
+    }
+    case 'dismiss':
+      return { ok: true, apply: (host) => Promise.resolve(host.console.dismiss(id)) }
+    case 'snooze': {
+      const until = body.until
+      if (typeof until !== 'number' || !Number.isFinite(until)) {
+        return { ok: false, error: 'snooze needs a numeric until (epoch ms)' }
+      }
+      return { ok: true, apply: (host) => Promise.resolve(host.console.snooze(id, until)) }
+    }
+    default:
+      return { ok: false, error: 'op must be act, dismiss or snooze' }
+  }
+}
 
 /**
  * Validate one config payload before anything is written.

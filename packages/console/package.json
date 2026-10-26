@@ -1,7 +1,7 @@
 {
   "name": "@free-lzj/dsh-console",
-  "version": "0.1.0",
-  "description": "The DSH workbench: one home surface that gathers the plugins adopting its panel contract, plus the notification hub every other plugin hands its notices to",
+  "version": "0.2.0",
+  "description": "The DSH workbench: an attention queue of items that need a decision, the panels adopting its contract, the sessions working right now, and the notice/item hub every other plugin talks to",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Free-LZJ/free-dsh-plugins.git",
@@ -85,6 +85,7 @@
     "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
     "@deepseek-ai/dsh-host-webserver": ">=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-tools": ">=0.1.7-alpha.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -111,6 +112,7 @@
     "@deepseek-ai/dsh-client-ui-sidebar": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.7-rc.2",
     "@deepseek-ai/dsh-host-webserver": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.7-rc.2",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",

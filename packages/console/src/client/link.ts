@@ -12,7 +12,7 @@
  */
 
 import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector'
-import { CONFIG_PATH, EVENTS_PATH, STATE_PATH } from '../paths.ts'
+import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from '../paths.ts'
 import type { ConsoleLayout, ConsoleNoticeRecord, ConsoleState } from '../protocol.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 
@@ -179,6 +179,43 @@ export class ConsoleLink {
     } catch {
       void this.refresh()
       return false
+    }
+  }
+
+  /**
+   * Tell the Host what the user did with one item.
+   *
+   * The Host routes the click back to whichever plugin raised it, so the page never
+   * knows what an action means — it only knows the item's id and the action's id.
+   * @param body - `{op, id}` plus `actionId` for `act` or `until` for `snooze`.
+   * @returns ok, or the Host's reason (shown next to the item).
+   */
+  async actOnItem(body: {
+    readonly op: 'act' | 'dismiss' | 'snooze'
+    readonly id: string
+    readonly actionId?: string
+    readonly until?: number
+  }): Promise<{ ok: boolean; message?: string }> {
+    try {
+      const response = await fetch(ITEM_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [MUTATION_HEADER]: '1' },
+        body: JSON.stringify(body),
+      })
+      if (response.ok) {
+        // The Host pushes the new state over the stream; a refresh covers the case
+        // where the stream is not connected (a freshly reloaded page).
+        void this.refresh()
+        return { ok: true }
+      }
+      const payload = await response.json().catch(() => undefined) as { error?: unknown } | undefined
+      void this.refresh()
+      return {
+        ok: false,
+        message: typeof payload?.error === 'string' ? payload.error : `HTTP ${String(response.status)}`,
+      }
+    } catch (error: unknown) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
     }
   }
 

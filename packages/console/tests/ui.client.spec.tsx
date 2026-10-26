@@ -13,7 +13,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ChannelInfo, ConsoleNoticeRecord } from '../src/protocol.ts'
+import type { ChannelInfo, ConsoleLogEntry, ConsoleNoticeRecord, RunningSession } from '../src/protocol.ts'
 import { ConsoleShell, filterPanels, mergeNotices } from '../src/client/shell.tsx'
 import { ConsoleSettingsRow } from '../src/client/settings-row.tsx'
 import { PanelRegistry, panelRows, type PanelRow } from '../src/client/registry.ts'
@@ -97,19 +97,50 @@ function row(id: string, title: string, extra: Partial<PanelRow> = {}): PanelRow
 }
 
 /** The shell's injected face, recording what it was asked to do. */
-function shellFace(rows: readonly PanelRow[], notices: readonly ConsoleNoticeRecord[] = []) {
-  const calls = { open: [] as string[], pin: [] as string[], layout: [] as string[], cleared: 0 }
+function shellFace(
+  rows: readonly PanelRow[],
+  notices: readonly ConsoleNoticeRecord[] = [],
+  running: readonly RunningSession[] = [],
+  logEntries: readonly ConsoleLogEntry[] = [],
+  /** 让「打开」失败，用来验证失败会被说出来。 */
+  openOutcome: { readonly ok: boolean; readonly message?: string } = { ok: true },
+) {
+  const calls = {
+    open: [] as string[],
+    pin: [] as string[],
+    layout: [] as string[],
+    cleared: 0,
+    /** 点击过的 (条目 id, 动作 id)。 */
+    acted: [] as string[],
+    dismissed: [] as string[],
+  }
   return {
     calls,
     face: {
       t,
       useRows: <S,>(select: (all: readonly PanelRow[]) => S) => select(rows),
       useNotices: <S,>(select: (all: readonly ConsoleNoticeRecord[]) => S) => select(notices),
+      // 「待处理」由 Host 算；这些用例里就是状态为 new 的条数。
+      awaiting: () => notices.filter(notice => notice.state === 'new').length,
+      running: () => running,
+      log: () => logEntries,
       layout: () => 'grid' as const,
-      open: (panel: PanelRow) => calls.open.push(panel.id),
+      open: (panel: PanelRow) => {
+        calls.open.push(panel.id)
+        // 这几条用例走的是「打得开」的路；打不开的那条在下面单独测。
+        return openOutcome
+      },
       togglePin: (panel: PanelRow) => calls.pin.push(panel.id),
       setLayout: (layout: string) => calls.layout.push(layout),
       clearNotices: () => { calls.cleared += 1 },
+      actOnItem: async (id: string, actionId: string) => {
+        calls.acted.push(`${id}:${actionId}`)
+        return { ok: true }
+      },
+      dismissItem: async (id: string) => {
+        calls.dismissed.push(id)
+        return { ok: true }
+      },
       liveNotices: () => [],
     },
   }
@@ -177,6 +208,21 @@ describe('the home list on screen', () => {
     expect(calls.open).toEqual(['mail'])
   })
 
+  it('says why a panel would not open instead of showing nothing', () => {
+    // 这条盯的是一个真实故障：打开面板走的是布局的 `selectPanel`，它会抛；而工作台
+    // 原先把抛吞掉了，于是「点进去什么也没有」——用户看不到任何原因。
+    const { face } = shellFace(
+      [row('mail', '邮件分诊')],
+      [], [], [],
+      { ok: false, message: 'layout.selectPanel: main panel "mail" is not registered' },
+    )
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: '邮件分诊' }))
+
+    expect(screen.getByText(new RegExp(t('openFailed')))).toBeTruthy()
+    expect(screen.getByText(/is not registered/)).toBeTruthy()
+  })
+
   it('narrows to the search term and restores the list when it is cleared', () => {
     const { face } = shellFace([row('mail', '邮件'), row('notes', '笔记')])
     render(<ConsoleShell {...face} />)
@@ -211,11 +257,104 @@ describe('the home list on screen', () => {
   })
 
   it('offers the notices the Host stored behind the header button', () => {
-    const notice: ConsoleNoticeRecord = { id: '1', title: '新邮件', tone: 'info', createdAt: 10, delivered: [] }
+    const notice: ConsoleNoticeRecord = { id: '1', title: '新邮件', tone: 'info', createdAt: 10, delivered: [], state: 'new' }
     const { face } = shellFace([row('mail', '邮件')], [notice])
     render(<ConsoleShell {...face} />)
     fireEvent.click(screen.getByRole('button', { name: t('noticeBadge', { count: 1 }) }))
-    expect(screen.getByText('新邮件')).toBeTruthy()
+    // 首页的注意力队列与通知面板都会显示它。
+    expect(screen.getAllByText('新邮件').length).toBeGreaterThan(0)
+  })
+
+  it('puts what needs the user above the plugin list', () => {
+    const waiting: ConsoleNoticeRecord = {
+      id: 'run-9',
+      title: '这封推广邮件建议归档',
+      body: '规则「推广与电子报」建议执行 move',
+      createdAt: 10,
+      delivered: [],
+      state: 'new',
+      kind: 'mail',
+      source: 'mail',
+      actions: [{ id: 'apply', label: '执行' }],
+    }
+    const { face, calls } = shellFace([row('mail', '邮件')], [waiting])
+    render(<ConsoleShell {...face} />)
+
+    // 队列是首屏内容，不需要先点开通知面板。
+    expect(screen.getByText('这封推广邮件建议归档')).toBeTruthy()
+    expect(screen.getByText(t('attentionCount', { count: 1 }))).toBeTruthy()
+    // 队列里的按钮直接可用。
+    fireEvent.click(screen.getAllByRole('button', { name: '执行' })[0] as HTMLElement)
+    expect(calls.acted).toEqual(['run-9:apply'])
+  })
+
+  it('shows what the automations did, separately from what needs a decision', () => {
+    const logged: ConsoleLogEntry[] = [
+      { id: 'l-1', at: 20, source: 'mail', title: '按「推广与电子报」处理了：限时优惠', detail: '已标记为已读；已移动到「推广」', ok: true },
+    ]
+    const { face } = shellFace([row('mail', '邮件')], [], [], logged)
+    render(<ConsoleShell {...face} />)
+
+    expect(screen.getByText(t('automationLog'))).toBeTruthy()
+    expect(screen.getByText('按「推广与电子报」处理了：限时优惠')).toBeTruthy()
+    // 它不该被算成待处理：日志与队列是两件事。
+    expect(screen.getByText(t('attentionClear'))).toBeTruthy()
+  })
+
+  it('says so plainly when nothing is waiting', () => {
+    const { face } = shellFace([row('mail', '邮件')])
+    render(<ConsoleShell {...face} />)
+    expect(screen.getByText(t('attentionClear'))).toBeTruthy()
+    expect(screen.getByText(t('panelsHeading'))).toBeTruthy()
+  })
+
+  it('draws an item\'s actions and hands the click back by id', async () => {
+    const item: ConsoleNoticeRecord = {
+      id: 'run-1',
+      title: '建议归档这封推广邮件',
+      tone: 'info',
+      createdAt: 10,
+      delivered: [],
+      state: 'new',
+      kind: 'mail',
+      actions: [{ id: 'apply', label: '执行' }, { id: 'skip', label: '不用' }],
+    }
+    const { face, calls } = shellFace([row('mail', '邮件')], [item])
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('noticeBadge', { count: 1 }) }))
+    // 同一个条目现在会在两处出现（首页的注意力队列、通知面板），所以按面板作用域查。
+    const panel = screen.getByRole('dialog')
+    fireEvent.click(within(panel).getByRole('button', { name: '执行' }))
+    // 页面不认识动作的含义，只把 (条目 id, 动作 id) 交出去。
+    expect(calls.acted).toEqual(['run-1:apply'])
+  })
+
+  it('lets the user dismiss an item, and shows a handled one as such', async () => {
+    const pending: ConsoleNoticeRecord = {
+      id: 'run-2',
+      title: '要处理一下',
+      createdAt: 10,
+      delivered: [],
+      state: 'new',
+      kind: 'mail',
+      actions: [{ id: 'apply', label: '执行' }],
+    }
+    const done: ConsoleNoticeRecord = {
+      id: 'run-3',
+      title: '已经处理完了',
+      createdAt: 20,
+      delivered: [],
+      state: 'resolved',
+    }
+    const { face, calls } = shellFace([row('mail', '邮件')], [pending, done])
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('noticeBadge', { count: 1 }) }))
+
+    const panel = screen.getByRole('dialog')
+    fireEvent.click(within(panel).getByRole('button', { name: t('noticeDismiss') }))
+    expect(calls.dismissed).toEqual(['run-2'])
+    // 已处理的条目不画动作按钮，只标一个状态（两处都会标，所以用 getAllByText）。
+    expect(screen.getAllByText(t('noticeDone')).length).toBeGreaterThan(0)
   })
 
   it('portals the notice panel out of the header, on the shared fixed frame', () => {
@@ -284,8 +423,8 @@ describe('search and notice helpers', () => {
   })
 
   it('keeps one row per notice id, newest first', () => {
-    const older: ConsoleNoticeRecord = { id: '1', title: '旧', tone: 'info', createdAt: 10, delivered: [] }
-    const newer: ConsoleNoticeRecord = { id: '2', title: '新', tone: 'info', createdAt: 20, delivered: [] }
+    const older: ConsoleNoticeRecord = { id: '1', title: '旧', tone: 'info', createdAt: 10, delivered: [], state: 'new' }
+    const newer: ConsoleNoticeRecord = { id: '2', title: '新', tone: 'info', createdAt: 20, delivered: [], state: 'new' }
     expect(mergeNotices([older], [newer, older]).map((notice) => notice.id)).toEqual(['2', '1'])
   })
 })

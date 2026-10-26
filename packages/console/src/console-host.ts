@@ -30,12 +30,37 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import { PresenceGate } from './builtin-channels.ts'
 import { ChannelRegistry, type NoticeDelivery } from './channels.ts'
 import type {
-  ChannelInfo, ConsoleLayout, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, NoticeTone,
+  ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, NoticeTone,
+  RunningSession,
 } from './protocol.ts'
 import { emptyPrefs, readPrefs, writePrefs, type ConsolePrefs } from './store.ts'
 
 /** The most notices kept for one browser session. */
 export const NOTICE_LIMIT = 50
+
+/**
+ * How many automation log entries are kept.
+ *
+ * Small on purpose: the log answers "what has it been doing lately", and past a hundred
+ * lines nobody reads it. It is not an audit trail — that lives in the plugin that did
+ * the work (the mail plugin keeps its own run history).
+ */
+export const LOG_LIMIT = 100
+
+/**
+ * What a plugin does when the user picks one of its item's actions.
+ *
+ * The workbench deliberately knows nothing about what an action means: it hands the
+ * item and the action id back to whoever raised it. A handler that throws loses only
+ * its own click — the item stays in the queue with the reason attached.
+ */
+export type NoticeActionHandler = (item: ConsoleNoticeRecord, actionId: string) => Promise<void> | void
+
+/** The answer to one click or dismissal. */
+export interface ItemResult {
+  readonly ok: boolean
+  readonly message?: string
+}
 
 /** One event pushed to every open workbench. */
 export type ConsoleEvent =
@@ -50,11 +75,38 @@ export interface ConsoleHostOptions {
   readonly channels: () => readonly string[]
   /** The saved view preference. */
   readonly layout: () => ConsoleLayout
+  /**
+   * Read the sessions working right now, or undefined when this deployment has no
+   * session service.
+   *
+   * Optional by design: the workbench is useful without it, and a deployment that
+   * cannot answer simply shows no running work rather than failing to open.
+   */
+  readonly runningSessions?: () => Promise<readonly RunningSession[]>
+  /** How often to refresh {@link runningSessions}. Defaults to 5s. */
+  readonly runningRefreshMs?: number
 }
 
 /** Normalize a caller-supplied tone, defaulting to `info`. */
 function toneOf(value: NoticeTone | undefined): NoticeTone {
   return value === 'success' || value === 'warn' || value === 'error' ? value : 'info'
+}
+
+/**
+ * Whether two running-session lists are the same picture.
+ *
+ * Compared field by field so a poll that changed nothing does not bump the revision —
+ * the page's poll would otherwise re-render the whole list every five seconds.
+ * @param left - the previous list.
+ * @param right - the candidate list.
+ * @returns true when nothing a reader can see changed.
+ */
+function sameRunning(left: readonly RunningSession[], right: readonly RunningSession[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((row, index) => {
+    const other = right[index]
+    return other !== undefined && row.sessionId === other.sessionId && row.title === other.title && row.cwd === other.cwd
+  })
 }
 
 /**
@@ -68,6 +120,15 @@ export class ConsoleHost extends Service {
   private readonly registry = new ChannelRegistry()
   private readonly listeners = new Set<(event: ConsoleEvent) => void>()
   private readonly notices: ConsoleNoticeRecord[] = []
+  /**
+   * Who handles a click, by the kind of item clicked.
+   *
+   * Kept here rather than on each record: a handler is owned by the plugin that
+   * registered it and dies with that plugin's fiber, while the record outlives it in
+   * the queue. An item whose kind has no handler is still shown — it just cannot be
+   * acted on any more, which is the honest thing to render after a plugin unloads.
+   */
+  private readonly actionHandlers = new Map<string, NoticeActionHandler>()
   /** Browsers currently streaming events; the channels that need a page consult it. */
   readonly presence = new PresenceGate()
   private prefs: ConsolePrefs = emptyPrefs()
@@ -83,6 +144,17 @@ export class ConsoleHost extends Service {
    * onto what the file said, not overwrite it with a half-empty document.
    */
   readonly ready: Promise<void>
+  /**
+   * The sessions last seen working.
+   *
+   * Cached rather than fetched per read because `state()` is synchronous and the whole
+   * page polls it: an async read per poll would make the route's latency depend on the
+   * session service, and a slow one would stall the notice list with it.
+   */
+  private running: readonly RunningSession[] = []
+  private runningTimer: NodeJS.Timeout | undefined
+  /** 自动化日志，最新在前，长度封顶 {@link LOG_LIMIT}。 */
+  private readonly logEntries: ConsoleLogEntry[] = []
 
   /**
    * @param ctx - the providing plugin's context (the service unloads with it).
@@ -95,11 +167,52 @@ export class ConsoleHost extends Service {
       this.prefs = saved
       this.bump()
     })
+    this.watchRunning()
+  }
+
+  /**
+   * 定期刷新「正在跑的会话」。
+   *
+   * 定时器 `unref` 掉：一个只为了刷首页数字的循环不该把宿主进程按住在那里。
+   */
+  private watchRunning(): void {
+    const read = this.options.runningSessions
+    if (read === undefined) return
+    const tick = async (): Promise<void> => {
+      try {
+        const next = await read()
+        if (sameRunning(this.running, next)) return
+        this.running = next
+        this.bump()
+      } catch (error: unknown) {
+        // 会话服务读不到不是工作台的故障：首页少一块，其他照常。
+        this.ctx.logger.warn(`console: reading running sessions failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    void tick()
+    this.runningTimer = setInterval(() => { void tick() }, this.options.runningRefreshMs ?? 5_000)
+    this.runningTimer.unref?.()
   }
 
   /** The channels this package implements, before configuration. */
   get channels(): ChannelRegistry {
     return this.registry
+  }
+
+  /**
+   * Register the handler for one kind of item.
+   *
+   * A kind is a namespace the raiser owns (`mailflow`, `tasks`, …). Registering twice
+   * replaces: a plugin that reloads must not end up with two handlers racing.
+   * @param kind - the kind this handler answers.
+   * @param handler - what to do when the user picks an action.
+   * @returns the disposer that removes it.
+   */
+  onAction(kind: string, handler: NoticeActionHandler): () => void {
+    this.actionHandlers.set(kind, handler)
+    return () => {
+      if (this.actionHandlers.get(kind) === handler) this.actionHandlers.delete(kind)
+    }
   }
 
   /**
@@ -112,6 +225,19 @@ export class ConsoleHost extends Service {
    * @returns the stored record.
    */
   async notify(notice: ConsoleNotice): Promise<ConsoleNoticeRecord> {
+    return await this.raise(notice)
+  }
+
+  /**
+   * Hand an **item** to the workbench: a notice that may carry actions.
+   *
+   * This is `notify` plus the two things a work desk needs — an identity to act on
+   * later, and a state to track. A bare notice is the same call with no `actions`,
+   * which is why the two share one store and one event.
+   * @param notice - what to tell the user, and what they can do about it.
+   * @returns the stored record.
+   */
+  async raise(notice: ConsoleNotice): Promise<ConsoleNoticeRecord> {
     const title = typeof notice?.title === 'string' ? notice.title.trim() : ''
     if (title === '') throw new TypeError('console.notify: a notice needs a non-empty title')
     const envelope: NoticeDelivery = {
@@ -132,11 +258,124 @@ export class ConsoleHost extends Service {
         this.ctx.logger.warn(`console: channel "${id}" failed: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
-    const record: ConsoleNoticeRecord = { ...envelope, delivered }
+    const actions = Array.isArray(notice.actions) && notice.actions.length > 0
+      ? notice.actions.filter(action => typeof action.id === 'string' && action.id !== '' && typeof action.label === 'string')
+      : undefined
+    const record: ConsoleNoticeRecord = {
+      ...envelope,
+      delivered,
+      state: 'new',
+      ...(notice.kind === undefined ? {} : { kind: notice.kind }),
+      ...(actions === undefined ? {} : { actions }),
+      ...(notice.sessionId === undefined ? {} : { sessionId: notice.sessionId }),
+    }
     this.notices.unshift(record)
     if (this.notices.length > NOTICE_LIMIT) this.notices.length = NOTICE_LIMIT
     this.bump({ type: 'notice', notice: record, delivered })
     return record
+  }
+
+  /**
+   * The user picked one of an item's actions.
+   *
+   * The workbench does no work itself: it finds the raiser by `kind` and hands the
+   * click back. The item is marked `resolved` **only if the handler succeeded** — a
+   * failed action must stay in the queue, otherwise the user is told a thing was
+   * handled when it was not.
+   * @param id - the item.
+   * @param actionId - which of its actions.
+   * @returns ok, or why not.
+   */
+  async actOn(id: string, actionId: string): Promise<ItemResult> {
+    const item = this.notices.find(record => record.id === id)
+    if (item === undefined) return { ok: false, message: '这个条目已经不在了' }
+    const action = item.actions?.find(candidate => candidate.id === actionId)
+    if (action === undefined) return { ok: false, message: '这个条目没有这个动作' }
+    const kind = item.kind
+    if (kind === undefined) return { ok: false, message: '这个条目没有归属的插件' }
+    const handler = this.actionHandlers.get(kind)
+    if (handler === undefined) {
+      return { ok: false, message: `「${kind}」插件当前没有加载，无法执行` }
+    }
+    try {
+      await handler(item, actionId)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger.warn(`console: action "${actionId}" of ${kind} failed: ${message}`)
+      return { ok: false, message }
+    }
+    this.replace(id, { state: 'resolved', resolvedAction: actionId })
+    return { ok: true }
+  }
+
+  /**
+   * The user said "not my problem".
+   * @param id - the item.
+   * @returns ok, or why not.
+   */
+  dismiss(id: string): ItemResult {
+    if (!this.replace(id, { state: 'dismissed' })) return { ok: false, message: '这个条目已经不在了' }
+    return { ok: true }
+  }
+
+  /**
+   * Keep it out of the queue until later.
+   * @param id - the item.
+   * @param until - epoch ms.
+   * @returns ok, or why not.
+   */
+  snooze(id: string, until: number): ItemResult {
+    if (!Number.isFinite(until) || until <= Date.now()) return { ok: false, message: 'snooze 需要一个将来的时间' }
+    if (!this.replace(id, { state: 'seen', snoozedUntil: until })) return { ok: false, message: '这个条目已经不在了' }
+    return { ok: true }
+  }
+
+  /**
+   * Replace one stored record and tell every open workbench.
+   * @param id - the item.
+   * @param change - the fields to overwrite.
+   * @returns whether the item existed.
+   */
+  private replace(id: string, change: Partial<ConsoleNoticeRecord>): boolean {
+    const index = this.notices.findIndex(record => record.id === id)
+    const current = this.notices[index]
+    if (current === undefined) return false
+    this.notices[index] = { ...current, ...change }
+    this.bump()
+    return true
+  }
+
+  /**
+   * Record one thing an automation did on its own.
+   *
+   * Not an item: it wants no decision, so it never enters the attention queue and never
+   * counts towards `awaiting`. A plugin that handles a hundred messages a day calls this
+   * a hundred times and nobody is nagged — which is the point of keeping the two apart.
+   * @param entry - who did what, and whether it worked.
+   */
+  log(entry: {
+    readonly source: string
+    readonly title: string
+    readonly detail?: string
+    readonly ok?: boolean
+  }): void {
+    const title = typeof entry?.title === 'string' ? entry.title.trim() : ''
+    if (title === '') return
+    this.logEntries.unshift({
+      id: randomUUID(),
+      at: Date.now(),
+      source: entry.source,
+      title,
+      ...(entry.detail === undefined ? {} : { detail: entry.detail }),
+      ok: entry.ok !== false,
+    })
+    if (this.logEntries.length > LOG_LIMIT) this.logEntries.length = LOG_LIMIT
+    this.bump()
+  }
+
+  /** @returns the automation log, newest first. */
+  automationLog(): readonly ConsoleLogEntry[] {
+    return this.logEntries
   }
 
   /** Forget the notices of this session (the user dismissed the list). */
@@ -153,11 +392,27 @@ export class ConsoleHost extends Service {
   state(): ConsoleState {
     return {
       notices: this.notices,
+      awaiting: this.awaiting(),
       availableChannels: this.channelInfos(),
       layout: this.layout,
       pinned: this.prefs.pinned,
+      running: this.running,
+      log: this.logEntries,
       revision: this.revision,
     }
+  }
+
+  /**
+   * How many items still want the user.
+   *
+   * Counted on the Host so every screen shows the same figure, and so a queue that is
+   * snoozed until later is not silently counted as pending.
+   * @returns the count of items in state `new` that are not snoozed.
+   */
+  private awaiting(): number {
+    const now = Date.now()
+    return this.notices.filter(record =>
+      record.state === 'new' && (record.snoozedUntil === undefined || record.snoozedUntil <= now)).length
   }
 
   /**

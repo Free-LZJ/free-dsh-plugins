@@ -21,8 +21,9 @@ import {
   Button, IconSearchOutlineRegular, Input, MenuSurface, SegmentedControl, Tag,
   useAnchoredPosition, useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ConsoleLayout, ConsoleNoticeRecord } from '../protocol.ts'
+import type { ConsoleLayout, ConsoleLogEntry, ConsoleNoticeRecord, RunningSession } from '../protocol.ts'
 import { LAYOUTS, LAYOUT_ORDER, type HomeListProps } from './home.tsx'
+import { AttentionQueue } from './attention.tsx'
 import type { Translate } from './locales.ts'
 import type { PanelRow } from './registry.ts'
 import { CLS } from './styles.ts'
@@ -33,16 +34,42 @@ export interface ShellInjected {
   readonly useRows: <S>(select: (rows: readonly PanelRow[]) => S, equal?: (a: S, b: S) => boolean) => S
   /** Selector hook over the Host snapshot's notice list. */
   readonly useNotices: <S>(select: (notices: readonly ConsoleNoticeRecord[]) => S, equal?: (a: S, b: S) => boolean) => S
+  /**
+   * How many items still want the user, as the Host counts it.
+   *
+   * Read from the Host rather than counted here so every surface agrees, and so an
+   * item snoozed until tomorrow is not silently shown as pending.
+   */
+  readonly awaiting: () => number
+  /** The sessions working right now, as the Host last refreshed them. */
+  readonly running: () => readonly RunningSession[]
+  /** What automations did on their own, newest first. */
+  readonly log: () => readonly ConsoleLogEntry[]
   /** The layout the user saved on the Host. */
   readonly layout: () => ConsoleLayout
-  /** Open one panel. */
-  readonly open: (panel: PanelRow) => void
+  /**
+   * Open one panel.
+   *
+   * Returns an outcome rather than nothing: opening goes through the layout's
+   * `selectPanel`, which **throws** for a key it does not consider registered, and a
+   * click that fails silently is worse than one that fails loudly.
+   */
+  readonly open: (panel: PanelRow) => { readonly ok: boolean; readonly message?: string }
   /** Pin or unpin one row. */
   readonly togglePin: (panel: PanelRow) => void
   /** Save the chosen layout. */
   readonly setLayout: (layout: ConsoleLayout) => void
   /** Ask the Host to drop the notice list. */
   readonly clearNotices: () => void
+  /**
+   * Tell the Host the user picked an action on one item.
+   *
+   * The page does not know what the action means: it hands back the item id and the
+   * action id, and the Host routes them to the plugin that raised the item.
+   */
+  readonly actOnItem: (id: string, actionId: string) => Promise<{ ok: boolean; message?: string }>
+  /** Tell the Host the user said "not my problem". */
+  readonly dismissItem: (id: string) => Promise<{ ok: boolean; message?: string }>
   /** Notices raised while this page is open, newest first. */
   readonly liveNotices: () => readonly ConsoleNoticeRecord[]
 }
@@ -72,17 +99,24 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @returns the shell.
  */
 export function ConsoleShell(props: ConsoleShellProps): ReactNode {
-  const { t, useRows, useNotices, layout, open, togglePin, setLayout, clearNotices, liveNotices } = props
+  const { t, useRows, useNotices, awaiting, running, log, layout, open, togglePin, setLayout, clearNotices, actOnItem, dismissItem, liveNotices } = props
   const rows = useRows((all) => all)
   const stored = useNotices((all) => all)
   const [query, setQuery] = useState('')
+  /** 上一次「打开面板」失败的原因；空串表示没有。 */
+  const [openError, setOpenError] = useState('')
   const current = layout()
   const Layout = LAYOUTS[current]
   const notices = mergeNotices(stored, liveNotices())
   const homeProps: HomeListProps = {
     panels: filterPanels(rows, query),
     t,
-    onOpen: open,
+    // 打开失败要说出来：静默的失败让人以为是「这个插件坏了」，而真正的原因
+    // （这个面板没在 `main` 槽里生效）是能修的。
+    onOpen: (panel) => {
+      const outcome = open(panel)
+      setOpenError(outcome.ok ? '' : (outcome.message ?? t('openFailed')))
+    },
     onTogglePin: togglePin,
     emptyTitle: rows.length === 0 ? t('listEmpty') : t('searchEmpty'),
     emptyHint: rows.length === 0 ? t('listEmptyHint') : t('searchEmptyHint'),
@@ -111,10 +145,23 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
             }))}
             onChange={(next: ConsoleLayout) => setLayout(next)}
           />
-          <NoticeButton t={t} notices={notices} onClear={clearNotices} />
+          <NoticeButton
+            t={t}
+            notices={notices}
+            awaiting={awaiting()}
+            onClear={clearNotices}
+            actOnItem={actOnItem}
+            dismissItem={dismissItem}
+          />
         </div>
       </header>
       <div className={CLS.body}>
+        {openError === '' ? null : (
+          <p className={CLS.openError} role="status">{t('openFailed')}：{openError}</p>
+        )}
+        {/* 注意力队列排在最上面：首页要回答的是「现在需要我决定什么」，插件目录是手段。 */}
+        <AttentionQueue t={t} notices={notices} running={running} log={log} actOnItem={actOnItem} dismissItem={dismissItem} />
+        <h2 className={CLS.attentionSubheading}>{t('panelsHeading')}</h2>
         <Layout {...homeProps} />
       </div>
     </div>
@@ -143,12 +190,22 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
  * @param props - the translate seat, the notices, and the clear command.
  * @returns the button and its popover.
  */
-function NoticeButton({ t, notices, onClear }: {
+function NoticeButton({ t, notices, awaiting, onClear, actOnItem, dismissItem }: {
   readonly t: Translate
   readonly notices: readonly ConsoleNoticeRecord[]
+  readonly awaiting: number
   readonly onClear: () => void
+  readonly actOnItem: ShellInjected['actOnItem']
+  readonly dismissItem: ShellInjected['dismissItem']
 }): ReactNode {
   const [open, setOpen] = useState(false)
+  /**
+   * Why the last click did not take.
+   *
+   * Kept in the panel rather than pushed to a toast: the failure belongs next to the
+   * item it is about, and the item is still sitting right there.
+   */
+  const [failure, setFailure] = useState('')
   const rootRef = useRef<HTMLSpanElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const position = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, align: 'end', gap: 6, margin: 12 })
@@ -161,18 +218,25 @@ function NoticeButton({ t, notices, onClear }: {
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [open])
+  /** 跑一次点击，失败就把原因显示在面板里。 */
+  const run = (work: Promise<{ ok: boolean; message?: string }>): void => {
+    setFailure('')
+    void work.then((result) => {
+      if (!result.ok) setFailure(result.message ?? t('noticeFailed'))
+    })
+  }
   return (
     <span ref={rootRef}>
       <Button
         variant="ghost"
         size="sm"
-        aria-label={notices.length === 0 ? t('noticeTitle') : t('noticeBadge', { count: notices.length })}
+        aria-label={awaiting === 0 ? t('noticeTitle') : t('noticeBadge', { count: awaiting })}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => { setOpen((value) => !value) }}
       >
         {t('noticeTitle')}
-        {notices.length > 0 && <Tag tone="info">{notices.length}</Tag>}
+        {awaiting > 0 && <Tag tone="info">{awaiting}</Tag>}
       </Button>
       {open && createPortal(
         <MenuSurface
@@ -184,10 +248,33 @@ function NoticeButton({ t, notices, onClear }: {
         >
           <div className={CLS.noticeList}>
             {notices.length === 0 && <p className={CLS.empty}>{t('noticeEmpty')}</p>}
+            {failure !== '' && <p className={CLS.noticeFailure} role="status">{failure}</p>}
             {notices.map((notice) => (
               <div key={notice.id} className={`${CLS.notice} ${toneClass(notice.tone)}`}>
                 <span className={CLS.noticeTitle}>{notice.title}</span>
                 {notice.body !== undefined && <span className={CLS.noticeBody}>{notice.body}</span>}
+                {notice.state === 'resolved' && <Tag tone="success">{t('noticeDone')}</Tag>}
+                {notice.state === 'dismissed' && <Tag tone="outline">{t('noticeDismissed')}</Tag>}
+                {notice.actions !== undefined && notice.state === 'new' && (
+                  <span className={CLS.noticeActions}>
+                    {notice.actions.map((action) => (
+                      <Button
+                        key={action.id}
+                        size="sm"
+                        onClick={() => { run(actOnItem(notice.id, action.id)) }}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { run(dismissItem(notice.id)) }}
+                    >
+                      {t('noticeDismiss')}
+                    </Button>
+                  </span>
+                )}
                 <span className={CLS.noticeTime}>{new Date(notice.createdAt).toLocaleTimeString()}</span>
               </div>
             ))}

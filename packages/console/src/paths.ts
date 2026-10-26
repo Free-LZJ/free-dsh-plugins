@@ -16,5 +16,14 @@ export const STATE_PATH = `${ROUTE_PREFIX}/state`
 /** Saved view preferences the browser writes back. */
 export const CONFIG_PATH = `${ROUTE_PREFIX}/config`
 
+/**
+ * What the user did with one item: pick an action, dismiss it, or snooze it.
+ *
+ * Separate from {@link CONFIG_PATH} because it is a different kind of write: the
+ * config route edits this plugin's own preferences, while this one is routed back to
+ * whichever plugin raised the item.
+ */
+export const ITEM_PATH = `${ROUTE_PREFIX}/item`
+
 /** The event stream (SSE) every open workbench tails: notices and directory changes. */
 export const EVENTS_PATH = `${ROUTE_PREFIX}/events`
