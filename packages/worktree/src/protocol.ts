@@ -1,15 +1,22 @@
 /**
- * The one request this plugin speaks over HTTP, in both halves' vocabulary.
+ * The requests this plugin speaks over HTTP, in both halves' vocabulary.
  *
- * The browser cannot run `git`, so creating a worktree is a Host operation; the
- * only thing the two halves share is this shape and the route it is posted to.
- * Nothing here is runtime code, so the browser bundle inlines types only.
+ * The browser cannot run `git`, so every checkout operation is a Host one; the
+ * only thing the two halves share is these shapes and the routes they are sent
+ * to. Nothing here is Node-specific, so the browser bundle inlines values and
+ * types only.
  *
  * @module @free-dsh/worktree/protocol
  */
 
-/** Where the browser asks for a worktree. */
+/** Where the browser asks for a new worktree. */
 export const CREATE_PATH = '/dsh-worktrees/create'
+
+/** Where the browser reads the repository's checkouts. */
+export const LIST_PATH = '/dsh-worktrees/list'
+
+/** Where the browser asks for one checkout to be removed. */
+export const REMOVE_PATH = '/dsh-worktrees/remove'
 
 /**
  * The parent directory every checkout is created under, relative to the
@@ -22,7 +29,7 @@ export const WORKTREE_PARENT = '.agents/worktrees'
 /** Header a mutating request must carry, so a cross-site form cannot post it. */
 export const MUTATION_HEADER = 'x-dsh-worktrees'
 
-/** Largest body the route reads; the payload is one path and one short name. */
+/** Largest body the routes read; every payload here is one path and one name. */
 export const MAX_BODY_BYTES = 4 * 1024
 
 /** One create request from the browser. */
@@ -41,6 +48,48 @@ export interface CreateWorktreeResult {
   readonly branch: string
   /** Top level of the repository the checkout was branched from. */
   readonly repo: string
+}
+
+/** One checkout as the browser lists it. */
+export interface WorktreeSummary {
+  /** Absolute path of the checkout. */
+  readonly path: string
+  /** Branch name; absent for a detached checkout. */
+  readonly branch?: string
+  /** Commit the checkout is at. */
+  readonly head: string
+  /** Whether this is the repository's own checkout. */
+  readonly main: boolean
+  /** Git holds a lock on it, so it cannot be removed without a force. */
+  readonly locked: boolean
+  /** Whether it lives under this repository's managed parent, i.e. is removable here. */
+  readonly managed: boolean
+}
+
+/** What a list request answers. */
+export interface ListWorktreesResult {
+  /** Top level of the repository the request resolved to. */
+  readonly repo: string
+  /** Its checkouts, the repository's own first. */
+  readonly worktrees: readonly WorktreeSummary[]
+}
+
+/** One removal request from the browser. */
+export interface RemoveWorktreeRequest {
+  /** Directory whose repository owns the checkout. */
+  readonly dir: string
+  /** Checkout to remove. */
+  readonly path: string
+  /** Whether to drop the checkout's branch too. */
+  readonly deleteBranch?: boolean
+}
+
+/** What a successful removal reports. */
+export interface RemoveWorktreeResult {
+  /** Path that is gone. */
+  readonly removed: string
+  /** Branch that was dropped with it, when one was. */
+  readonly branch?: string
 }
 
 /** Failure answer: one sentence, never the request echoed back. */

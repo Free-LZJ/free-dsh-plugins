@@ -56,3 +56,16 @@ export function scratch(): string {
 export function cleanupRepositories(): void {
   for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true })
 }
+
+/**
+ * Create one worktree under the repository's managed parent, the way the plugin
+ * itself does, and hand back its path.
+ * @param repo - repository top level.
+ * @param name - branch and directory name.
+ * @returns the checkout path.
+ */
+export function createManaged(repo: string, name: string): string {
+  const path = join(repo, '.agents', 'worktrees', name)
+  execFileSync('git', ['worktree', 'add', '-b', name, path, 'HEAD'], { cwd: repo, stdio: 'ignore' })
+  return path
+}

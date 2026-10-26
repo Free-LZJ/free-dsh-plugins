@@ -18,7 +18,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import {
-  CREATE_PATH, MUTATION_HEADER, type CreateWorktreeResult, type FailureResult,
+  CREATE_PATH, LIST_PATH, MUTATION_HEADER, REMOVE_PATH,
+  type CreateWorktreeResult, type FailureResult, type ListWorktreesResult, type RemoveWorktreeResult,
 } from '../protocol.ts'
 import { NS, en, zh, type WorktreeKey } from './locales.ts'
 import { installStyles } from './styles.ts'
@@ -57,6 +58,39 @@ async function createOnHost(dir: string, name?: string): Promise<CreateWorktreeR
 }
 
 /**
+ * Read one repository's checkouts through the Host.
+ * @param dir - directory whose repository to read.
+ * @returns the repository and its checkouts.
+ */
+async function listOnHost(dir: string): Promise<ListWorktreesResult> {
+  const query = new URLSearchParams({ dir }).toString()
+  const response = await fetch(`${LIST_PATH}?${query}`, { cache: 'no-store' })
+  const body = await response.json() as ListWorktreesResult | FailureResult
+  if (!response.ok) throw new Error('error' in body ? body.error : `HTTP ${response.status}`)
+  return body as ListWorktreesResult
+}
+
+/**
+ * Remove one checkout (and its branch) through the Host.
+ *
+ * The branch goes with it: Git's own `-d` refuses an unmerged branch, so the
+ * refusal is the safety check rather than something this half re-implements.
+ * @param dir - directory whose repository owns the checkout.
+ * @param path - checkout to remove.
+ * @returns what was removed.
+ */
+async function removeOnHost(dir: string, path: string): Promise<RemoveWorktreeResult> {
+  const response = await fetch(REMOVE_PATH, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', [MUTATION_HEADER]: '1' },
+    body: JSON.stringify({ dir, path, deleteBranch: true }),
+  })
+  const body = await response.json() as RemoveWorktreeResult | FailureResult
+  if (!response.ok) throw new Error('error' in body ? body.error : `HTTP ${response.status}`)
+  return body as RemoveWorktreeResult
+}
+
+/**
  * Client plugin body: register the dictionaries, the stylesheet, and the Hero
  * control.
  * @param ctx - client root context.
@@ -72,6 +106,8 @@ export function apply(ctx: Context): void {
     locale: NS,
     inject: (): WorktreeActionInjected => ({
       createWorktree: (dir, name) => createOnHost(dir, name),
+      listWorktrees: dir => listOnHost(dir),
+      removeWorktree: (dir, path) => removeOnHost(dir, path),
       registerWorkspace: async (path) => (await ctx.workspaces.create({ path })).workspaceId,
       openWorkspace: async (workspaceId) => {
         // The id is this plugin's own return value from the controller; the

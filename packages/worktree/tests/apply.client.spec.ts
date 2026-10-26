@@ -110,7 +110,7 @@ describe('worktree client apply', () => {
     expect(entry.component).toBe(WorktreeAction)
     expect(entry.options).toMatchObject({ id: 'worktree', order: 100 })
     expect(entry.locale).toBe(NS)
-    expect(locale.bind(NS)('trigger')).toBe('新建工作树会话')
+    expect(locale.bind(NS)('trigger')).toBe('工作树')
     // The control renders its own text inside the button, so the registration
     // carries no projected label for the shell to draw.
     expect(entry.options.label).toBeUndefined()
