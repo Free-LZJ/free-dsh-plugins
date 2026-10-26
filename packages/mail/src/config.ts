@@ -2,27 +2,22 @@
  * Defaults, and the one place untrusted input becomes a shape the plugin trusts.
  *
  * The panel posts JSON over HTTP and the settings drawer is a plain document, so
- * every field travels as `unknown` until it has been through here: a trigger that
- * names a mode the trigger does not implement, an account whose port is a string,
- * an action that would move 501 messages — all of them end as either a valid
- * value or a field name the route can answer with 400. Nothing in this file
- * throws, because a malformed request must not take the Host half down.
+ * every field travels as `unknown` until it has been through here: an account
+ * whose port is a string, an action that would move 501 messages — all of them
+ * end as either a valid value or a field name the route can answer with 400.
+ * Nothing in this file throws, because a malformed request must not take the
+ * Host half down.
  *
  * @module @free-lzj/dsh-mail/config
  */
 
-import { isAbsolute } from 'node:path'
+import { DEFAULT_CONFIG as DEFAULT_TRIAGE_CONFIG, normalizeConfig as normalizeTriageConfig } from './triage/config.ts'
 import type {
   Config,
   DraftAccount,
   MailAccount,
   MailAction,
   MailProvider,
-  SessionTriggerOptions,
-  TriggerConfig,
-  TriggerFilters,
-  TriggerMode,
-  TriggerRule,
 } from './types.ts'
 
 /** Bottom-of-the-barrel rescan interval, in seconds. */
@@ -46,10 +41,8 @@ export const DEFAULT_CONFIG: Config = {
   fallbackScanSeconds: DEFAULT_FALLBACK_SCAN_SECONDS,
   maxListMessages: DEFAULT_MAX_LIST_MESSAGES,
   imapTimeoutSeconds: DEFAULT_IMAP_TIMEOUT_SECONDS,
+  triage: DEFAULT_TRIAGE_CONFIG,
 }
-
-/** Modes a trigger may name. */
-const TRIGGER_MODES = new Set<string>(['session', 'notify', 'panel'])
 
 /** Providers the settings drawer offers. */
 const PROVIDERS = new Set<string>(['qq', 'gmail', 'custom'])
@@ -64,12 +57,12 @@ const MAX_ACTION_UIDS = 500
 const ACCOUNT_ID = /^[a-z][a-z0-9-]*$/
 
 /** Whether a value is a JSON object rather than an array, `null` or a primitive. */
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** A non-empty, trimmed string, or undefined for anything else. */
-function text(value: unknown): string | undefined {
+export function text(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed.length === 0 ? undefined : trimmed
@@ -162,124 +155,6 @@ export function normalizePreferences(
   return { ok: true, value: { loadRemoteImages: load } }
 }
 
-/** One filter group: strings only, trimmed, empties dropped, absent when nothing is left. */function filterGroup(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const items = value.flatMap((item) => {
-    const kept = text(item)
-    return kept === undefined ? [] : [kept]
-  })
-  return items.length === 0 ? undefined : items
-}
-
-/** The filter groups, with only the ones that carry something. */
-function normalizeFilters(input: unknown): TriggerFilters {
-  const source = isRecord(input) ? input : {}
-  const from = filterGroup(source.from)
-  const subject = filterGroup(source.subject)
-  const keywords = filterGroup(source.keywords)
-  return {
-    ...(from === undefined ? {} : { from }),
-    ...(subject === undefined ? {} : { subject }),
-    ...(keywords === undefined ? {} : { keywords }),
-    ...(typeof source.unreadOnly === 'boolean' ? { unreadOnly: source.unreadOnly } : {}),
-  }
-}
-
-/** The session options, only when the workspace they name could actually be opened. */
-function normalizeSession(input: unknown): SessionTriggerOptions | undefined {
-  if (!isRecord(input)) return undefined
-  const workspacePath = text(input.workspacePath)
-  // A relative path would be resolved against dsh's own working directory, which
-  // is not what the user picked in the drawer: refuse it rather than guess.
-  if (workspacePath === undefined || !isAbsolute(workspacePath)) return undefined
-  const agentPreset = text(input.agentPreset)
-  const permissionPreset = text(input.permissionPreset)
-  const titleTemplate = text(input.titleTemplate)
-  return {
-    workspacePath,
-    ...(agentPreset === undefined ? {} : { agentPreset }),
-    ...(permissionPreset === undefined ? {} : { permissionPreset }),
-    ...(titleTemplate === undefined ? {} : { titleTemplate }),
-  }
-}
-
-/**
- * One rule from the drawer.
- *
- * A rule naming a mode whose own parameters are unusable is dropped rather than
- * downgraded to `panel`: a rule the user thinks is running and is not would be
- * worse than one the drawer refuses to keep. Omitting the parameters entirely is
- * a different thing — that means "use the account's", which is how a rule list
- * stays readable when every rule shares one workspace.
- * @param input - what the request carried for this rule.
- * @returns the rule, or undefined when it cannot be acted on.
- */
-function normalizeRule(input: unknown): TriggerRule | undefined {
-  if (!isRecord(input)) return undefined
-  const action: TriggerMode = named(input.action, TRIGGER_MODES) ?? 'panel'
-  const name = text(input.name)
-  const promptTemplate = text(input.promptTemplate)
-  const base = {
-    ...(name === undefined ? {} : { name }),
-    when: normalizeFilters(input.when),
-    action,
-    ...(promptTemplate === undefined ? {} : { promptTemplate }),
-  }
-  if (action === 'session') {
-    if (input.session === undefined) return base
-    const session = normalizeSession(input.session)
-    return session === undefined ? undefined : { ...base, session }
-  }
-  if (action === 'notify') {
-    if (input.notify === undefined) return base
-    const sessionId = text(isRecord(input.notify) ? input.notify.sessionId : undefined)
-    return sessionId === undefined ? undefined : { ...base, notify: { sessionId } }
-  }
-  return base
-}
-
-/** The rules, when the account wrote any; an empty list means "no rules". */
-function normalizeRules(value: unknown): readonly TriggerRule[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const rules = value.map(normalizeRule).filter((rule): rule is TriggerRule => rule !== undefined)
-  return rules.length === 0 ? undefined : rules
-}
-
-/**
- * Read a trigger the panel posted.
- *
- * A mode whose required option is missing falls back to `panel`: the message
- * still reaches the panel, and a trigger that could only ever fail is worse than
- * one the user has to switch on again. `unreadOnly` is left out when it is not a
- * boolean, which every reader of `TriggerFilters` already treats as `true`.
- * @param input - whatever the request body carried under `trigger`.
- * @returns a trigger that can be acted on.
- */
-export function normalizeTrigger(input: unknown): TriggerConfig {
-  const source = isRecord(input) ? input : {}
-  const mode: TriggerMode = named(source.mode, TRIGGER_MODES) ?? 'panel'
-  const filters = normalizeFilters(source.filters)
-  // Only carried when the account wrote one: an absent field means "use the
-  // built-in template", which is not the same as an empty one.
-  const promptTemplate = text(source.promptTemplate)
-  const prompt = promptTemplate === undefined ? {} : { promptTemplate }
-  const rules = normalizeRules(source.rules)
-  const withRules = rules === undefined ? {} : { rules }
-  // A free-standing switch, not a mode: it rides along with whichever mode runs.
-  const notifyWorkbench = source.notifyWorkbench === true ? { notifyWorkbench: true } : {}
-  if (mode === 'session') {
-    const session = normalizeSession(source.session)
-    if (session === undefined) return { mode: 'panel', filters, ...prompt, ...withRules, ...notifyWorkbench }
-    return { mode, session, filters, ...prompt, ...withRules, ...notifyWorkbench }
-  }
-  if (mode === 'notify') {
-    const sessionId = text(isRecord(source.notify) ? source.notify.sessionId : undefined)
-    if (sessionId === undefined) return { mode: 'panel', filters, ...prompt, ...withRules, ...notifyWorkbench }
-    return { mode, notify: { sessionId }, filters, ...prompt, ...withRules, ...notifyWorkbench }
-  }
-  return { mode, filters, ...prompt, ...withRules, ...notifyWorkbench }
-}
-
 /**
  * Read one account the panel posted, before it has an id.
  * @param input - whatever the request body carried under `account`.
@@ -315,7 +190,6 @@ export function normalizeAccountInput(input: unknown): { ok: true; value: Omit<M
       imapHost,
       imapPort,
       secure,
-      trigger: normalizeTrigger(input.trigger),
     },
   }
 }
@@ -381,4 +255,31 @@ export function normalizeAction(input: unknown): { ok: true; value: MailAction }
     return { ok: true, value: { op, accountId, folder, uids, targetFolder } }
   }
   return { ok: true, value: { op, accountId, folder, uids } }
+}
+
+
+/** An integer in `min`–`max`, accepting the text a number input sends. */
+function positiveInteger(value: unknown, min: number, max: number): number | undefined {
+  const numeric = typeof value === 'string' && value.trim().length > 0 ? Number(value) : value
+  return typeof numeric === 'number' && Number.isInteger(numeric) && numeric >= min && numeric <= max ? numeric : undefined
+}
+
+/**
+ * Read the Loader row's configuration.
+ *
+ * Bad fields fall back to the defaults rather than throwing: this row is YAML a
+ * person wrote by hand, and one wrong number should cost a feature rather than
+ * the plugin (the same trade `triage/config.ts` makes).
+ * @param input - whatever the Loader row carried.
+ * @returns a config with every field in its legal range.
+ */
+export function normalizeConfig(input: unknown): Config {
+  const source = isRecord(input) ? input : {}
+  return {
+    fallbackScanSeconds: positiveInteger(source['fallbackScanSeconds'], 10, 86_400) ?? DEFAULT_FALLBACK_SCAN_SECONDS,
+    maxListMessages: positiveInteger(source['maxListMessages'], 1, 5_000) ?? DEFAULT_MAX_LIST_MESSAGES,
+    imapTimeoutSeconds: positiveInteger(source['imapTimeoutSeconds'], 1, 600) ?? DEFAULT_IMAP_TIMEOUT_SECONDS,
+    // 分诊自己的字段在它的 config 里归一化；这一行只是把它接到 Loader 行上。
+    triage: normalizeTriageConfig(source['triage']),
+  }
 }

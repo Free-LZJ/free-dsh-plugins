@@ -7,9 +7,9 @@
  *
  * Two rules shape the file. First, **nothing long-lived lives in the browser
  * half** — the main panel is unmounted the moment another one is selected, so
- * connections, timers and triggers all belong here. Second, a message is handed
- * over **once**: the ledger is written before the trigger runs, so a trigger
- * that fails cannot be replayed into a second session later.
+ * connections, timers and the scan loop all belong here. Second, a message is
+ * handed over **once**: the ledger is written before the triage engine sees it,
+ * so a rule that throws cannot be replayed into a second session later.
  *
  * @module @free-lzj/dsh-mail
  */
@@ -26,25 +26,21 @@ import {
   type CredentialsLike, type ProbeFn,
 } from './accounts.ts'
 import {
-  DEFAULT_CONFIG, normalizeAccountInput, normalizeAction, normalizeDraft,
-  normalizePreferences, normalizeTrigger, senderKey, withTrustedSender,
+  normalizeAccountInput, normalizeAction, normalizeConfig, normalizeDraft,
+  normalizePreferences, senderKey, withTrustedSender,
 } from './config.ts'
 import { counterDeltas, type CounterMove } from './counters.ts'
 import {
   createConnection, imapFactoryFor, probeAccount, WATCHED_FOLDER,
   type ImapFactory, type MailConnection, type MailFlagUpdate,
 } from './imap.ts'
-import { promptBody } from './rules.ts'
+import { promptBody } from './sanitize.ts'
 import { createStore, messageKey, type MailStore } from './store.ts'
-import {
-  createTriggerer, presetChoices, resolveTrigger, triggerAvailability, workbenchAvailable,
-  type Triggerer, type TriggerHost,
-} from './trigger.ts'
 import { registerRoutes, type AttachmentPayload, type RouteHost } from './routes.ts'
+import { createTriage, type TriageEngine } from './triage/mount.ts'
 import type {
-  AccountStatus, ConsoleNoticeLike, DraftAccount, MailAccount, MailAction, MailDetail, MailReceivedPayload,
-  MailService, MailState, MailSummary, MailboxView, NormalizedMessage, PresetChoice, RouteResult, ScanCursor,
-  TriggerConfig,
+  AccountStatus, DraftAccount, MailAccount, MailAction, MailDetail, MailReceivedPayload,
+  MailService, MailState, MailSummary, MailboxView, NormalizedMessage, RouteResult, ScanCursor,
 } from './types.ts'
 
 export * from './paths.ts'
@@ -70,10 +66,11 @@ declare module '@deepseek-ai/cordis' {
     /**
      * A new message arrived on a configured account.
      *
-     * Emitted instead of acted upon: which rules exist and what they do belongs
-     * to the triage engine (`@free-lzj/dsh-mailflow`), and mail only owns "a
-     * message arrived". The dedupe ledger is written **before** this is
-     * dispatched, so a listener that throws does not cause a replay.
+     * Emitted alongside the triage engine rather than instead of it: what rules
+     * exist and what they do is this plugin's own business now (`config.triage`),
+     * and the event is for anything else that wants to see a message arrive. The
+     * dedupe ledger is written **before** this is dispatched, so a listener that
+     * throws does not cause a replay.
      */
     'mail/received'(payload: MailReceivedPayload): void
   }
@@ -149,6 +146,20 @@ function panelDocumentPath(): string {
   return existsSync(bundled) ? bundled : join(here, '..', '..', 'assets', 'panel.html')
 }
 
+/**
+ * The shipped default rules inside this package.
+ *
+ * Same two candidate roots as the panel document, for the same reason: this
+ * module is bundled at `lib/index.js` or, before bundling, at
+ * `lib/types/index.js`.
+ * @returns absolute path to the default rule file.
+ */
+function defaultRulesPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const bundled = join(here, '..', 'defaults', 'basic.yml')
+  return existsSync(bundled) ? bundled : join(here, '..', '..', 'defaults', 'basic.yml')
+}
+
 /** One account's connection state, as the panel shows it. */
 interface Status {
   readonly status: AccountStatus
@@ -159,7 +170,8 @@ interface Status {
  * Mount the mail plugin.
  * @param ctx - the Host plugin context.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, rawConfig?: unknown): void {
+  const config = normalizeConfig(rawConfig)
   const store: MailStore = createStore({ path: join(mailHome(), 'mail', 'state.json') })
   const connections = new Map<string, MailConnection>()
   const snapshots = new Map<string, MailSummary[]>()
@@ -190,33 +202,14 @@ export function apply(ctx: Context): void {
   const credentials = (): CredentialsLike | undefined =>
     ctx.get('credentials') as CredentialsLike | undefined
 
-  /**
-   * The trigger host, read fresh each time so a service that appears later is
-   * picked up. Missing services are left absent — `triggerAvailability` and the
-   * readiness gate turn that into a visible "unavailable", never a crash.
-   */
-  const triggerHost = (): TriggerHost => ({
-    permissions: ctx.get('permissionPresets'),
-    agentPresets: ctx.get('agentPresets'),
-    workspaces: ctx.get('workspaceRegistry'),
-    agents: ctx.get('agents'),
-    titles: ctx.get('sessionTitle'),
-    sessions: ctx.get('sessionController'),
-    defaultModel: ctx.get('agentDefaultModel'),
-    // Read fresh for the same reason as the rest: the workbench is an optional
-    // plugin whose Loader row may come before or after this one.
-    console: ctx.get('console') as ConsoleNoticeLike | undefined,
-    log: (message: string) => ctx.logger.info(message),
-  }) as unknown as TriggerHost
-
   /** A factory bound to one account's credentials, for the out-of-band scan path. */
   const factoryFor = (account: MailAccount, password: string): ImapFactory =>
-    imapFactoryFor(account, password, DEFAULT_CONFIG.imapTimeoutSeconds)
+    imapFactoryFor(account, password, config.imapTimeoutSeconds)
 
   const probe: ProbeFn = (draft: DraftAccount, timeoutSeconds: number) =>
     probeAccount(
       imapFactoryFor(
-        { ...draft, id: 'probe', name: draft.address, provider: 'custom', trigger: { mode: 'panel', filters: {} } },
+        { ...draft, id: 'probe', name: draft.address, provider: 'custom' },
         draft.password,
         timeoutSeconds,
       ),
@@ -417,7 +410,7 @@ export function apply(ctx: Context): void {
       factoryFor(account, password),
       account,
       password,
-      DEFAULT_CONFIG.imapTimeoutSeconds,
+      config.imapTimeoutSeconds,
       {
         onNewMail: () => void scan(account.id),
         onStateChange: (status, error) => setStatus(account.id, status, error),
@@ -519,12 +512,12 @@ export function apply(ctx: Context): void {
       const known = mailboxes.get(accountId)?.find(box => box.path === folder)?.total ?? 0
       const backfill = cursor === undefined
         || held === 0
-        || (held < DEFAULT_CONFIG.maxListMessages && known > held)
+        || (held < config.maxListMessages && known > held)
       const outcome = await connection.scan({
         folder,
         fromUid: cursor === undefined || backfill ? 1 : cursor.lastUid + 1,
         knownUidValidity: cursor?.uidValidity ?? 0,
-        maxMessages: DEFAULT_CONFIG.maxListMessages,
+        maxMessages: config.maxListMessages,
         // Re-read what is on screen: an incremental scan never revisits a UID it
         // already handed over, so a message read elsewhere would stay bold here.
         // Only this folder's rows: the pass runs against one selected mailbox, and
@@ -558,22 +551,23 @@ export function apply(ctx: Context): void {
       }
 
       if (!backfill) {
-        // Whichever engine owns triage: with `mailflow` mounted the message is
-        // emitted and this plugin is done with it; without it the account's own
-        // trigger config runs, exactly as it did before mailflow existed.
-        // Probed per pass, not once, because a Loader row may be applied later.
-        const fire = ctx.get('mailflow') === undefined ? createTriggerer(triggerHost()) : undefined
+        // 新邮件只有一个去处：分诊规则（`$DSH_HOME/mail/triage/rules.yml`）。没有规则
+        // 命中的邮件就留在面板里——「什么都不做」是一个明确的规则结果，不是一条没走通
+        // 的路。账号级 trigger 已经去掉：它与分诊重叠，而分诊开着时它根本不生效。
         for (const message of outcome.messages) {
           await handOver(message, {
             accountId,
             accountName: account.name,
-            trigger: account.trigger,
             uidValidity: outcome.uidValidity,
-            ...(fire === undefined ? {} : { fire }),
             ledger: store,
             readBody: (uid, fallback) => readBody(connection, folder, uid, fallback),
-            emit: (payload) => ctx.emit('mail/received', payload),
-            log: (line) => ctx.logger.warn(line),
+            emit: (payload) => {
+              void engine.triage(payload).catch((error: unknown) => {
+                ctx.logger.warn(`mail: 分诊「${payload.summary.subject}」失败：${describe(error)}`)
+              })
+              // 事件照发：分诊用它，但为它订阅过的别处不该因为这次合并而失联。
+              ctx.emit('mail/received', payload)
+            },
           })
         }
       }
@@ -620,7 +614,7 @@ export function apply(ctx: Context): void {
   async function loadMore(
     accountId: string,
     folder: string,
-    page = DEFAULT_CONFIG.maxListMessages,
+    page = config.maxListMessages,
   ): Promise<RouteResult> {
     const connection = connections.get(accountId)
     if (connection === undefined) {
@@ -661,32 +655,6 @@ export function apply(ctx: Context): void {
     return { ok: true, added, exhausted: rows.length < page }
   }
 
-  /**
-   * The preset lists the drawer offers, cached because `/state` is synchronous.
-   *
-   * Read once at boot and re-read whenever a pass finds them empty: a session
-   * created before the host finished mounting its registries would otherwise lock
-   * the two dropdowns shut until the plugin restarts.
-   */
-  const presetCache: { agents: PresetChoice[]; permissions: PresetChoice[] } = { agents: [], permissions: [] }
-  let refreshingPresets = false
-
-  /** Re-read both preset lists from the host; never throws. */
-  async function refreshPresets(): Promise<void> {
-    if (refreshingPresets) return
-    refreshingPresets = true
-    try {
-      const read = await presetChoices(triggerHost())
-      presetCache.agents = read.agents
-      presetCache.permissions = read.permissions
-      touch()
-    } catch (error: unknown) {
-      ctx.logger.warn(`mail: reading the preset lists failed: ${describe(error)}`)
-    } finally {
-      refreshingPresets = false
-    }
-  }
-
   /** Start every configured account and the fallback sweep that covers missed events. */
   async function boot(): Promise<void> {
     try {
@@ -695,9 +663,6 @@ export function apply(ctx: Context): void {
       ctx.logger.warn(`mail: reading the state file failed: ${describe(error)}`)
     }
     if (stopping) return
-    // Before any account connects: the drawer's two preset fields are dropdowns
-    // now, and an empty list would leave them unusable until the first pass.
-    void refreshPresets()
     for (const account of store.accounts()) {
       // Draw what was on screen last time before touching the network: after a
       // restart the cursor already points past the mailbox, so without this the
@@ -719,7 +684,7 @@ export function apply(ctx: Context): void {
     }
     fallback = setInterval(() => {
       for (const account of store.accounts()) void scan(account.id)
-    }, DEFAULT_CONFIG.fallbackScanSeconds * 1000)
+    }, config.fallbackScanSeconds * 1000)
     // Never hold the host process open on account of a mail sweep.
     fallback.unref()
   }
@@ -831,16 +796,20 @@ export function apply(ctx: Context): void {
   // there is nothing to clear by hand on unload.
   ctx.provide('mail', service)
 
-  /** Replace one account's trigger and persist the whole list. */
-  async function setTrigger(accountId: string, trigger: unknown): Promise<RouteResult> {
-    const accounts = store.accounts()
-    const account = accounts.find(candidate => candidate.id === accountId)
-    if (account === undefined) return { ok: false, code: 'account_not_found', message: `没有这个账号：${accountId}` }
-    const updated: MailAccount = { ...account, trigger: normalizeTrigger(trigger) }
-    await store.setAccounts(accounts.map(candidate => (candidate.id === accountId ? updated : candidate)))
-    return { ok: true }
-  }
-
+  /**
+   * 规则分诊：规则文件、命中记录与撤销现在都归本插件。
+   *
+   * 它拿到的邮件能力就是上面那个服务——同一个对象，所以面板里点的动作与规则打出的
+   * 动作不会变成两套实现。
+   */
+  const engine: TriageEngine = createTriage(ctx, {
+    home: join(mailHome(), 'mail'),
+    defaultRules: defaultRulesPath(),
+    config: config.triage,
+    mail: service,
+    log: (message: string) => ctx.logger.info(message),
+    warn: (message: string) => ctx.logger.warn(message),
+  })
   /** Add or replace one account, then (re)connect it. */
   async function saveAccount(input: unknown): Promise<RouteResult> {
     const record = isRecord(input) ? input : {}
@@ -848,11 +817,7 @@ export function apply(ctx: Context): void {
     if (!parsed.ok) return { ok: false, code: 'invalid_account', message: `${parsed.field}: ${parsed.message}` }
     const existing = store.accounts().find(candidate => candidate.id === parsed.value.id)
     const id = parsed.value.id ?? accountIdFor(parsed.value.address, parsed.value.provider)
-    const account: MailAccount = {
-      ...parsed.value,
-      id,
-      trigger: normalizeTrigger(isRecord(record['account']) ? record['account']['trigger'] : undefined),
-    }
+    const account: MailAccount = { ...parsed.value, id }
     const password = record['password']
     if (typeof password === 'string' && password.length > 0) {
       try {
@@ -897,9 +862,6 @@ export function apply(ctx: Context): void {
       // below — so a message read elsewhere stops being bold within about half a
       // minute instead of waiting for the fallback sweep.
       for (const account of accounts) requestScan(account.id)
-      // A drawer opened before the host answered gets its dropdowns on the next
-      // poll; the read is cheap and never blocks this answer.
-      if (presetCache.agents.length === 0) void refreshPresets()
       return {
         version: 1,
         revision,
@@ -940,13 +902,10 @@ export function apply(ctx: Context): void {
           .flatMap(([, messages]) => messages)
           .sort((left, right) => Date.parse(right.date) - Date.parse(left.date)),
         config: {
-          fallbackScanSeconds: DEFAULT_CONFIG.fallbackScanSeconds,
-          maxListMessages: DEFAULT_CONFIG.maxListMessages,
+          fallbackScanSeconds: config.fallbackScanSeconds,
+          maxListMessages: config.maxListMessages,
           maxWindowMessages: MAX_SNAPSHOT_MESSAGES,
           accounts,
-          triggerAvailability: triggerAvailability(triggerHost()),
-          workbenchAvailable: workbenchAvailable(triggerHost()),
-          presets: presetCache,
           preferences: store.preferences(),
         },
       }
@@ -1014,14 +973,7 @@ export function apply(ctx: Context): void {
               password,
             }
           }
-          return await testAccount(probe, draft, DEFAULT_CONFIG.imapTimeoutSeconds)
-        }
-        case 'setTrigger': {
-          const accountId = record['accountId']
-          if (typeof accountId !== 'string' || accountId === '') {
-            return { ok: false, code: 'invalid_account', message: 'accountId 不能为空' }
-          }
-          return await setTrigger(accountId, record['trigger'])
+          return await testAccount(probe, draft, config.imapTimeoutSeconds)
         }
         case 'setPreferences': {
           const parsed = normalizePreferences(record['preferences'])
@@ -1119,6 +1071,9 @@ export function apply(ctx: Context): void {
       if (failure !== undefined && added === 0) return failure
       return { ok: true, added, exhausted }
     },
+
+    // 分诊的读与写：规则、命中记录、撤销、试跑。
+    triage: engine.routes,
   }
 
   registerRoutes(ctx, routeHost)
@@ -1130,9 +1085,12 @@ export function apply(ctx: Context): void {
   // ordering, and it is how the routes above wait for `webServer`.
   ctx.inject(['credentials'], (scoped) => {
     scoped.effect(() => {
+      // 分诊与 IMAP 无关，但和这个插件同生共死：跟着 effect 起停。
+      void engine.start()
       void boot()
       return () => {
         stopping = true
+        engine.stop()
         if (fallback !== undefined) clearInterval(fallback)
         for (const connection of connections.values()) void connection.stop()
         connections.clear()
@@ -1144,29 +1102,17 @@ export function apply(ctx: Context): void {
 /**
  * What one hand-over needs from the scan pass.
  *
- * Passed explicitly rather than captured in a closure so the two paths — the
- * triage engine and the account's own trigger — can be driven side by side in a
- * test. That is the only way to hold the "a deployment without mailflow behaves
- * exactly as it did before" promise down.
+ * Passed explicitly rather than captured in a closure so a scan pass can be driven
+ * without an IMAP connection in a test.
  */
 export interface HandoverDeps {
   readonly accountId: string
   readonly accountName: string
-  /** The account's own trigger; read only on the fallback path. */
-  readonly trigger: TriggerConfig
   readonly uidValidity: number
-  /**
-   * The fallback triggerer, or undefined when a triage engine owns the message.
-   *
-   * Undefined is not "nothing happens": the message is emitted as
-   * `mail/received` instead, and whoever listens decides what to do with it.
-   */
-  readonly fire?: Triggerer | undefined
   /** Where "this message was already handed over" is recorded. */
   readonly ledger: Pick<MailStore, 'isTriggered' | 'markTriggered'>
   readonly readBody: (uid: number, fallback: string) => Promise<string>
   readonly emit: (payload: MailReceivedPayload) => void
-  readonly log: (message: string) => void
 }
 
 /**
@@ -1174,14 +1120,14 @@ export interface HandoverDeps {
  *
  * The ledger is written **before** anything is handed over: if the hand-over
  * fails, the message stays in the panel for the user to act on, whereas the
- * reverse order would silently drop it. That is why a mailflow listener that
- * throws never sees a message twice.
+ * reverse order would silently drop it. That is why a triage rule that throws
+ * never sees a message twice.
  *
  * The body is read lazily and at most once, whoever ends up needing it: the
  * list preview is 2 KB of headers for most mail, and a message that is decided
  * on its headers must not cost an IMAP round trip.
  * @param message - the row the scan just found.
- * @param deps - the ledger, the reader and whichever engine owns the message.
+ * @param deps - the ledger, the reader and the triage engine that owns the message.
  */
 export async function handOver(message: NormalizedMessage, deps: HandoverDeps): Promise<void> {
   const summary = message.summary
@@ -1195,27 +1141,12 @@ export async function handOver(message: NormalizedMessage, deps: HandoverDeps): 
     return body
   }
 
-  if (deps.fire === undefined) {
-    deps.emit({
-      accountId: deps.accountId,
-      accountName: deps.accountName,
-      summary,
-      readBody: read,
-    })
-    return
-  }
-
-  const resolved = await resolveTrigger(deps.trigger, summary, read)
-  // No rule claimed it, or the one that did asks for no more than a row in the
-  // list — either way nothing is handed to an agent. The workbench notice is not
-  // pushed here: `resolveTrigger` carries the switch onto `resolved`, and `fire`
-  // pushes it once. Pushing in both places is how every matched message used to
-  // arrive twice.
-  if (resolved.mode === 'panel' && resolved.notifyWorkbench !== true) return
-  const result = await deps.fire.fire(deps.accountId, resolved, summary, await read(), deps.accountName)
-  if (!result.ok) {
-    deps.log(`mail: handing ${summary.subject || '(no subject)'} to the agent failed: ${result.message}`)
-  }
+  deps.emit({
+    accountId: deps.accountId,
+    accountName: deps.accountName,
+    summary,
+    readBody: read,
+  })
 }
 
 /** Whether a parsed body is a JSON object rather than an array or a primitive. */

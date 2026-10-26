@@ -9,21 +9,26 @@ import {
   normalizeAction,
   normalizeDraft,
   normalizePreferences,
-  normalizeTrigger,
   senderKey,
   trustedSendersOf,
   withTrustedSender,
 } from '../src/config.ts'
 
-/** The trigger a request that says nothing usable ends up with. */
-const PANEL = { mode: 'panel', filters: {} }
-
 describe('DEFAULT_CONFIG', () => {
-  it('is the three constants, and the values the loader row documents', () => {
+  it('is the three constants plus the triage group, and the values the loader row documents', () => {
     expect(DEFAULT_CONFIG).toEqual({
       fallbackScanSeconds: DEFAULT_FALLBACK_SCAN_SECONDS,
       maxListMessages: DEFAULT_MAX_LIST_MESSAGES,
       imapTimeoutSeconds: DEFAULT_IMAP_TIMEOUT_SECONDS,
+      // 分诊的默认值在 `src/triage/config.ts` 里；这里只钉住接线的形状。
+      triage: {
+        enabled: true,
+        dryRun: false,
+        undoWindowSeconds: 120,
+        runHistoryLimit: 500,
+        runRetentionDays: 30,
+        repoRoot: 'D:/open',
+      },
     })
     expect([DEFAULT_FALLBACK_SCAN_SECONDS, DEFAULT_MAX_LIST_MESSAGES, DEFAULT_IMAP_TIMEOUT_SECONDS]).toEqual([300, 300, 30])
   })
@@ -66,131 +71,12 @@ describe('image preferences', () => {
   })
 })
 
-describe('normalizeTrigger', () => {
-  it('falls back to panel for anything it cannot read', () => {
-    for (const input of [undefined, null, 42, 'panel', [], { mode: 'bogus' }, { mode: 'SESSION' }, { mode: 'panel' }]) {
-      expect(normalizeTrigger(input)).toEqual(PANEL)
-    }
-  })
-
-  it('keeps the workbench notification switch as its own field, whatever the mode', () => {
-    expect(normalizeTrigger({ mode: 'panel', notifyWorkbench: true, filters: { unreadOnly: false } }))
-      .toEqual({ mode: 'panel', filters: { unreadOnly: false }, notifyWorkbench: true })
-    expect(normalizeTrigger({
-      mode: 'session',
-      session: { workspacePath: '/ws' },
-      notifyWorkbench: true,
-    })).toEqual({ mode: 'session', session: { workspacePath: '/ws' }, filters: {}, notifyWorkbench: true })
-    // Anything that is not literally `true` is off: a string from a form post
-    // must not turn notifications on.
-    expect(normalizeTrigger({ mode: 'panel', notifyWorkbench: 'yes' })).toEqual(PANEL)
-    expect(normalizeTrigger({ mode: 'panel', notifyWorkbench: false })).toEqual(PANEL)
-  })
-
-  it('refuses a session trigger whose workspace is not an absolute path', () => {
-    for (const input of [
-      { mode: 'session' },
-      { mode: 'session', session: {} },
-      { mode: 'session', session: { workspacePath: '' } },
-      { mode: 'session', session: { workspacePath: 'relative/path' } },
-      { mode: 'session', session: { workspacePath: 42 } },
-      { mode: 'session', workspacePath: '/ws' },
-    ]) {
-      expect(normalizeTrigger(input)).toEqual(PANEL)
-    }
-  })
-
-  it('keeps a session trigger whose workspace is absolute, and only the options that carry something', () => {
-    expect(normalizeTrigger({
-      mode: 'session',
-      session: { workspacePath: ' /ws/workspace ', agentPreset: ' fast ', permissionPreset: '  ', titleTemplate: 7 },
-      filters: { unreadOnly: false },
-    })).toEqual({
-      mode: 'session',
-      session: { workspacePath: '/ws/workspace', agentPreset: 'fast' },
-      filters: { unreadOnly: false },
-    })
-  })
-
-  it('refuses a notify trigger without a session id', () => {
-    for (const input of [
-      { mode: 'notify' },
-      { mode: 'notify', notify: {} },
-      { mode: 'notify', notify: { sessionId: '   ' } },
-      { mode: 'notify', notify: { sessionId: 7 } },
-    ]) {
-      expect(normalizeTrigger(input)).toEqual(PANEL)
-    }
-    expect(normalizeTrigger({ mode: 'notify', notify: { sessionId: 's-1' } }))
-      .toEqual({ mode: 'notify', notify: { sessionId: 's-1' }, filters: {} })
-  })
-
-  it('keeps a prompt template, and drops one that carries nothing', () => {
-    expect(normalizeTrigger({ promptTemplate: '  {subject}\n{body}  ' }))
-      .toEqual({ mode: 'panel', filters: {}, promptTemplate: '{subject}\n{body}' })
-    // Absent means "use the built-in template", which an empty string is not.
-    expect(normalizeTrigger({ promptTemplate: '   ' })).toEqual(PANEL)
-    expect(normalizeTrigger({ promptTemplate: 7 })).toEqual(PANEL)
-  })
-
-  it('carries the prompt template through both modes that post to a session', () => {
-    expect(normalizeTrigger({ mode: 'notify', notify: { sessionId: 's-1' }, promptTemplate: '{body}' }))
-      .toEqual({ mode: 'notify', notify: { sessionId: 's-1' }, filters: {}, promptTemplate: '{body}' })
-    expect(normalizeTrigger({ mode: 'session', session: { workspacePath: '/ws' }, promptTemplate: '{body}' }))
-      .toEqual({ mode: 'session', session: { workspacePath: '/ws' }, filters: {}, promptTemplate: '{body}' })
-    // A mode that fell back to panel still keeps it: the drawer's other fields
-    // should not be thrown away because one of them was not usable.
-    expect(normalizeTrigger({ mode: 'session', promptTemplate: '{body}' }))
-      .toEqual({ mode: 'panel', filters: {}, promptTemplate: '{body}' })
-  })
-
-  it('carries a rule list, dropping the rules it could not act on', () => {
-    const parsed = normalizeTrigger({
-      mode: 'panel',
-      rules: [
-        { name: ' ci ', when: { from: ['github'], unreadOnly: false }, action: 'session' },
-        // No workspace of its own: inherits the account's, so it stays.
-        { when: { subject: ['build'] }, action: 'session' },
-        // A session action with a relative workspace is unusable; dropping the
-        // rule is honest, downgrading it to panel would run nothing silently.
-        { when: { subject: ['x'] }, action: 'session', session: { workspacePath: 'relative' } },
-        { when: { keywords: ['refund'] }, action: 'notify', notify: { sessionId: 's-1' } },
-        { when: {}, action: 'bogus' },
-        'not a rule',
-      ],
-    })
-    expect(parsed.rules).toHaveLength(4)
-    expect(parsed.rules?.[0]).toEqual({ name: 'ci', when: { from: ['github'], unreadOnly: false }, action: 'session' })
-    expect(parsed.rules?.[1]).toEqual({ when: { subject: ['build'] }, action: 'session' })
-    expect(parsed.rules?.[2]).toEqual({ when: { keywords: ['refund'] }, action: 'notify', notify: { sessionId: 's-1' } })
-    // `bogus` is not a mode, so that rule becomes "panel" rather than vanishing.
-    expect(parsed.rules?.[3]?.action).toBe('panel')
-  })
-
-  it('leaves rules out entirely when the list is empty or not a list', () => {
-    for (const input of [{ rules: [] }, { rules: 'nope' }, { rules: [7, null] }]) {
-      expect(normalizeTrigger(input)).toEqual(PANEL)
-    }
-  })
-
-  it('cleans each filter group and believes unreadOnly only when it is a boolean', () => {
-    expect(normalizeTrigger({
-      filters: { from: [' a@x.com ', '', 7, null, 'b@x.com'], subject: 'not an array', keywords: ['  '] },
-    })).toEqual({ mode: 'panel', filters: { from: ['a@x.com', 'b@x.com'] } })
-    expect(normalizeTrigger({ filters: { unreadOnly: 'yes' } })).toEqual(PANEL)
-    expect(normalizeTrigger({ filters: { unreadOnly: true } })).toEqual({ mode: 'panel', filters: { unreadOnly: true } })
-  })
-
-  it('forgets the options of the modes it is not in', () => {
-    expect(normalizeTrigger({ mode: 'panel', session: { workspacePath: '/ws' }, notify: { sessionId: 's' } })).toEqual(PANEL)
-  })
-})
 
 describe('normalizeAccountInput', () => {
   const form = { address: ' A@x.com ', imapHost: ' imap.qq.com ', imapPort: 993, secure: true, provider: 'qq' }
 
   it('fills in what a minimal form leaves out', () => {
-    expect(normalizeAccountInput({ ...form, trigger: { mode: 'bogus' } })).toEqual({
+    expect(normalizeAccountInput(form)).toEqual({
       ok: true,
       value: {
         name: 'A@x.com',
@@ -199,7 +85,6 @@ describe('normalizeAccountInput', () => {
         imapHost: 'imap.qq.com',
         imapPort: 993,
         secure: true,
-        trigger: PANEL,
       },
     })
   })

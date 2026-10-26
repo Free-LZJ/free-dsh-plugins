@@ -180,14 +180,53 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     #dsh-mail .m-account-copy{flex:1;min-width:0}
     #dsh-mail .m-account-copy small{display:block;color:var(--mail-fg-muted)}
     #dsh-mail .m-row-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-    #dsh-mail .m-rule{border:1px solid var(--mail-line);border-radius:7px;padding:8px;margin:0 0 8px}
-    #dsh-mail .m-rule-head{display:flex;gap:6px;align-items:center;margin:0 0 6px}
-    #dsh-mail .m-rule-head input[type=text]{flex:1;min-width:0}
-    #dsh-mail .m-rule-head button{padding:2px 7px;line-height:1.2}
-    #dsh-mail .m-rule-badge{color:var(--mail-fg-muted);font-size:12px}
     #dsh-mail .m-hint{color:var(--mail-fg-muted);font-size:12px;margin:4px 0 8px}
-    #dsh-mail .m-form-result,#dsh-mail .m-trigger-result{color:var(--mail-fg-muted);font-size:12px;margin:6px 0 0;overflow-wrap:anywhere}
-    #dsh-mail .m-form-result[data-error=true],#dsh-mail .m-trigger-result[data-error=true]{color:var(--mail-danger)}
+    #dsh-mail .m-form-result{color:var(--mail-fg-muted);font-size:12px;margin:6px 0 0;overflow-wrap:anywhere}
+    #dsh-mail .m-form-result[data-error=true]{color:var(--mail-danger)}
+    /* 分诊视图：与 m-body 平级的一块，不挤进邮箱的三栏布局里。 */
+    #dsh-mail .m-triage{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--mail-surface)}
+    #dsh-mail .m-triage-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--mail-line);background:var(--mail-surface-2);font-size:12px}
+    #dsh-mail .m-triage-bar button{border:1px solid var(--mail-line-strong)}
+    #dsh-mail .m-triage-title{font-size:14px}
+    #dsh-mail .m-triage-status{margin-left:auto;color:var(--mail-fg-muted);overflow-wrap:anywhere}
+    #dsh-mail .m-triage-body{flex:1;min-height:0;overflow:auto;padding:12px 14px}
+    #dsh-mail .m-triage-card{border:1px solid var(--mail-line);border-radius:9px;padding:12px;margin:0 0 12px}
+    #dsh-mail .m-triage-card h3{margin:0 0 8px;font-size:14px}
+    #dsh-mail .m-triage-hint{color:var(--mail-fg-muted);font-size:12px;margin:4px 0 8px;overflow-wrap:anywhere}
+    #dsh-mail .m-triage-error{color:var(--mail-danger);background:var(--mail-danger-weak);border-radius:5px;padding:6px 9px;margin:0 0 10px;font-size:12px;overflow-wrap:anywhere}
+    #dsh-mail .m-triage-notice{color:var(--mail-fg-muted);background:var(--mail-surface-2);border-radius:5px;padding:6px 9px;margin:0 0 10px;font-size:12px;overflow-wrap:anywhere;white-space:pre-wrap}
+    #dsh-mail .m-triage-rule{border:1px solid var(--mail-line);border-radius:7px;margin:0 0 8px;overflow:hidden}
+    #dsh-mail .m-triage-rule-head{display:flex;gap:8px;align-items:center;width:100%;text-align:left;padding:8px 10px;border-radius:0}
+    #dsh-mail .m-triage-state{flex:0 0 auto;padding:0 7px;border:1px solid var(--mail-line-strong);border-radius:9px;color:var(--mail-idle);font-size:12px;white-space:nowrap}
+    #dsh-mail .m-triage-state[data-on=true]{color:var(--mail-ok);border-color:var(--mail-ok)}
+    #dsh-mail .m-triage-name{flex:1;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #dsh-mail .m-triage-hits{flex:0 0 auto;color:var(--mail-fg-muted);font-size:12px;white-space:nowrap}
+    #dsh-mail .m-triage-caret{flex:0 0 auto;color:var(--mail-fg-muted);font-size:12px}
+    #dsh-mail .m-triage-rule-body{padding:0 10px 10px;border-top:1px solid var(--mail-line)}
+    #dsh-mail .m-triage-when{margin:8px 0;font-size:12px;overflow-wrap:anywhere}
+    #dsh-mail .m-triage-action{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:4px 0;border-bottom:1px dashed var(--mail-line);font-size:12px}
+    #dsh-mail .m-triage-action:last-child{border-bottom:0}
+    #dsh-mail .m-triage-kind{flex:1;min-width:120px;overflow-wrap:anywhere}
+    #dsh-mail .m-triage-modes{display:flex;gap:4px;flex:0 0 auto}
+    #dsh-mail .m-triage-mode{border:1px solid var(--mail-line-strong);padding:2px 8px;font-size:12px;line-height:1.5}
+    #dsh-mail .m-triage-mode[aria-pressed=true]{background:var(--mail-selected);border-color:var(--mail-accent);color:var(--mail-accent-strong)}
+    #dsh-mail .m-triage-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:12px}
+    #dsh-mail .m-triage-tools button{border:1px solid var(--mail-line-strong);padding:3px 8px;font-size:12px}
+    #dsh-mail .m-triage-tools label{display:flex;gap:5px;align-items:center}
+    #dsh-mail .m-triage-table-wrap{overflow-x:auto}
+    #dsh-mail .m-triage-table{width:100%;border-collapse:collapse;font-size:12px}
+    #dsh-mail .m-triage-table th,#dsh-mail .m-triage-table td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid var(--mail-line);overflow-wrap:anywhere}
+    #dsh-mail .m-triage-table th{color:var(--mail-fg-muted);font-weight:500;white-space:nowrap}
+    #dsh-mail .m-triage-nowrap{white-space:nowrap}
+    #dsh-mail .m-triage-subject{font-weight:500;overflow-wrap:anywhere}
+    #dsh-mail .m-triage-from{color:var(--mail-fg-muted);overflow-wrap:anywhere}
+    #dsh-mail .m-triage-run-action{margin:0 0 2px}
+    #dsh-mail .m-triage-tag{display:inline-block;padding:0 4px;border:1px solid var(--mail-line-strong);border-radius:4px;color:var(--mail-fg-muted);font-size:11px}
+    #dsh-mail .m-triage-tag[data-failed=true]{color:var(--mail-warn);border-color:var(--mail-warn)}
+    #dsh-mail .m-triage-undone{color:var(--mail-fg-muted);font-size:12px}
+    #dsh-mail .m-triage-config{list-style:none;margin:0;padding:0;font-size:12px}
+    #dsh-mail .m-triage-config li{padding:3px 0;overflow-wrap:anywhere}
+    #dsh-mail .m-triage-undo{border:1px solid var(--mail-line-strong)}
     @media(max-width:760px){#dsh-mail .m-folders{display:none}#dsh-mail .m-list-pane{width:270px}}
   </style>
 
@@ -199,6 +238,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     <input class="m-search" type="search" placeholder="搜索发件人、主题或摘要" aria-label="搜索邮件">
     <span class="m-unread" aria-live="polite">未读 —</span>
     <button class="m-refresh" type="button">刷新</button>
+    <button class="m-triage-open" type="button" aria-expanded="false">分诊</button>
     <button class="m-settings" type="button" aria-expanded="false">⚙ 设置</button>
   </header>
   <div class="m-status" role="status">正在读取邮件…</div>
@@ -227,6 +267,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
           <label>移动到 <select class="m-move-target" aria-label="目标文件夹"></select></label>
           <button class="m-act-move" type="button">移动</button>
           <button class="m-act-delete" type="button">删除</button>
+          <button class="m-triage-test" type="button">试跑规则</button>
           <span class="m-act-result" role="status"></span>
         </div>
         <div class="m-images-note" hidden>
@@ -275,53 +316,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
         </section>
 
         <section class="m-card">
-          <h3>工作台通知</h3>
-          <p class="m-hint">与下面「收到新邮件时」的行为互不影响：开了它，每封命中过滤规则的邮件都会往工作台推一条通知（标题「新邮件 · 发件人：主题」），无论那个行为是新建会话、投递提醒还是只在面板标记。</p>
-          <label><input class="m-workbench-notify" type="checkbox"> 有新邮件时推送通知到工作台</label>
-          <p class="m-hint m-workbench-availability" hidden></p>
-          <div class="m-row-actions"><button class="m-workbench-save" type="button">保存通知设置</button></div>
-          <p class="m-workbench-result" role="status"></p>
-        </section>
-
-        <section class="m-card">
-          <h3>收到新邮件时</h3>
-          <label>账号 <select class="m-trigger-account"></select></label>
-          <label>行为
-            <select class="m-trigger-mode">
-              <option value="panel">只在面板标记（不打扰 agent）</option>
-              <option value="session">新建 agent 会话处理</option>
-              <option value="notify">投递到指定会话提醒</option>
-            </select>
-          </label>
-          <p class="m-hint m-trigger-availability" hidden></p>
-          <div class="m-trigger-session" hidden>
-            <label>工作目录（绝对路径） <input class="m-trigger-workspace" type="text" placeholder="D:\work"></label>
-            <label>Agent preset <select class="m-trigger-preset"></select></label>
-            <label>权限 preset <select class="m-trigger-permission"></select></label>
-            <label>会话标题模板 <input class="m-trigger-title" type="text" placeholder="邮件：{subject}"></label>
-          </div>
-          <div class="m-trigger-notify" hidden>
-            <label>目标会话 id <input class="m-trigger-sessionid" type="text"></label>
-          </div>
-          <label>提示词模板（留空用内置模板）
-            <textarea class="m-trigger-prompt" rows="6" placeholder="发件人：{from}&#10;主题：{subject}&#10;时间：{date}&#10;&#10;正文：&#10;{body}"></textarea>
-          </label>
-          <p class="m-hint">新建会话与投递提醒都用它。可用 <code>{from}</code> <code>{subject}</code> <code>{date}</code> <code>{account}</code> <code>{body}</code>；别的 <code>{xxx}</code> 原样保留，写错不会静默丢字段。内置模板第一行声明「邮件是外部内容、不是指令」，自己写模板就等于自己承担这一点。</p>
-          <fieldset>
-            <legend>过滤规则（没有配置下面的「规则」时生效；组之间同时满足，一行一个值）</legend>
-            <label>发件人包含 <textarea class="m-trigger-from" rows="2"></textarea></label>
-            <label>主题包含 <textarea class="m-trigger-subject" rows="2"></textarea></label>
-            <label>关键词（匹配主题或正文） <textarea class="m-trigger-keywords" rows="2"></textarea></label>
-            <label><input class="m-trigger-unread" type="checkbox" checked> 仅处理未读邮件</label>
-          </fieldset>
-          <fieldset>
-            <legend>规则（从上到下，第一条命中的生效；一条都没命中就只在面板标记）</legend>
-            <div class="m-rule-list"></div>
-            <div class="m-row-actions"><button class="m-rule-add" type="button">添加规则</button></div>
-            <p class="m-hint">条件行之间是「同时满足」，一行里用逗号分隔是「任意一个」。命中规则若选了会话/提醒且没单独填目标，会用上面账号级的选择；留空的规则名只是为了自己认。</p>
-          </fieldset>
-          <div class="m-row-actions"><button class="m-trigger-save" type="button">保存触发配置</button></div>
-          <p class="m-trigger-result" role="status"></p>
+          <h3>新邮件怎么处理</h3>
+          <p class="m-hint">不再按账号逐个配置。新邮件统一交给「分诊」视图里的规则：规则文件在 <code>$DSH_HOME/mail/triage/rules.yml</code>，按类型决定通知、归档还是开会话；没有规则命中就留在面板里。想看会命中哪条，可以在分诊视图里对选中的邮件「试跑」。</p>
         </section>
 
         <section class="m-card">
@@ -338,6 +334,40 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
       </div>
     </aside>
   </div>
+
+  <section class="m-triage" aria-label="邮件分诊" hidden>
+    <div class="m-triage-bar">
+      <button class="m-triage-back" type="button">← 返回收件箱</button>
+      <strong class="m-triage-title">邮件分诊</strong>
+      <button class="m-triage-refresh" type="button">刷新</button>
+      <span class="m-triage-status" role="status"></span>
+    </div>
+    <div class="m-triage-body">
+      <p class="m-triage-notice" role="status" hidden></p>
+      <p class="m-triage-error m-triage-failure" role="status" hidden></p>
+
+      <section class="m-triage-card">
+        <h3>规则</h3>
+        <p class="m-triage-hint">从上到下第一条命中的生效。条件与动作写在规则文件里；这里能做的是开关、动作的三态和顺序。要改条件，点「复制修改指令」把它交给 agent。</p>
+        <p class="m-triage-error m-triage-rules-error" role="status" hidden></p>
+        <p class="m-triage-hint m-triage-rules-source" hidden></p>
+        <p class="m-triage-hint m-triage-dropped" hidden></p>
+        <div class="m-triage-rules"></div>
+      </section>
+
+      <section class="m-triage-card">
+        <h3>命中记录</h3>
+        <p class="m-triage-hint m-triage-runs-empty" hidden>还没有命中记录。</p>
+        <div class="m-triage-runs"></div>
+      </section>
+
+      <section class="m-triage-card">
+        <h3>全局设置</h3>
+        <p class="m-triage-hint">只读：这几项在 Loader 行里改。</p>
+        <ul class="m-triage-config"></ul>
+      </section>
+    </div>
+  </section>
 </div>
 <script>
 /* 邮件面板：只读 /dsh-mail/state、/dsh-mail/message，写 /dsh-mail/action、/dsh-mail/config。 */
@@ -364,6 +394,14 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   for (const [name, selector] of Object.entries({
     statusDot: '.m-status-dot', accountSelect: '.m-account-select', search: '.m-search',
     unread: '.m-unread', refresh: '.m-refresh', settings: '.m-settings', status: '.m-status',
+    body: '.m-body', triageOpen: '.m-triage-open', triage: '.m-triage',
+    triageBack: '.m-triage-back', triageRefresh: '.m-triage-refresh',
+    triageStatus: '.m-triage-status', triageNotice: '.m-triage-notice',
+    triageError: '.m-triage-failure', triageRules: '.m-triage-rules',
+    triageRulesError: '.m-triage-rules-error', triageRulesSource: '.m-triage-rules-source',
+    triageDropped: '.m-triage-dropped', triageRuns: '.m-triage-runs',
+    triageRunsEmpty: '.m-triage-runs-empty', triageConfig: '.m-triage-config',
+    triageTest: '.m-triage-test',
     folders: '.m-folders', list: '.m-list', bottom: '.m-bottom', empty: '.m-empty',
     readEmpty: '.m-read-empty', readContent: '.m-read-content', subject: '.m-subject',
     date: '.m-date', from: '.m-from', addresses: '.m-addresses', readBar: '.m-read-bar',
@@ -375,12 +413,6 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     truncated: '.m-truncated', attachments: '.m-attachments',
     drawer: '.m-drawer', drawerClose: '.m-drawer-close', accountList: '.m-account-list',
     accountNew: '.m-account-new', accountForm: '.m-account-form', formResult: '.m-form-result',
-    triggerAccount: '.m-trigger-account', triggerMode: '.m-trigger-mode',
-    triggerSession: '.m-trigger-session', triggerNotify: '.m-trigger-notify',
-    triggerUnread: '.m-trigger-unread',
-    triggerResult: '.m-trigger-result',
-    notifyToggle: '.m-workbench-notify', notifySave: '.m-workbench-save',
-    notifyResult: '.m-workbench-result', notifyNote: '.m-workbench-availability',
   })) el[name] = root.querySelector(selector);
 
   const view = {
@@ -389,6 +421,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     open: null, detail: null, detailError: '', showImages: false,
     editing: null, formOpen: false, drawerSignature: '',
     loadingMore: false, loadError: '',
+    triage: { rulesData: null, runs: [], loaded: false, busy: false, error: '', notice: '', openRule: '' },
   };
   // 最近一次渲染的邮件行，按 `data-i` 下标索引（下标不会被 HTML 属性转义弄坏）。
   let rows = [];
@@ -1106,6 +1139,364 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     }
   }
 
+  /* ───────────────────────────── 分诊 ───────────────────────────── */
+
+  const MODE_LABEL = { auto: '自动', suggest: '建议', off: '关闭' };
+  const MODE_ORDER = ['auto', 'suggest', 'off'];
+  const ACTION_LABEL = {
+    markRead: '标为已读', flag: '加星标', move: '移动', archive: '归档',
+    notify: '发通知', session: '新建会话', followup: '投递到会话', script: '跑脚本', mcp: '调用 MCP', http: '发 HTTP 请求',
+  };
+  const RUN_STATUS_LABEL = { done: '已处理', partial: '部分失败', skipped: '未动作', suggested: '已建议', undone: '已撤销' };
+
+  /** 建节点：分诊这块不拼 innerHTML，用户数据一律走 textContent。 */
+  function make(tag, className, value) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (value !== undefined) node.textContent = value;
+    return node;
+  }
+
+  /** 一条条件的人话翻译；逐 kind 对齐 Host 里条件的语义。 */
+  function describeCondition(spec) {
+    const values = Array.isArray(spec.any) ? spec.any.join('、') : '';
+    switch (spec.kind) {
+      case 'from': return '发件人包含 ' + values;
+      case 'to': return '收件人或抄送包含 ' + values;
+      case 'subject': return '主题包含 ' + values;
+      case 'body': return '正文包含 ' + values;
+      case 'header': return spec.any === undefined
+        ? '带有头部 ' + String(spec.name || '')
+        : '头部 ' + String(spec.name || '') + ' 包含 ' + values;
+      case 'regex': return String(spec.field || '') + ' 匹配正则 ' + String(spec.pattern || '');
+      case 'attachment': return spec.has === false ? '没有附件' : '有附件';
+      case 'classifier': return '由模型判断类型（' + (Array.isArray(spec.labels) ? spec.labels.join('、') : '不限') + '）';
+      default: return String(spec.kind || '条件');
+    }
+  }
+
+  /** 整条规则的条件摘要：组间「且」。 */
+  function describeWhen(rule) {
+    const specs = Array.isArray(rule.when) ? rule.when : [];
+    if (specs.length === 0) return '任何邮件';
+    return specs.map(describeCondition).join(' 且 ');
+  }
+
+  /** 一个动作的说明（动作名 + 它指向的目标）。 */
+  function describeAction(action) {
+    const label = ACTION_LABEL[action.kind] || String(action.kind);
+    const target = action.folder || action.url || action.tool || action.command || action.sessionId || '';
+    return target ? label + ' → ' + String(target) : label;
+  }
+
+  function renderActionRow(action, actionIndex) {
+    const row = make('div', 'm-triage-action');
+    row.dataset.actionIndex = String(actionIndex);
+    row.append(make('span', 'm-triage-kind', describeAction(action)));
+    const modes = make('span', 'm-triage-modes');
+    const current = MODE_LABEL[action.mode] ? action.mode : 'auto';
+    for (const mode of MODE_ORDER) {
+      const choose = button(MODE_LABEL[mode], 'm-triage-mode');
+      choose.dataset.mode = mode;
+      choose.setAttribute('aria-pressed', String(current === mode));
+      choose.title = '把「' + describeAction(action) + '」设为' + MODE_LABEL[mode];
+      modes.append(choose);
+    }
+    row.append(modes);
+    return row;
+  }
+
+  function renderRuleBody(rule, index, total) {
+    const body = make('div', 'm-triage-rule-body');
+    const when = make('p', 'm-triage-when');
+    when.append(make('strong', '', '当'), text(' ' + describeWhen(rule)));
+    body.append(when);
+
+    const actions = Array.isArray(rule.then) ? rule.then : [];
+    const list = make('div', 'm-triage-actions');
+    if (actions.length === 0) list.append(make('p', 'm-triage-hint', '这条规则没有动作，只会打标签。'));
+    actions.forEach((action, actionIndex) => list.append(renderActionRow(action, actionIndex)));
+    body.append(list);
+
+    const tools = make('div', 'm-triage-tools');
+    const toggle = make('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'm-triage-enabled';
+    checkbox.checked = rule.enabled === true;
+    checkbox.setAttribute('aria-label', (rule.enabled ? '停用' : '启用') + ' ' + String(rule.name || rule.id));
+    toggle.append(checkbox, text(' 启用'));
+    const up = button('上移', 'm-triage-priority');
+    up.dataset.priority = 'up';
+    up.disabled = index === 0;
+    const down = button('下移', 'm-triage-priority');
+    down.dataset.priority = 'down';
+    down.disabled = index === total - 1;
+    tools.append(toggle, up, down, button('复制修改指令', 'm-triage-copy'));
+    body.append(tools);
+    return body;
+  }
+
+  function renderRuleRow(rule, index, total, hits) {
+    const open = view.triage.openRule === String(rule.id);
+    const row = make('div', 'm-triage-rule');
+    row.dataset.ruleId = String(rule.id);
+    const head = make('button', 'm-triage-rule-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(open));
+    const state = make('span', 'm-triage-state', rule.enabled ? '启用' : '停用');
+    state.dataset.on = String(rule.enabled === true);
+    head.append(
+      state,
+      make('span', 'm-triage-name', String(rule.name || rule.id || '（未命名）')),
+      make('span', 'm-triage-hits', '命中 ' + String(hits) + ' 次'),
+      make('span', 'm-triage-caret', open ? '▾' : '▸'),
+    );
+    row.append(head);
+    if (open) row.append(renderRuleBody(rule, index, total));
+    return row;
+  }
+
+  function renderTriageRules() {
+    const triage = view.triage;
+    const data = triage.rulesData;
+    el.triageRules.replaceChildren();
+    el.triageRulesError.hidden = true;
+    el.triageRulesSource.hidden = true;
+    el.triageDropped.hidden = true;
+    if (!data) {
+      el.triageRules.append(make('p', 'm-triage-hint', triage.error ? '规则还没读出来，看上面的错误。' : '规则还没读出来。'));
+      return;
+    }
+    if (data.error) {
+      el.triageRulesError.hidden = false;
+      el.triageRulesError.textContent = '规则文件解析失败：' + String(data.error.message || '未知错误')
+        + (data.error.line === undefined ? '' : '（第 ' + String(data.error.line) + ' 行）')
+        + '。当前仍在用上一份可用规则。';
+    }
+    if (data.source === 'default' && data.path) {
+      el.triageRulesSource.hidden = false;
+      el.triageRulesSource.textContent = '当前用的是内置默认规则；你的规则文件在：' + String(data.path);
+    }
+    if (Array.isArray(data.dropped) && data.dropped.length > 0) {
+      el.triageDropped.hidden = false;
+      el.triageDropped.textContent = '有规则因为写歪被跳过：' + data.dropped.join('；');
+    }
+    const rules = Array.isArray(data.rules) ? data.rules : [];
+    if (rules.length === 0) {
+      el.triageRules.append(make('p', 'm-triage-hint', '还没有规则。'));
+      return;
+    }
+    const counts = new Map();
+    for (const run of triage.runs) counts.set(run.ruleId, (counts.get(run.ruleId) || 0) + 1);
+    rules.forEach((rule, index) => {
+      el.triageRules.append(renderRuleRow(rule, index, rules.length, counts.get(rule.id) || 0));
+    });
+  }
+
+  function renderRunRow(run) {
+    const row = document.createElement('tr');
+    row.dataset.runId = String(run.id);
+    row.append(make('td', 'm-triage-nowrap', fmtDate(run.at)));
+    row.append(make('td', '', String(run.ruleName || run.ruleId || '—')));
+    const message = make('td');
+    const mail = run.message || {};
+    message.append(
+      make('div', 'm-triage-subject', String(mail.subject || '(无主题)')),
+      make('div', 'm-triage-from', String(mail.from || '—')),
+    );
+    row.append(message);
+
+    const result = make('td');
+    const actions = Array.isArray(run.actions) ? run.actions : [];
+    for (const action of actions) {
+      const line = make('div', 'm-triage-run-action');
+      const tag = make('span', 'm-triage-tag', String(action.kind));
+      tag.dataset.failed = String(action.ok !== true);
+      line.append(tag, text(' ' + String(action.detail || '')));
+      result.append(line);
+    }
+    if (actions.length === 0) {
+      result.append(make('span', 'm-triage-tag', RUN_STATUS_LABEL[run.status] || String(run.status || '—')));
+    }
+    row.append(result);
+
+    const undo = make('td', 'm-triage-nowrap');
+    if (run.status === 'undone') undo.append(make('span', 'm-triage-undone', '已撤销'));
+    else {
+      const action = button('撤销', 'm-triage-undo');
+      action.dataset.runId = String(run.id);
+      undo.append(action);
+    }
+    row.append(undo);
+    return row;
+  }
+
+  function renderTriageRuns() {
+    const triage = view.triage;
+    el.triageRuns.replaceChildren();
+    el.triageRunsEmpty.hidden = triage.runs.length > 0;
+    if (triage.runs.length === 0) {
+      el.triageRunsEmpty.textContent = triage.loaded ? '还没有命中记录。' : '正在读取命中记录…';
+      return;
+    }
+    const wrap = make('div', 'm-triage-table-wrap');
+    const table = make('table', 'm-triage-table');
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const label of ['时间', '规则', '邮件', '动作结果', '']) headRow.append(make('th', '', label));
+    head.append(headRow);
+    table.append(head);
+    const body = document.createElement('tbody');
+    for (const run of triage.runs) body.append(renderRunRow(run));
+    table.append(body);
+    wrap.append(table);
+    el.triageRuns.append(wrap);
+  }
+
+  function renderTriageConfig() {
+    el.triageConfig.replaceChildren();
+    const data = view.triage.rulesData;
+    if (!data || !data.config) {
+      el.triageConfig.append(make('li', 'm-triage-hint', '全局设置还没读出来。'));
+      return;
+    }
+    const config = data.config;
+    const rows = [
+      ['总开关', config.enabled ? '已开启' : '已关闭'],
+      ['试运行（dryRun）', config.dryRun ? '是：只记录，不动邮件' : '否：按规则执行'],
+      ['撤销窗口', String(config.undoWindowSeconds) + ' 秒'],
+      ['仓库根目录', String(config.repoRoot || '（未配置）')],
+    ];
+    for (const [name, value] of rows) {
+      const item = document.createElement('li');
+      item.append(make('strong', '', name + '：'), text(value));
+      el.triageConfig.append(item);
+    }
+  }
+
+  function renderTriage() {
+    const triage = view.triage;
+    el.triageStatus.textContent = triage.busy ? '正在读取分诊数据…' : '';
+    el.triageRefresh.disabled = triage.busy;
+    el.triageNotice.hidden = triage.notice === '';
+    el.triageNotice.textContent = triage.notice;
+    el.triageError.hidden = triage.error === '';
+    el.triageError.textContent = triage.error;
+    renderTriageRules();
+    renderTriageRuns();
+    renderTriageConfig();
+  }
+
+  /** 读规则与命中记录；哪一边失败都在错误行里点名，不静默。 */
+  async function loadTriage() {
+    if (view.triage.busy) return;
+    view.triage.busy = true;
+    view.triage.error = '';
+    renderTriage();
+    const problems = [];
+    try {
+      view.triage.rulesData = await request('/dsh-mail/triage/rules');
+    } catch (error) {
+      problems.push('规则：' + message(error));
+    }
+    try {
+      const payload = await request('/dsh-mail/triage/runs');
+      view.triage.runs = payload && Array.isArray(payload.runs) ? payload.runs : [];
+    } catch (error) {
+      problems.push('命中记录：' + message(error));
+    }
+    view.triage.loaded = true;
+    view.triage.busy = false;
+    if (problems.length > 0) view.triage.error = '读取分诊数据失败（' + problems.join('；') + '）';
+    renderTriage();
+  }
+
+  /** 打开/收起分诊：用 hidden 在两块主区域之间切换，不动 m-body 自己的布局。 */
+  async function openTriage(open) {
+    el.triage.hidden = !open;
+    el.body.hidden = open;
+    el.status.hidden = open;
+    el.triageOpen.setAttribute('aria-expanded', String(open));
+    if (open) await loadTriage();
+  }
+
+  /** 跑一个写请求，成功后重新读一遍；失败把原因写进错误行。 */
+  let triageSeq = 0;
+
+  async function triageWrite(url, payload, done) {
+    // 连点几个按钮时，先发的那次可能后回来；只让最后一次的结果说话。
+    const seq = ++triageSeq;
+    view.triage.error = '';
+    view.triage.notice = '正在保存…';
+    renderTriage();
+    try {
+      await write(url, payload);
+    } catch (error) {
+      if (seq !== triageSeq) return;
+      view.triage.notice = '';
+      view.triage.error = '操作失败：' + message(error);
+      renderTriage();
+      return;
+    }
+    await loadTriage();
+    if (seq !== triageSeq) return;
+    view.triage.notice = done;
+    renderTriage();
+  }
+
+  /** 复制一条规则的修改指令；剪贴板不可用时把原文显示出来。 */
+  async function copyFix(ruleId) {
+    const seq = ++triageSeq;
+    const data = view.triage.rulesData;
+    const rule = data && Array.isArray(data.rules) ? data.rules.find((one) => one.id === ruleId) : undefined;
+    if (!rule) {
+      view.triage.notice = '找不到这条规则，先刷新一下。';
+      renderTriage();
+      return;
+    }
+    const snippet = JSON.stringify({ id: rule.id, when: rule.when, then: rule.then }, null, 2);
+    const instruction = '请修改 ' + String(data.path || '') + ' 里 id 为 ' + String(rule.id) + ' 的这条规则。当前定义：\n' + snippet;
+    let notice;
+    try {
+      await navigator.clipboard.writeText(instruction);
+      notice = '修改指令已复制到剪贴板。';
+    } catch {
+      // 没有剪贴板权限／非安全上下文时退化成显示原文，而不是静默失败。
+      notice = instruction;
+    }
+    if (seq !== triageSeq) return;
+    view.triage.notice = notice;
+    renderTriage();
+  }
+
+  /** 拿当前打开的邮件试跑规则：只问 Host 会做什么，不改邮件。 */
+  async function testTriage() {
+    if (!view.open) {
+      setResult(el.actResult, '先在左侧选择一封邮件。', true);
+      return;
+    }
+    el.triageTest.disabled = true;
+    setResult(el.actResult, '正在试跑规则…（需要模型判类时要等一会儿）', false);
+    try {
+      const result = await write('/dsh-mail/triage/test', {
+        accountId: view.open.accountId, folder: view.open.folder, uid: view.open.uid,
+      });
+      const actions = result && Array.isArray(result.actions) ? result.actions : [];
+      const lines = [result && result.ruleName ? '命中规则：' + result.ruleName : '没有命中任何规则'];
+      if (actions.length > 0) {
+        lines.push('将执行：' + actions.map((one) =>
+          String(one.kind) + (one.detail ? '（' + String(one.detail) + '）' : '')).join('、'));
+      }
+      if (result && result.reason) lines.push('原因：' + String(result.reason));
+      setResult(el.actResult, lines.join(' ｜ '), false);
+    } catch (error) {
+      setResult(el.actResult, '试跑失败：' + message(error), true);
+    } finally {
+      el.triageTest.disabled = false;
+    }
+  }
+
   /* ───────────────────────────── 设置抽屉 ───────────────────────────── */
 
   const field = (name) => el.accountForm.querySelector('[name="' + name + '"]');
@@ -1171,184 +1562,6 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     }).join('');
   }
 
-  function syncTriggerAccounts() {
-    const accounts = view.data ? view.data.config.accounts : [];
-    const previous = el.triggerAccount.value;
-    el.triggerAccount.innerHTML = accounts.map((one) =>
-      '<option value="' + esc(one.id) + '">' + esc(one.name || one.address) + '</option>').join('');
-    if (accounts.some((one) => one.id === previous)) el.triggerAccount.value = previous;
-    return el.triggerAccount.value;
-  }
-
-  const lines = (value) => value.split('\n').map((line) => line.trim()).filter(Boolean);
-
-  function loadTrigger() {
-    const account = (view.data ? view.data.config.accounts : []).find((one) => one.id === el.triggerAccount.value);
-    const trigger = account ? account.trigger : { mode: 'panel', filters: { unreadOnly: true } };
-    const presets = (view.data && view.data.config && view.data.config.presets) || { agents: [], permissions: [] };
-    el.triggerMode.value = trigger.mode;
-    root.querySelector('.m-trigger-workspace').value = (trigger.session && trigger.session.workspacePath) || '';
-    fillPresetSelect(root.querySelector('.m-trigger-preset'), presets.agents, (trigger.session && trigger.session.agentPreset) || '', '（用部署默认）');
-    fillPresetSelect(root.querySelector('.m-trigger-permission'), presets.permissions, (trigger.session && trigger.session.permissionPreset) || '', '（用部署默认）');
-    root.querySelector('.m-trigger-title').value = (trigger.session && trigger.session.titleTemplate) || '';
-    root.querySelector('.m-trigger-sessionid').value = (trigger.notify && trigger.notify.sessionId) || '';
-    root.querySelector('.m-trigger-prompt').value = trigger.promptTemplate || '';
-    renderRules(trigger.rules || []);
-    root.querySelector('.m-trigger-from').value = (trigger.filters.from || []).join('\n');
-    root.querySelector('.m-trigger-subject').value = (trigger.filters.subject || []).join('\n');
-    root.querySelector('.m-trigger-keywords').value = (trigger.filters.keywords || []).join('\n');
-    el.triggerUnread.checked = trigger.filters.unreadOnly !== false;
-    el.notifyToggle.checked = trigger.notifyWorkbench === true;
-    el.triggerResult.textContent = '';
-    el.notifyResult.textContent = '';
-    delete el.triggerResult.dataset.error;
-    delete el.notifyResult.dataset.error;
-    syncTriggerMode();
-    syncWorkbenchAvailability();
-  }
-
-  /** 没装工作台时开关不可用，并说明为什么——而不是让人打开一个永远不报错的开关。 */
-  function syncWorkbenchAvailability() {
-    const available = view.data ? view.data.config.workbenchAvailable !== false : true;
-    el.notifyToggle.disabled = !available;
-    if (!available) el.notifyToggle.checked = false;
-    el.notifySave.disabled = !available;
-    el.notifyNote.hidden = available;
-    el.notifyNote.textContent = available ? '' : '未安装工作台（@free-lzj/dsh-console），通知没有地方可送，开关不可用。';
-  }
-
-  /** 部署缺哪个服务，就把对应模式标灰并说明，而不是等保存时才失败。 */
-  /**
-   * 把 preset 列表填进下拉。
-   *
-   * 第一项永远代表「用部署默认」，因为留空是合法且推荐的用法；当前保存的值如果
-   * 已经不在列表里（preset 被删、或旧版手填的名字），也补一项出来 —— 否则下次
-   * 保存会把它悄悄改成别的。加载失败的 preset 照常列出但标注，藏起来只会让人
-   * 以为它从没存在过。
-   */
-  function fillPresetSelect(select, choices, current, fallbackLabel) {
-    const rows = [{ value: '', label: fallbackLabel }].concat(choices || []);
-    if (current && !rows.some((one) => one.value === current)) rows.push({ value: current, label: current + '（不在当前列表）' });
-    select.innerHTML = rows.map((one) => {
-      const label = one.broken ? one.label + '（不可用）' : one.label;
-      const title = one.description || one.broken || '';
-      return '<option value="' + esc(one.value) + '"' + (one.value === current ? ' selected' : '') +
-        (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + '</option>';
-    }).join('');
-  }
-
-  function syncTriggerAvailability() {
-    const availability = (view.data && view.data.config.triggerAvailability) || { session: true, notify: true };
-    const note = root.querySelector('.m-trigger-availability');
-    // 缺省按「可用」算：旧版 Host 的 /state 里可能还没有这一项，灰掉一个其实
-    // 能用的模式，比多出一个选项更糟。
-    const LABELS = { session: '新建会话', notify: '投递提醒' };
-    const missing = [];
-    for (const option of el.triggerMode.querySelectorAll('option')) {
-      const available = option.value === 'panel' || availability[option.value] === true;
-      option.disabled = !available;
-      if (!available) missing.push(LABELS[option.value] || option.value);
-    }
-    note.hidden = missing.length === 0;
-    note.textContent = missing.length
-      ? '当前 dsh 部署缺少「' + missing.join('」「') + '」需要的服务，这些模式不可选。'
-      : '';
-  }
-
-  function syncTriggerMode() {
-    el.triggerSession.hidden = el.triggerMode.value !== 'session';
-    el.triggerNotify.hidden = el.triggerMode.value !== 'notify';
-  }
-
-  /** 规则里能选的动作；与 Host 的 TriggerMode 一一对应。 */
-  const RULE_ACTIONS = [['panel', '只在面板标记'], ['session', '新建会话'], ['notify', '投递提醒']];
-
-  /** 一个条件行里用逗号（中英文都收）分隔「任意一个」。 */
-  function splitValues(value) {
-    return value.split(/[,，]/).map((one) => one.trim()).filter(Boolean);
-  }
-
-  function renderRule(rule) {
-    const when = rule.when || {};
-    const action = rule.action || 'panel';
-    return '<div class="m-rule" data-rule>' +
-      '<div class="m-rule-head">' +
-      '<input class="m-rule-name" type="text" placeholder="规则名（可选）" value="' + esc(rule.name || '') + '">' +
-      '<select class="m-rule-action">' +
-      RULE_ACTIONS.map(([value, label]) => '<option value="' + value + '"' + (action === value ? ' selected' : '') + '>' + label + '</option>').join('') +
-      '</select>' +
-      '<button type="button" data-rule-up title="上移">↑</button>' +
-      '<button type="button" data-rule-down title="下移">↓</button>' +
-      '<button type="button" data-rule-remove title="删除">✕</button>' +
-      '</div>' +
-      '<label>发件人包含 <input class="m-rule-from" type="text" placeholder="逗号分隔，任一命中" value="' + esc((when.from || []).join(', ')) + '"></label>' +
-      '<label>主题包含 <input class="m-rule-subject" type="text" value="' + esc((when.subject || []).join(', ')) + '"></label>' +
-      '<label>关键词（主题或正文） <input class="m-rule-keywords" type="text" value="' + esc((when.keywords || []).join(', ')) + '"></label>' +
-      '<label><input class="m-rule-unread" type="checkbox"' + (when.unreadOnly === false ? '' : ' checked') + '> 仅未读</label>' +
-      '</div>';
-  }
-
-  /** 只有一条规则时上下移没有意义，灰掉省得点。 */
-  function syncRuleOrder() {
-    const rows = [...root.querySelectorAll('[data-rule]')];
-    rows.forEach((row, index) => {
-      row.querySelector('[data-rule-up]').disabled = index === 0;
-      row.querySelector('[data-rule-down]').disabled = index === rows.length - 1;
-    });
-  }
-
-  function renderRules(rules) {
-    const list = root.querySelector('.m-rule-list');
-    list.innerHTML = rules.length === 0
-      ? '<p class="m-hint">没有规则：按上面的「行为」处理所有命中「过滤规则」的邮件。</p>'
-      : rules.map(renderRule).join('');
-    syncRuleOrder();
-  }
-
-  function rulesFromForm() {
-    return [...root.querySelectorAll('[data-rule]')].map((row) => {
-      const when = {};
-      const from = splitValues(row.querySelector('.m-rule-from').value);
-      const subject = splitValues(row.querySelector('.m-rule-subject').value);
-      const keywords = splitValues(row.querySelector('.m-rule-keywords').value);
-      if (from.length) when.from = from;
-      if (subject.length) when.subject = subject;
-      if (keywords.length) when.keywords = keywords;
-      // 默认「仅未读」，只有明确取消才写 false，免得把默认值也存一遍。
-      if (!row.querySelector('.m-rule-unread').checked) when.unreadOnly = false;
-      const rule = { when, action: row.querySelector('.m-rule-action').value };
-      const name = row.querySelector('.m-rule-name').value.trim();
-      if (name) rule.name = name;
-      return rule;
-    });
-  }
-
-  function triggerFromForm() {
-    const filters = { unreadOnly: el.triggerUnread.checked };
-    const from = lines(root.querySelector('.m-trigger-from').value);
-    const subject = lines(root.querySelector('.m-trigger-subject').value);
-    const keywords = lines(root.querySelector('.m-trigger-keywords').value);
-    if (from.length) filters.from = from;
-    if (subject.length) filters.subject = subject;
-    if (keywords.length) filters.keywords = keywords;
-    const trigger = { mode: el.triggerMode.value, filters };
-    const prompt = root.querySelector('.m-trigger-prompt').value.trim();
-    if (prompt) trigger.promptTemplate = prompt;
-    const rules = rulesFromForm();
-    if (rules.length) trigger.rules = rules;
-    if (trigger.mode === 'session') {
-      const session = { workspacePath: root.querySelector('.m-trigger-workspace').value.trim() };
-      const preset = root.querySelector('.m-trigger-preset').value.trim();
-      const permission = root.querySelector('.m-trigger-permission').value.trim();
-      const title = root.querySelector('.m-trigger-title').value.trim();
-      if (preset) session.agentPreset = preset;
-      if (permission) session.permissionPreset = permission;
-      if (title) session.titleTemplate = title;
-      trigger.session = session;
-    }
-    if (trigger.mode === 'notify') trigger.notify = { sessionId: root.querySelector('.m-trigger-sessionid').value.trim() };
-    return trigger;
-  }
 
   /** 账号集合或图片偏好变了才重建列表，免得正在输入的表单被轮询清掉。 */
   function syncDrawer() {
@@ -1359,9 +1572,6 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     if (signature === view.drawerSignature) return;
     view.drawerSignature = signature;
     renderAccountList();
-    syncTriggerAccounts();
-    loadTrigger();
-    syncTriggerAvailability();
     renderPreferences();
   }
 
@@ -1377,7 +1587,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     if (invalid) { el.formResult.dataset.error = 'true'; el.formResult.textContent = invalid; return; }
     const password = field('password').value;
     const payload = view.editing
-      ? { op: 'updateAccount', account: Object.assign({ id: view.editing.id, trigger: view.editing.trigger }, account) }
+      ? { op: 'updateAccount', account: Object.assign({ id: view.editing.id }, account) }
       : { op: 'addAccount', account: account };
     if (password) payload.password = password;
     el.formResult.textContent = '正在保存…';
@@ -1418,63 +1628,8 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     }
   }
 
-  async function saveTrigger() {
-    if (!el.triggerAccount.value) return;
-    const trigger = triggerFromForm();
-    // 通知开关与所选行为无关，保存时要一并带上，否则会被 Host 归一化丢掉。
-    trigger.notifyWorkbench = el.notifyToggle.checked === true;
-    if (trigger.mode === 'session' && !trigger.session.workspacePath) {
-      el.triggerResult.dataset.error = 'true';
-      el.triggerResult.textContent = '新建会话必须填工作目录（绝对路径）。';
-      return;
-    }
-    if (trigger.mode === 'notify' && !trigger.notify.sessionId) {
-      el.triggerResult.dataset.error = 'true';
-      el.triggerResult.textContent = '投递提醒必须填目标会话 id。';
-      return;
-    }
-    el.triggerResult.textContent = '正在保存…';
-    delete el.triggerResult.dataset.error;
-    try {
-      await write('/dsh-mail/config', { op: 'setTrigger', accountId: el.triggerAccount.value, trigger: trigger });
-      el.triggerResult.textContent = '已保存。';
-      view.drawerSignature = '';
-      await load();
-    } catch (error) {
-      el.triggerResult.dataset.error = 'true';
-      el.triggerResult.textContent = message(error);
-    }
-  }
-
   /* ───────────────────────────── 事件 ───────────────────────────── */
 
-  async function saveNoticeSetting() {
-    if (!el.triggerAccount.value) return;
-    // 这一张卡只改开关：其余字段取表单里当前的值，保证不会被默认值覆盖。
-    const trigger = triggerFromForm();
-    trigger.notifyWorkbench = el.notifyToggle.checked === true;
-    if (trigger.mode === 'session' && !trigger.session.workspacePath) {
-      el.notifyResult.dataset.error = 'true';
-      el.notifyResult.textContent = '下面的「收到新邮件时」填了新建会话但没填工作目录，先补上再保存。';
-      return;
-    }
-    if (trigger.mode === 'notify' && !trigger.notify.sessionId) {
-      el.notifyResult.dataset.error = 'true';
-      el.notifyResult.textContent = '下面的「收到新邮件时」填了投递提醒但没填目标会话 id，先补上再保存。';
-      return;
-    }
-    el.notifyResult.textContent = '正在保存…';
-    delete el.notifyResult.dataset.error;
-    try {
-      await write('/dsh-mail/config', { op: 'setTrigger', accountId: el.triggerAccount.value, trigger: trigger });
-      el.notifyResult.textContent = trigger.notifyWorkbench ? '已开启：新邮件会推送到工作台。' : '已关闭工作台通知。';
-      view.drawerSignature = '';
-      await load();
-    } catch (error) {
-      el.notifyResult.dataset.error = 'true';
-      el.notifyResult.textContent = message(error);
-    }
-  }
 
   el.status.addEventListener('click', (event) => { if (event.target.closest('.m-retry')) load(); });
   el.empty.addEventListener('click', (event) => {
@@ -1609,29 +1764,65 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
     view.editing = null;
     el.accountForm.hidden = true;
   });
-  el.triggerAccount.addEventListener('change', loadTrigger);
-  el.triggerMode.addEventListener('change', syncTriggerMode);
-  el.notifySave.addEventListener('click', saveNoticeSetting);
-  root.querySelector('.m-trigger-save').addEventListener('click', saveTrigger);
 
-  /** 规则列表是动态渲染的，事件挂在容器上，行里的按钮只管自己那一行。 */
-  root.querySelector('.m-rule-add').addEventListener('click', () => {
-    const list = root.querySelector('.m-rule-list');
-    // 空列表时那块是「没有规则」的提示，加第一条之前得先清掉。
-    if (!list.querySelector('[data-rule]')) list.innerHTML = '';
-    list.insertAdjacentHTML('beforeend', renderRule({ action: el.triggerMode.value === 'panel' ? 'session' : el.triggerMode.value }));
-    syncRuleOrder();
+  /* ── 分诊的事件 ── */
+  el.triageOpen.addEventListener('click', () => { void openTriage(el.triage.hidden); });
+  el.triageBack.addEventListener('click', () => { void openTriage(false); });
+  el.triageRefresh.addEventListener('click', () => { void loadTriage(); });
+  el.triageTest.addEventListener('click', () => { void testTriage(); });
+
+  /** 规则列表是动态渲染的：事件挂容器上，按最近的 data-* 找自己那一行。 */
+  el.triageRules.addEventListener('click', (event) => {
+    const head = event.target.closest('.m-triage-rule-head');
+    if (head) {
+      const row = head.closest('[data-rule-id]');
+      if (!row) return;
+      const id = row.dataset.ruleId;
+      view.triage.openRule = view.triage.openRule === id ? '' : id;
+      renderTriageRules();
+      return;
+    }
+    const copy = event.target.closest('.m-triage-copy');
+    if (copy) {
+      const row = copy.closest('[data-rule-id]');
+      if (row) void copyFix(row.dataset.ruleId);
+      return;
+    }
+    const priority = event.target.closest('[data-priority]');
+    if (priority) {
+      const row = priority.closest('[data-rule-id]');
+      if (!row) return;
+      void triageWrite('/dsh-mail/triage/rules/priority',
+        { ruleId: row.dataset.ruleId, direction: priority.dataset.priority }, '已调整规则顺序。');
+      return;
+    }
+    const mode = event.target.closest('.m-triage-mode');
+    if (mode) {
+      const action = mode.closest('[data-action-index]');
+      const row = mode.closest('[data-rule-id]');
+      if (!action || !row) return;
+      void triageWrite('/dsh-mail/triage/rules/mode', {
+        ruleId: row.dataset.ruleId, actionIndex: Number(action.dataset.actionIndex), mode: mode.dataset.mode,
+      }, '已更新动作模式。');
+    }
   });
 
-  root.querySelector('.m-rule-list').addEventListener('click', (event) => {
-    const button = event.target.closest('button');
-    const row = button ? button.closest('[data-rule]') : null;
-    if (!button || !row) return;
-    if (button.matches('[data-rule-remove]')) row.remove();
-    else if (button.matches('[data-rule-up]') && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
-    else if (button.matches('[data-rule-down]') && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
-    else return;
-    syncRuleOrder();
+  el.triageRules.addEventListener('change', (event) => {
+    const toggle = event.target.closest('.m-triage-enabled');
+    if (!toggle) return;
+    const row = toggle.closest('[data-rule-id]');
+    if (!row) return;
+    void triageWrite('/dsh-mail/triage/rules/enabled',
+      { ruleId: row.dataset.ruleId, enabled: toggle.checked === true },
+      toggle.checked ? '已启用这条规则。' : '已停用这条规则。');
+  });
+
+  el.triageRuns.addEventListener('click', (event) => {
+    const undo = event.target.closest('.m-triage-undo');
+    if (!undo) return;
+    const row = undo.closest('[data-run-id]');
+    if (!row) return;
+    void triageWrite('/dsh-mail/triage/undo', { runId: row.dataset.runId }, '已撤销这次动作。');
   });
 
   // 面板切走时整个文档连同这个定时器一起销毁；隐藏时跳过，避免后台空转。

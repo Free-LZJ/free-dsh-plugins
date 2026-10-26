@@ -35,7 +35,6 @@ function account(id: string, address: string): MailAccount {
     imapHost: 'imap.qq.com',
     imapPort: 993,
     secure: true,
-    trigger: { mode: 'panel', filters: {} },
   }
 }
 

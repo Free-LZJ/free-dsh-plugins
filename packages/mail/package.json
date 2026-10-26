@@ -1,7 +1,7 @@
 {
   "name": "@free-lzj/dsh-mail",
   "version": "0.3.0",
-  "description": "Mail for DSH: an inbox panel over IMAP (QQ / Gmail) that reads, searches and triages your inbox, and hands a new message to an agent session when you ask it to",
+  "description": "Mail for DSH: an inbox panel over IMAP (QQ / Gmail) that reads and searches your inbox, and a rule engine that triages what arrives — GitHub notices open a session in the repository they name, promotions get filed away",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Free-LZJ/free-dsh-plugins.git",
@@ -31,6 +31,8 @@
     "lib/client.js",
     "lib/types/**/*.d.ts",
     "assets/panel.html",
+    "defaults/basic.yml",
+    "presets/*.patch.yml",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -47,11 +49,18 @@
     "email",
     "imap",
     "qq-mail",
-    "gmail"
+    "gmail",
+    "triage",
+    "rules",
+    "automation"
   ],
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": [
+        "./cordis.patch.yml",
+        "./presets/github.patch.yml",
+        "./presets/jira.patch.yml"
+      ]
     },
     "client": {
       "platform": "web",
@@ -70,7 +79,8 @@
   },
   "dependencies": {
     "imapflow": "^2.5.0",
-    "mailparser": "^3.9.0"
+    "mailparser": "^3.9.0",
+    "yaml": "^2.8.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.3",

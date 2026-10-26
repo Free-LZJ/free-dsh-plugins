@@ -17,6 +17,8 @@ import {
 } from '../src/routes.ts'
 import {
   ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
+  TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
+  TRIAGE_TEST_PATH, TRIAGE_UNDO_PATH,
 } from '../src/paths.ts'
 import type { MailState, RouteResult } from '../src/types.ts'
 
@@ -122,8 +124,6 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
       messages: [],
       config: {
         fallbackScanSeconds: 300, maxListMessages: 100, maxWindowMessages: 2000, accounts: [],
-        triggerAvailability: { session: false, notify: false }, workbenchAvailable: true,
-        presets: { agents: [], permissions: [] },
         preferences: { loadRemoteImages: true, trustedSenders: [] },
       },
     }),
@@ -134,6 +134,18 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
     config: async () => ok,
     refresh: async () => ok,
     more: async () => ok,
+    triage: {
+      rules: async () => ({
+        rules: [], source: 'default', path: '/tmp/rules.yml', raw: '', dropped: [],
+        config: { enabled: true, dryRun: false, undoWindowSeconds: 120, runHistoryLimit: 500, runRetentionDays: 30, repoRoot: 'D:/open' },
+      }),
+      setEnabled: async () => ({ ok: true }),
+      setMode: async () => ({ ok: true }),
+      movePriority: async () => ({ ok: true }),
+      runs: async () => ({ runs: [] }),
+      undo: async () => ({ ok: true }),
+      test: async () => ({ ruleId: '(none)', ruleName: '没有规则命中', actions: [], reason: '' }),
+    },
     ...overrides,
   }
 }
@@ -196,10 +208,14 @@ describe('reading a body', () => {
 describe('the registered routes', () => {
   it('registers exactly the paths the panel uses, all as exact routes', () => {
     const { routes } = mounted()
-    for (const path of [PANEL_PATH, STATE_PATH, MESSAGE_PATH, ATTACHMENT_PATH, ACTION_PATH, CONFIG_PATH, REFRESH_PATH, MORE_PATH]) {
+    for (const path of [
+      PANEL_PATH, STATE_PATH, MESSAGE_PATH, ATTACHMENT_PATH, ACTION_PATH, CONFIG_PATH, REFRESH_PATH, MORE_PATH,
+      TRIAGE_RULES_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH,
+      TRIAGE_RUNS_PATH, TRIAGE_UNDO_PATH, TRIAGE_TEST_PATH,
+    ]) {
       expect(routes.has(path)).toBe(true)
     }
-    expect(routes.size).toBe(8)
+    expect(routes.size).toBe(15)
   })
 
   it('runs an older page through the same mutation guards as a refresh', async () => {

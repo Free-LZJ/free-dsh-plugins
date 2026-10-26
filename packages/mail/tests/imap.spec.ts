@@ -251,7 +251,6 @@ function accountOf(): MailAccount {
     imapHost: 'imap.example.com',
     imapPort: 993,
     secure: true,
-    trigger: { mode: 'panel', filters: {} },
   }
 }
 
@@ -684,7 +683,6 @@ describe('createConnection actions', () => {
     { op: 'flag', accountId: 'acct', folder: 'INBOX', uids: [4, 9], method: 'messageFlagsAdd', args: [[4, 9], ['\\Flagged'], { uid: true }] },
     { op: 'unflag', accountId: 'acct', folder: 'INBOX', uids: [4, 9], method: 'messageFlagsRemove', args: [[4, 9], ['\\Flagged'], { uid: true }] },
     { op: 'delete', accountId: 'acct', folder: 'INBOX', uids: [4, 9], method: 'messageDelete', args: [[4, 9], { uid: true }] },
-    { op: 'move', accountId: 'acct', folder: 'INBOX', uids: [4, 9], targetFolder: 'Trash', method: 'messageMove', args: [[4, 9], 'Trash', { uid: true }] },
   ]
 
   for (const action of actions) {
@@ -704,6 +702,29 @@ describe('createConnection actions', () => {
       expect(callsTo(fake, 'release').length - releases).toBe(1)
     })
   }
+
+  it('moves one UID per command, because the server refuses a batch', async () => {
+    const { fake, connection } = await connected()
+    const result = await connection.applyAction({ op: 'move', accountId: 'acct', folder: 'INBOX', uids: [4, 9], targetFolder: 'Trash' })
+
+    expect(result).toEqual({ ok: true, applied: 2 })
+    // A multi-UID `UID MOVE` is refused by the server and leaves the mail where it
+    // was, so the batch never goes out as one command.
+    expect(callsTo(fake, 'messageMove').map(call => call.args)).toEqual([
+      ['4', 'Trash', { uid: true }],
+      ['9', 'Trash', { uid: true }],
+    ])
+  })
+
+  it('reports a refused move instead of claiming the batch landed', async () => {
+    const { fake, connection } = await connected({ refuseWrites: true })
+
+    const result = await connection.applyAction({ op: 'move', accountId: 'acct', folder: 'INBOX', uids: [4, 9], targetFolder: 'Trash' })
+
+    expect(result.ok).toBe(false)
+    // The first refusal stops the run: nothing after it is sent.
+    expect(callsTo(fake, 'messageMove')).toHaveLength(1)
+  })
 
   it('scans on the connection it already has instead of opening another', async () => {
     const fake = makeFake({ mailbox: [1, 2] })

@@ -1290,8 +1290,18 @@ export function createConnection(
             // Sets `\Deleted`; whether that means the trash or a pending
             // expunge is the server's decision. Never EXPUNGE it here.
             return await current.messageDelete(uids, options)
-          case 'move':
-            return (await current.messageMove(uids, action.targetFolder, options)) !== false
+          case 'move': {
+            // QQ's server only accepts a single UID per `UID MOVE`: posting the whole
+            // batch as one command gets it refused, imapflow answers `false`, and the
+            // mail stays where it was — measured against a real account, a batch of 240
+            // moved a fraction of it and left the rest untouched while the route still
+            // reported success. One UID per command, in order, inside the same lock, so
+            // the count this route reports is the count that actually moved.
+            for (const uid of uids) {
+              if (await current.messageMove(String(uid), action.targetFolder, options) === false) return false
+            }
+            return true
+          }
         }
       }
       try {

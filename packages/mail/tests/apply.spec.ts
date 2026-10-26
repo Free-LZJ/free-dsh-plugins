@@ -9,21 +9,20 @@
  * to connect after a restart while the same account connected fine when it was
  * added at runtime.
  *
- * The second half is the compatibility promise: a deployment without the triage
- * engine (`@free-lzj/dsh-mailflow`) must behave exactly as it did before that
- * engine existed. There is no IMAP session here, so `handOver` — the one
- * decision the scan makes per message — is driven directly with fakes.
+ * The second half is the one decision the scan makes per message: there is no
+ * IMAP session here, so `handOver` is driven directly with fakes. New mail has
+ * exactly one destination — the triage engine — and the ledger write is what
+ * keeps a failing rule from replaying the same message.
  *
  * @module @free-lzj/dsh-mail/tests/apply
  */
 
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apply, handOver, type HandoverDeps } from '../src/index.ts'
-import type { Triggerer } from '../src/trigger.ts'
-import type { MailReceivedPayload, MailSummary, NormalizedMessage, RouteResult, TriggerConfig } from '../src/types.ts'
+import type { MailReceivedPayload, MailSummary, NormalizedMessage } from '../src/types.ts'
 
 /** What the plugin asked of the context it was handed. */
 interface Harness {
@@ -159,38 +158,20 @@ function scanned(over: Partial<MailSummary> = {}): NormalizedMessage {
   }
 }
 
-/** The trigger config an account carries when it was never touched. */
-function accountTrigger(over: Partial<TriggerConfig> = {}): TriggerConfig {
-  return { mode: 'panel', filters: {}, ...over }
-}
-
 /** The knobs a hand-over test drives, plus what the fakes recorded. */
 function deps(over: Partial<HandoverDeps> = {}): {
   readonly deps: HandoverDeps
   readonly steps: string[]
   readonly emitted: MailReceivedPayload[]
-  readonly fired: { trigger: TriggerConfig; body: string; accountName: string }[]
-  readonly logged: string[]
   readonly triggered: string[]
 } {
   const steps: string[] = []
   const emitted: MailReceivedPayload[] = []
-  const fired: { trigger: TriggerConfig; body: string; accountName: string }[] = []
-  const logged: string[] = []
   const triggered: string[] = []
-  const fire: Triggerer = {
-    async fire(_accountId, trigger, _summary, body, accountName): Promise<RouteResult> {
-      steps.push('fire')
-      fired.push({ trigger, body, accountName: accountName ?? '' })
-      return { ok: true }
-    },
-  }
   const base: HandoverDeps = {
     accountId: 'acc-1',
     accountName: '我的 QQ 邮箱',
-    trigger: accountTrigger(),
     uidValidity: 7,
-    fire,
     ledger: {
       isTriggered: (_accountId, key) => {
         steps.push('isTriggered')
@@ -209,85 +190,17 @@ function deps(over: Partial<HandoverDeps> = {}): {
       steps.push('emit')
       emitted.push(payload)
     },
-    log: (line) => {
-      steps.push('log')
-      logged.push(line)
-    },
     ...over,
   }
-  return { deps: base, steps, emitted, fired, logged, triggered }
+  return { deps: base, steps, emitted, triggered }
 }
 
-describe('handOver without a triage engine (the fallback path)', () => {
-  it('runs the account trigger exactly as before, and never emits', async () => {
-    const test = deps({ trigger: accountTrigger({ mode: 'session', session: { workspacePath: resolve('.') } }) })
-    await handOver(scanned(), test.deps)
-
-    // The ledger is written first — a trigger that fails must not be replayed —
-    // and the message reaches `fire` with the body the legacy path composed.
-    expect(test.steps).toEqual(['isTriggered', 'markTriggered', 'readBody', 'fire'])
-    expect(test.emitted).toEqual([])
-    expect(test.fired).toEqual([{
-      trigger: { mode: 'session', session: { workspacePath: resolve('.') }, filters: {} },
-      body: 'the whole message',
-      accountName: '我的 QQ 邮箱',
-    }])
-  })
-
-  it('leaves a message no rule claims in the panel, without reading it', async () => {
-    const test = deps({
-      trigger: accountTrigger({
-        mode: 'session',
-        session: { workspacePath: resolve('.') },
-        rules: [{ when: { from: ['github'] }, action: 'session' }],
-      }),
-    })
-    await handOver(scanned(), test.deps)
-
-    // `panel` is "nothing to hand over", and a filter that cannot match must not
-    // cost the FETCH the body would need.
-    expect(test.fired).toEqual([])
-    expect(test.emitted).toEqual([])
-    expect(test.steps).toEqual(['isTriggered', 'markTriggered'])
-  })
-
-  it('still pushes the workbench notice for a panel message', async () => {
-    // The switch rides on the resolved trigger, and `fire` is what pushes it —
-    // so a panel-mode message with the switch on is still handed to `fire`.
-    const test = deps({ trigger: accountTrigger({ notifyWorkbench: true }) })
-    await handOver(scanned(), test.deps)
-
-    expect(test.fired).toHaveLength(1)
-    expect(test.fired[0]?.trigger.notifyWorkbench).toBe(true)
-  })
-
-  it('reports a failed hand-over in the log, with the subject', async () => {
-    const test = deps({ trigger: accountTrigger({ mode: 'session', session: { workspacePath: resolve('.') } }) })
-    const failing: Triggerer = {
-      fire: async (): Promise<RouteResult> => ({ ok: false, code: 'session_failed', message: 'preset gone' }),
-    }
-    await handOver(scanned(), { ...test.deps, fire: failing })
-
-    expect(test.logged).toEqual(['mail: handing Build failed to the agent failed: preset gone'])
-  })
-
-  it('hands a message over once, so a second pass does not fire it again', async () => {
-    const test = deps({ trigger: accountTrigger({ mode: 'session', session: { workspacePath: resolve('.') } }) })
-    await handOver(scanned(), test.deps)
-    await handOver(scanned(), test.deps)
-
-    expect(test.fired).toHaveLength(1)
-    expect(test.steps.filter(step => step === 'markTriggered')).toHaveLength(1)
-  })
-})
-
-describe('handOver with a triage engine mounted', () => {
-  it('emits mail/received and does not touch the account trigger', async () => {
-    const test = deps({ fire: undefined })
+describe('handOver', () => {
+  it('emits mail/received, which is the one place new mail goes', async () => {
+    const test = deps()
     await handOver(scanned(), test.deps)
 
     expect(test.steps).toEqual(['isTriggered', 'markTriggered', 'emit'])
-    expect(test.fired).toEqual([])
     expect(test.emitted).toHaveLength(1)
     const payload = test.emitted[0]
     expect(payload?.accountId).toBe('acc-1')
@@ -298,7 +211,7 @@ describe('handOver with a triage engine mounted', () => {
   })
 
   it('writes the ledger before emitting, so a listener that throws cannot replay', async () => {
-    const test = deps({ fire: undefined })
+    const test = deps()
     const listener = vi.fn(() => {
       throw new Error('engine blew up')
     })
@@ -322,7 +235,7 @@ describe('handOver with a triage engine mounted', () => {
   })
 
   it('reads the body lazily, and only once, for whoever asks for it', async () => {
-    const test = deps({ fire: undefined })
+    const test = deps()
     await handOver(scanned(), test.deps)
 
     // Emitting is not reading: a rule decided on the headers must not pay for
@@ -335,10 +248,11 @@ describe('handOver with a triage engine mounted', () => {
   })
 
   it('emits nothing for a message the ledger already holds', async () => {
-    const test = deps({ fire: undefined })
+    const test = deps()
     await handOver(scanned(), test.deps)
     await handOver(scanned(), test.deps)
 
     expect(test.emitted).toHaveLength(1)
+    expect(test.steps.filter(step => step === 'markTriggered')).toHaveLength(1)
   })
 })

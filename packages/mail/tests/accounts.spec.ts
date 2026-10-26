@@ -65,7 +65,6 @@ function account(id: string, address: string): MailAccount {
     imapHost: 'imap.qq.com',
     imapPort: 993,
     secure: true,
-    trigger: { mode: 'panel', filters: {} },
   }
 }
 
@@ -131,9 +130,6 @@ describe('the authorization code', () => {
       maxListMessages: 100,
       maxWindowMessages: 2000,
       accounts: [account(id, 'a@x.com')],
-      triggerAvailability: { session: false, notify: false },
-      workbenchAvailable: true,
-      presets: { agents: [], permissions: [] },
       preferences: { loadRemoteImages: true, trustedSenders: [] },
     }
     const dir = await mkdtemp(join(tmpdir(), 'mail-accounts-'))

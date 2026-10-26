@@ -2,11 +2,14 @@
  * The shapes every half of the mail plugin agrees on.
  *
  * Types live in one module because four independently written pieces have to
- * fit together: the account store, the IMAP scanner, the trigger, and the HTTP
- * surface the panel reads. Nothing here knows about imapflow, cordis or the DOM.
+ * fit together: the account store, the IMAP scanner, the triage engine, and the
+ * HTTP surface the panel reads. Nothing here knows about imapflow, cordis or the
+ * DOM.
  *
  * @module @free-lzj/dsh-mail/types
  */
+
+import type { Config as TriageConfig } from './triage/types.ts'
 
 /* ─────────────────────────────── accounts ─────────────────────────────── */
 
@@ -20,6 +23,10 @@ export type MailProvider = 'qq' | 'gmail' | 'custom'
  * service under `dsh-mail/<id>`, so this record is safe to serialize anywhere.
  * `id` must match `/^[a-z][a-z0-9-]*$/` because it is also a credentials key
  * segment — generate it as a lowercase hex hash, never from the raw address.
+ *
+ * New mail is handled by the triage rules (`$DSH_HOME/mail/triage/rules.yml`),
+ * which are the same for every account; there is deliberately nothing
+ * per-account to configure here any more.
  */
 export interface MailAccount {
   readonly id: string
@@ -29,99 +36,6 @@ export interface MailAccount {
   readonly imapHost: string
   readonly imapPort: number
   readonly secure: boolean
-  readonly trigger: TriggerConfig
-}
-
-/* ──────────────────────────────── trigger ─────────────────────────────── */
-
-/** What happens when a new message matches the filters. */
-export type TriggerMode = 'session' | 'notify' | 'panel'
-
-/** Filters: groups are AND-ed, values inside one group are OR-ed, absent = unrestricted. */
-export interface TriggerFilters {
-  readonly from?: readonly string[]
-  readonly subject?: readonly string[]
-  readonly keywords?: readonly string[]
-  /** Default true: only messages whose `\Seen` flag is absent are considered. */
-  readonly unreadOnly?: boolean
-}
-
-/** Parameters for `mode: 'session'` — a new root session per matched message. */
-export interface SessionTriggerOptions {
-  /** Absolute path; the workspace the new session runs in. */
-  readonly workspacePath: string
-  /** Omitted = the deployment's current default agent preset. */
-  readonly agentPreset?: string
-  /** Omitted = the deployment's default permission preset. */
-  readonly permissionPreset?: string
-  /** Title template; `{subject}` and `{from}` are substituted. Default `邮件：{subject}`. */
-  readonly titleTemplate?: string
-}
-
-/** Parameters for `mode: 'notify'` — deliver into an existing session. */
-export interface NotifyTriggerOptions {
-  readonly sessionId: string
-}
-
-/**
- * One rule: which messages it claims, and what happens to them.
- *
- * Conditions are the same shape as {@link TriggerFilters} — groups are AND-ed,
- * values inside a group are OR-ed — because that is the model the drawer already
- * draws and the one every mail client has converged on (Gmail's criteria,
- * Thunderbird's matchAll, Sieve's `allof`). Nesting is deliberately absent: a
- * flat conjunction covers the real cases, and a tree nobody can read in a form
- * is a worse editor than one nobody needs.
- */
-export interface TriggerRule {
-  /** Shown in the drawer so a list of rules can be told apart. */
-  readonly name?: string
-  /** Everything must hold; an absent group is unrestricted. */
-  readonly when: TriggerFilters
-  /** What this rule does with a message it claims. */
-  readonly action: TriggerMode
-  /** Parameters for `action: 'session'`; falls back to the account's own. */
-  readonly session?: SessionTriggerOptions
-  /** Parameters for `action: 'notify'`; falls back to the account's own. */
-  readonly notify?: NotifyTriggerOptions
-  /** Overrides the account's prompt template for messages this rule claims. */
-  readonly promptTemplate?: string
-}
-
-/** How one account hands a matched message over. */
-export interface TriggerConfig {
-  readonly mode: TriggerMode
-  /**
-   * Also push a workbench notice for every matched message, whatever
-   * {@link mode} says. Independent of the mode on purpose: "tell me there is
-   * new mail" and "wake an agent for this mail" are two different asks, and
-   * folding one into the other would lose whichever is not chosen.
-   *
-   * Absent or false = off. Needs `@free-lzj/dsh-console`; without it the notice
-   * has nowhere to go and the drawer says so.
-   */
-  readonly notifyWorkbench?: boolean
-  readonly session?: SessionTriggerOptions
-  readonly notify?: NotifyTriggerOptions
-  /**
-   * Rules, evaluated in order; the first one whose conditions all hold decides
-   * what happens. A message no rule claims falls back to {@link mode}, so an
-   * account can say "default to a session, except these".
-   *
-   * Omitted = the account's own `filters` and `mode` are the single rule, which
-   * is every configuration written before rules existed.
-   */
-  readonly rules?: readonly TriggerRule[]
-  /**
-   * The text posted into the session when a message matches.
-   *
-   * `{from}`, `{subject}`, `{date}`, `{account}` and `{body}` are substituted;
-   * any other `{name}` is left as written. Omitted = the built-in template,
-   * which opens by saying the mail is external content rather than
-   * instructions — an account that writes its own template takes that over.
-   */
-  readonly promptTemplate?: string
-  readonly filters: TriggerFilters
 }
 
 /* ─────────────────────────────── messages ─────────────────────────────── */
@@ -294,17 +208,6 @@ export interface MailboxView {
   readonly total: number
 }
 
-/** One choice a settings dropdown offers. */
-export interface PresetChoice {
-  /** The value stored in the trigger. */
-  readonly value: string
-  /** What the dropdown shows; falls back to the value when the host names nothing. */
-  readonly label: string
-  readonly description?: string
-  /** Why this preset cannot be used, when its registry reports a load failure. */
-  readonly broken?: string
-}
-
 /** The parts of the configuration the panel is allowed to see (never the credential). */
 export interface MailConfigView {
   readonly fallbackScanSeconds: number
@@ -318,23 +221,6 @@ export interface MailConfigView {
    */
   readonly maxWindowMessages: number
   readonly accounts: readonly MailAccount[]
-  /** Which trigger modes this deployment can actually run, so the drawer greys the rest out. */
-  readonly triggerAvailability: { readonly session: boolean; readonly notify: boolean }
-  /**
-   * Whether the "push to the workbench" switch can be turned on at all.
-   *
-   * Its own field, not part of `triggerAvailability`: the switch belongs to no
-   * mode, so folding it in would read as a fourth mode in the drawer.
-   */
-  readonly workbenchAvailable: boolean
-  /**
-   * What the drawer may offer for the two preset fields.
-   *
-   * Read from the host services rather than hard-coded here: a deployment can
-   * ship its own presets, and a name typed by hand that no longer exists fails
-   * at trigger time — long after the person who typed it has moved on.
-   */
-  readonly presets: { readonly agents: readonly PresetChoice[]; readonly permissions: readonly PresetChoice[] }
   /**
    * How the reading pane treats remote images, and who is trusted.
    *
@@ -397,7 +283,6 @@ export type MailConfigRequest =
     }
   | { readonly op: 'removeAccount'; readonly accountId: string }
   | { readonly op: 'testAccount'; readonly accountId?: string; readonly draft?: DraftAccount }
-  | { readonly op: 'setTrigger'; readonly accountId: string; readonly trigger: TriggerConfig }
   | { readonly op: 'setPreferences'; readonly preferences: { readonly loadRemoteImages: boolean } }
   /**
    * Add or remove one sender from the image whitelist.
@@ -505,4 +390,13 @@ export interface Config {
   readonly maxListMessages: number
   /** Abort an IMAP command after this many seconds. Default 30. */
   readonly imapTimeoutSeconds: number
+  /**
+   * The triage engine's global switches.
+   *
+   * Nested rather than flattened so the rule file, a profile row and this
+   * interface have one obvious mapping: `triage:` holds what the rule file
+   * cannot (whether to act at all, how long to wait before acting, where the
+   * repositories are).
+   */
+  readonly triage: TriageConfig
 }
