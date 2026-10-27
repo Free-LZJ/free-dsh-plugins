@@ -284,3 +284,86 @@ describe('the board on screen', () => {
     expect(screen.getByText(t('boardLoading'))).toBeTruthy()
   })
 })
+
+/** Two days back, so the finished column has history to fold. */
+const TWO_DAYS_AGO = NOW - 2 * 24 * 60 * 60 * 1000
+
+/** The board with one finished card from today and one from two days ago. */
+function boardWithHistory(): WorkbenchState {
+  const base = board()
+  return {
+    ...base,
+    cards: [
+      card({
+        id: 'card-old',
+        column: 'done',
+        title: '前天收工的工单',
+        status: 'done',
+        kind: 'bug',
+        confidence: 0.9,
+        executor: 'codex',
+        createdAt: TWO_DAYS_AGO,
+        updatedAt: TWO_DAYS_AGO,
+      }),
+      ...base.cards,
+    ],
+  }
+}
+
+describe('the finished column', () => {
+  /** The disclosure rows of the finished column, newest day first. */
+  function dayRows(): HTMLElement[] {
+    const column = screen.getByRole('region', { name: t('boardDone') })
+    return [...column.querySelectorAll<HTMLElement>('[data-disclosure-row]')]
+  }
+
+  it('expands today and folds the older days (Q6)', () => {
+    const { face: fake } = face(boardWithHistory())
+    render(<BoardView face={fake} t={t} />)
+    // 今天那张还在，前天那张折起来了。
+    expect(screen.getByText('已回写的工单')).toBeTruthy()
+    expect(screen.queryByText('前天收工的工单')).toBeNull()
+    expect(dayRows().length).toBe(2)
+    expect(screen.getByText(`${t('dayToday')} · 1`)).toBeTruthy()
+  })
+
+  it('opens a folded day when its row is picked', () => {
+    const { face: fake } = face(boardWithHistory())
+    render(<BoardView face={fake} t={t} />)
+    fireEvent.click(dayRows()[1] as HTMLElement)
+    expect(screen.getByText('前天收工的工单')).toBeTruthy()
+  })
+
+  it('does not walk into a folded day with j', () => {
+    // 折叠的那天不在 DOM 里，光标就不该落进去——j/k 走的是「屏幕上有的卡」。
+    const { face: fake } = face(boardWithHistory())
+    render(<BoardView face={fake} t={t} />)
+    const last = cardOf('已回写的工单')
+    last.focus()
+    fireEvent.keyDown(last, { key: 'j' })
+    expect(document.activeElement).toBe(last)
+  })
+})
+
+describe('the keyboard cursor', () => {
+  it('walks the visible cards with j and k', () => {
+    const { face: fake } = face()
+    render(<BoardView face={fake} t={t} />)
+    const first = cardOf('今天天气不错')
+    first.focus()
+    fireEvent.keyDown(first, { key: 'j' })
+    expect(document.activeElement).toBe(cardOf('页面报错'))
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'j' })
+    expect(document.activeElement).toBe(cardOf('已回写的工单'))
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'k' })
+    expect(document.activeElement).toBe(cardOf('页面报错'))
+  })
+
+  it('goes to the last card on k from outside the cards', () => {
+    const { face: fake } = face()
+    render(<BoardView face={fake} t={t} />)
+    const board = screen.getByRole('group', { name: t('boardTitle') })
+    fireEvent.keyDown(board, { key: 'k' })
+    expect(document.activeElement).toBe(cardOf('已回写的工单'))
+  })
+})

@@ -19,9 +19,9 @@
  * @module @free-lzj/dsh-console/client/workbench/board
  */
 
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { DisclosureRow, IconChevronDownOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkbenchState, WorkbenchColumn } from '../../protocol.ts'
 import type { Translate } from '../locales.ts'
 import { CLS } from '../styles.ts'
@@ -76,6 +76,55 @@ function statistics(cards: WorkbenchState['cards'], now: number): {
   }
 }
 
+/** The local calendar day one instant belongs to, as a comparable key. */
+export function dayKey(at: number): string {
+  const date = new Date(at)
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
+}
+
+/** One day of finished work. */
+export interface DoneDay {
+  readonly key: string
+  readonly label: string
+  readonly cards: readonly WorkbenchState['cards'][number][]
+}
+
+/**
+ * Group finished cards by the day they last moved.
+ *
+ * Q6 settled the shape: the column expands **today only**, and everything older
+ * folds into one disclosure per day — a work desk that scrolls back a month is a
+ * work desk nobody reads. Order is newest first inside a day, newest day first.
+ * @param cards - the finished cards.
+ * @param now - the reading moment, so "today" means one thing per render.
+ * @param t - the translate seat.
+ * @returns the days, newest first.
+ */
+export function groupDoneByDay(
+  cards: readonly WorkbenchState['cards'][number][],
+  now: number,
+  t: Translate,
+): readonly DoneDay[] {
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const todayKey = dayKey(now)
+  const yesterdayKey = dayKey(yesterday.getTime())
+  const days = new Map<string, WorkbenchState['cards'][number][]>()
+  for (const card of [...cards].sort((left, right) => right.updatedAt - left.updatedAt)) {
+    const key = dayKey(card.updatedAt)
+    const bucket = days.get(key)
+    if (bucket === undefined) days.set(key, [card])
+    else bucket.push(card)
+  }
+  return [...days.entries()].map(([key, dayCards]) => ({
+    key,
+    label: key === todayKey
+      ? t('dayToday')
+      : key === yesterdayKey ? t('dayYesterday') : new Date(dayCards[0]?.updatedAt ?? now).toLocaleDateString(),
+    cards: dayCards,
+  }))
+}
+
 /**
  * Draw the board.
  * @param props.face - the board face the Host injected.
@@ -90,6 +139,10 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
   const [openCardId, setOpenCardId] = useState<string | undefined>(undefined)
   /** Why the last action did not take; empty means nothing failed. */
   const [failure, setFailure] = useState('')
+  /** The days the user opened or closed in 已处理; absent means "today's default". */
+  const [openedDays, setOpenedDays] = useState<Readonly<Record<string, boolean>>>({})
+  /** The board root, used to read the visible card order for `j` / `k`. */
+  const boardRef = useRef<HTMLDivElement>(null)
 
   if (state === undefined) return <p className={CLS.viewEmpty}>{t('boardLoading')}</p>
 
@@ -111,8 +164,57 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
     void work.then((ok) => { setFailure(ok ? '' : t('boardActionFailed')) })
   }
 
+  /** Which day groups the user has opened or closed; today starts open (Q6). */
+  const isDayOpen = (key: string): boolean => openedDays[key] ?? key === dayKey(now)
+  const toggleDay = (key: string): void => {
+    setOpenedDays((current) => ({ ...current, [key]: !(current[key] ?? key === dayKey(now)) }))
+  }
+
+  /** One list of cards, whichever column shape asked for it. */
+  const cardList = (cards: readonly WorkbenchState['cards'][number][]): ReactNode => (
+    <ul className={CLS.cardsList}>
+      {cards.map((card) => (
+        <li key={card.id}>
+          <BoardCard
+            card={card}
+            t={t}
+            now={now}
+            onOpen={() => { setOpenCardId(card.id) }}
+            onDispatch={() => { run(face.dispatch(card.id, card.executor)) }}
+            onMove={(next) => { run(face.move(card.id, next)) }}
+            onDragEnd={() => { setOver(undefined) }}
+          />
+        </li>
+      ))}
+    </ul>
+  )
+
+  /**
+   * `j` / `k` walk the cards that are actually on screen, in reading order.
+   *
+   * Reading the order off the DOM keeps one source of truth for "what is
+   * visible": a card inside a collapsed day is not in that list, so the cursor
+   * never lands somewhere the user cannot see.
+   * @param event - the key event, bubbled from whichever child had focus.
+   */
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'j' && event.key !== 'k') return
+    if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable]') !== null) return
+    const cards = [...(boardRef.current?.querySelectorAll<HTMLElement>('[data-card-id]') ?? [])]
+    const index = cards.findIndex((card) => card === document.activeElement)
+    const next = event.key === 'j'
+      ? index + 1
+      : (index === -1 ? cards.length - 1 : index - 1)
+    const element = cards[next]
+    if (element === undefined) return
+    event.preventDefault()
+    element.focus()
+  }
+
   return (
-    <div className={CLS.board}>
+    <div className={CLS.board} ref={boardRef} onKeyDown={onKeyDown}>
       <div className={CLS.statusBar} role="group" aria-label={t('boardTitle')}>
         <Stat label={t('boardStatTodo')} value={counts.todo} dot="idle" />
         <Stat label={t('boardStatRunning')} value={counts.running} dot="ongoing" />
@@ -156,23 +258,13 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
               </header>
               {cards.length === 0
                 ? <p className={CLS.columnEmpty}>{t(columnEmptyKey(column))}</p>
-                : (
-                  <ul className={CLS.cardsList}>
-                    {cards.map((card) => (
-                      <li key={card.id}>
-                        <BoardCard
-                          card={card}
-                          t={t}
-                          now={now}
-                          onOpen={() => { setOpenCardId(card.id) }}
-                          onDispatch={() => { run(face.dispatch(card.id, card.executor)) }}
-                          onMove={(next) => { run(face.move(card.id, next)) }}
-                          onDragEnd={() => { setOver(undefined) }}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                : column === 'done'
+                  ? (
+                    // 已处理按天折叠（Q6）：今天展开，更早的每天一行，点开才列。
+                    // 只有一天（且就是今天）时不分组——那层折叠只在一列真有历史时才有意义。
+                    doneColumn(cards, now, t, cardList, isDayOpen, toggleDay)
+                  )
+                  : cardList(cards)}
             </section>
           )
         })}
@@ -194,6 +286,46 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
           }}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Draw the finished column: one flat list while everything belongs to today, and
+ * one disclosure per day as soon as there is older work to fold away (Q6).
+ * @param cards - the finished cards.
+ * @param now - the reading moment.
+ * @param t - the translate seat.
+ * @param cardList - the shared card renderer.
+ * @param isOpen - whether one day is expanded.
+ * @param toggle - flips one day.
+ * @returns the column body.
+ */
+function doneColumn(
+  cards: readonly WorkbenchState['cards'][number][],
+  now: number,
+  t: Translate,
+  cardList: (cards: readonly WorkbenchState['cards'][number][]) => ReactNode,
+  isOpen: (key: string) => boolean,
+  toggle: (key: string) => void,
+): ReactNode {
+  const days = groupDoneByDay(cards, now, t)
+  if (days.length === 1 && days[0]?.key === dayKey(now)) return cardList(cards)
+  return (
+    <div className={CLS.dayGroups}>
+      {days.map((day) => (
+        <div key={day.key} className={CLS.dayGroup}>
+          <DisclosureRow
+            icon={<IconChevronDownOutlineRegular />}
+            title={`${day.label} · ${day.cards.length}`}
+            open={isOpen(day.key)}
+            expandable
+            expandOnRowClick
+            onToggle={() => { toggle(day.key) }}
+          />
+          {isOpen(day.key) && cardList(day.cards)}
+        </div>
+      ))}
     </div>
   )
 }

@@ -201,6 +201,7 @@ export function BoardCard({ card, t, now, onOpen, onDispatch, onMove, onDragEnd 
     <article
       className={CLS.boardCard}
       aria-label={card.title}
+      data-card-id={card.id}
       tabIndex={0}
       draggable
       onDragStart={(event) => {

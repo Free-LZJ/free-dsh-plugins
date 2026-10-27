@@ -106,6 +106,8 @@ export const CLS = {
   columnHint: 'dshc-column-hint',
   columnEmpty: 'dshc-column-empty',
   cardsList: 'dshc-cards-list',
+  dayGroups: 'dshc-day-groups',
+  dayGroup: 'dshc-day-group',
   boardCard: 'dshc-board-card',
   boardCardTitle: 'dshc-board-card-title',
   boardCardBody: 'dshc-board-card-body',
@@ -201,6 +203,8 @@ const CSS = `
 .${CLS.columnHint}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.columnEmpty}{margin:0;padding:16px 8px;border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);text-align:center;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.cardsList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.${CLS.dayGroups}{display:flex;flex-direction:column;gap:10px}
+.${CLS.dayGroup}{display:flex;flex-direction:column;gap:6px}
 .${CLS.boardCard}{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);cursor:grab}
 .${CLS.boardCard}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .${CLS.cardFrom}{display:flex;align-items:center;gap:6px;min-width:0}
