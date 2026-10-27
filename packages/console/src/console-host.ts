@@ -445,8 +445,13 @@ export class ConsoleHost extends Service {
    */
   private awaiting(): number {
     const now = Date.now()
-    return this.notices.filter(record =>
-      record.state === 'new' && (record.snoozedUntil === undefined || record.snoozedUntil <= now)).length
+    const live = this.notices.filter(record =>
+      record.state === 'new' && (record.snoozedUntil === undefined || record.snoozedUntil <= now))
+    // 按会话去重：同一条会话既举了通知又在等回答时，它是**一件事**，不该在状态条上算两次。
+    // 没有会话的条目（纯提醒）各自算一件。
+    const sessions = new Set(live.flatMap(record => record.sessionId === undefined ? [] : [record.sessionId]))
+    const loose = live.filter(record => record.sessionId === undefined).length
+    return sessions.size + loose
   }
 
   /**

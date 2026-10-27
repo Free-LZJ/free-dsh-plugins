@@ -55,6 +55,14 @@ describe('raise：比 notify 多的那两样东西', () => {
     expect(record.sessionId).toBe('session-1')
   })
 
+  it('counts one session once, however many items it raised', async () => {
+    // 状态条的「往你待办」是**件事**的数量：同一条会话既举了通知又在等回答，只算一件。
+    const host = await bench()
+    await host.raise({ title: '邮件分诊：限时优惠', kind: 'mail', sessionId: 'session-1' })
+    await host.raise({ title: '邮件分诊：等你确认', kind: 'mail', sessionId: 'session-1' })
+    await host.raise({ title: '没有会话的纯提醒' })
+    expect(host.state().awaiting).toBe(2)
+  })
   it('没有动作时是一个纯通知，字段不会被补成空数组', async () => {
     const host = await bench()
     const record = await host.raise({ title: '新邮件' })
