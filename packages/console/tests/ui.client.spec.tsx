@@ -198,6 +198,7 @@ function shellFace(
         movePriority: async () => ({ ok: true }),
         setMode: async () => ({ ok: true }),
         undo: async () => ({ ok: true }),
+        testRun: async () => ({ ok: true as const, result: { ruleId: '(none)', ruleName: '没有规则命中', actions: [], reason: '试跑' } }),
       },
     },
   }

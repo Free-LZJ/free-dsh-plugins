@@ -135,6 +135,8 @@ export const CLS = {
   sessionLog: 'dshc-session-log',
   logLine: 'dshc-log-line',
   ruleNotice: 'dshc-rule-notice',
+  testBox: 'dshc-test-box',
+  testVerdict: 'dshc-test-verdict',
   ruleRawBlock: 'dshc-rule-raw-block',
   ruleRawTitle: 'dshc-rule-raw-title',
   ruleRaw: 'dshc-rule-raw',
@@ -265,6 +267,8 @@ const CSS = `
 .${CLS.logLine}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap}
 /* 规则视图：一条规则一张卡（Rule → conditions → actions），命中记录各自一条。 */
 .${CLS.ruleNotice}{margin:0;padding:8px 10px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;overflow-wrap:anywhere}
+.${CLS.testBox}{display:flex;flex-direction:column;gap:2px;margin-top:4px;padding:6px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-settings-card-fill);box-shadow:inset 0 0 0 0.5px var(--dsw-alias-settings-card-stroke)}
+.${CLS.testVerdict}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary)}
 .${CLS.ruleRawBlock}{border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);padding:6px 10px}
 .${CLS.ruleRawTitle}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);cursor:pointer}
 .${CLS.ruleRaw}{margin:6px 0 0;max-height:260px;overflow:auto;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;overflow-wrap:anywhere}

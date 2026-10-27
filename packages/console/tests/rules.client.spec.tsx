@@ -57,7 +57,13 @@ function runs(): readonly TriageRun[] {
       ruleId: 'github',
       ruleName: 'GitHub 通知',
       label: 'GitHub 通知',
-      message: { from: 'lzj@example.com', subject: '[Free-LZJ/free-dsh-plugins] Run failed: CI', folder: 'INBOX' },
+      message: {
+        from: 'lzj@example.com',
+        subject: '[Free-LZJ/free-dsh-plugins] Run failed: CI',
+        folder: 'INBOX',
+        accountId: 'work',
+        uid: 42,
+      },
       actions: [
         { kind: 'archive', mode: 'auto', ok: true, detail: '已移动到 归档' },
         { kind: 'mark-read', mode: 'auto', ok: false, detail: '标记已读失败：连接中断' },
@@ -71,7 +77,7 @@ function runs(): readonly TriageRun[] {
       ruleId: 'promo',
       ruleName: '推广与电子报',
       label: '推广',
-      message: { from: 'news@example.com', subject: '限时优惠', folder: 'INBOX' },
+      message: { from: 'news@example.com', subject: '限时优惠', folder: 'INBOX', accountId: 'work', uid: 43 },
       actions: [{ kind: 'move', mode: 'auto', ok: true, detail: '已移动到 其他文件夹/广告' }],
       status: 'done',
       undoableUntil: new Date(Date.now() - 60_000).toISOString(),
@@ -86,6 +92,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
     priority: [] as { ruleId: string; direction: string }[],
     mode: [] as { ruleId: string; index: number; mode: string }[],
     undo: [] as string[],
+    tested: [] as { accountId: string; folder: string; uid: number }[],
   }
   const rules = (): Promise<TriageRules> => Promise.resolve({
     rules: RULES,
@@ -112,6 +119,10 @@ function engine(overrides: Partial<TriageSource> = {}) {
       calls.undo.push(runId)
       return { ok: true }
     },
+    testRun: overrides.testRun ?? (async (ref) => {
+      calls.tested.push(ref)
+      return { ok: true, result: { ruleId: 'github', ruleName: 'GitHub 通知', actions: [], reason: '按顺序第一条命中的规则。' } }
+    }),
     ...overrides,
   }
   return { calls, source }
@@ -271,6 +282,36 @@ describe('changing a rule', () => {
     fireEvent.click(within(ruleOf('GitHub 通知')).getByRole('button', { name: t('ruleCopyFix') }))
     const fallback = await screen.findByText(new RegExp(t('ruleCopyFallback')))
     expect(fallback.textContent).toContain('"when"')
+  })
+
+  it('dry-runs the current rules against that record\u2019s mail, changing nothing', async () => {
+    const { calls, source } = engine()
+    await draw(source)
+    fireEvent.click(within(screen.getByText(/Run failed: CI/).closest('li') as HTMLElement)
+      .getByRole('button', { name: t('ruleTest') }))
+    await waitFor(() => { expect(calls.tested).toEqual([{ accountId: 'work', folder: 'INBOX', uid: 42 }]) })
+    // 试跑只回答「会怎样」，不产生动作。
+    expect(await screen.findByText(new RegExp(t('ruleTestResult', { rule: 'GitHub 通知', reason: '' }).split('·')[0] as string))).toBeTruthy()
+    expect(screen.getByText(/按顺序第一条命中的规则/)).toBeTruthy()
+  })
+
+  it('reports why a dry run could not be made', async () => {
+    const { source } = engine({
+      testRun: async () => ({ ok: false as const, message: '这封邮件已经不在了' }),
+    })
+    await draw(source)
+    fireEvent.click(within(screen.getByText(/Run failed: CI/).closest('li') as HTMLElement)
+      .getByRole('button', { name: t('ruleTest') }))
+    expect(await screen.findByText(new RegExp(t('ruleTestFailed', { message: '这封邮件已经不在了' })))).toBeTruthy()
+  })
+
+  it('offers no dry run for a record with no mailbox reference', async () => {
+    // 旧记录可能没存 accountId：宁可没有这个按钮，也不发一个必然被拒的请求。
+    const { source } = engine({
+      runs: async () => [{ ...(runs()[0] as TriageRun), message: { from: 'a@b', subject: 'x', folder: 'INBOX' } }],
+    })
+    await draw(source)
+    expect(screen.queryByRole('button', { name: t('ruleTest') })).toBeNull()
   })
 
   it('shows the file itself when the engine hands it over', async () => {

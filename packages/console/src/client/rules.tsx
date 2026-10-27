@@ -77,6 +77,9 @@ export interface TriageRun {
     readonly from: string
     readonly subject: string
     readonly folder: string
+    /** Which mailbox the mail came from, so the engine can re-read it on a dry run. */
+    readonly accountId?: string
+    readonly uid?: number
   }
   readonly actions: readonly TriageRunAction[]
   readonly status: string
@@ -100,6 +103,19 @@ export interface TriageResult {
   readonly message?: string
 }
 
+/** What one rule would do to one mail, with nothing actually done. */
+export interface TriageTest {
+  readonly ruleId: string
+  readonly ruleName: string
+  readonly actions: readonly { readonly kind: string; readonly detail: string }[]
+  readonly reason: string
+}
+
+/** The answer to a dry run: the verdict, or why it could not be reached. */
+export type TriageTestAnswer =
+  | { readonly ok: true; readonly result: TriageTest }
+  | { readonly ok: false; readonly message: string }
+
 /** What the view needs from wherever the engine lives. */
 export interface TriageSource {
   rules(): Promise<TriageRules>
@@ -108,6 +124,11 @@ export interface TriageSource {
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
   setMode(ruleId: string, actionIndex: number, mode: 'auto' | 'suggest' | 'off'): Promise<TriageResult>
   undo(runId: string): Promise<TriageResult>
+  /**
+   * Run the current rules against one real mail without touching it.
+   * @param ref - which mailbox the mail is in.
+   */
+  testRun(ref: { readonly accountId: string; readonly folder: string; readonly uid: number }): Promise<TriageTestAnswer>
 }
 
 /** Where the engine currently answers; the one line P1a has to move. */
@@ -160,6 +181,18 @@ export function createTriageSource(): TriageSource {
     movePriority: async (ruleId, direction) => await write('/rules/priority', { ruleId, direction }),
     setMode: async (ruleId, actionIndex, mode) => await write('/rules/mode', { ruleId, actionIndex, mode }),
     undo: async (runId) => await write('/undo', { runId }),
+    testRun: async (ref) => {
+      const response = await fetch(`${TRIAGE_PREFIX}/test`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [TRIAGE_MUTATION_HEADER]: '1' },
+        body: JSON.stringify(ref),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: unknown }
+        return { ok: false, message: typeof payload.error === 'string' ? payload.error : `HTTP ${String(response.status)}` }
+      }
+      return { ok: true, result: await response.json() as TriageTest }
+    },
   }
 }
 
@@ -299,6 +332,26 @@ function TriageBody({ t, data, triage, act }: {
   const now = Date.now()
   /** The last copy's outcome: the confirmation, or the instruction itself. */
   const [notice, setNotice] = useState('')
+  /** Dry-run answers, keyed by the run they were asked from. */
+  const [tests, setTests] = useState<Readonly<Record<string, TriageTestAnswer | 'pending'>>>({})
+
+  /**
+   * Run the current rules against the mail one hit record is about.
+   *
+   * The record already carries which mailbox the mail is in, which is exactly the
+   * context a dry run needs — so there is no "pick a mail" control to build and
+   * nothing is written: the engine answers what it *would* do.
+   * @param run - the hit record whose mail to re-read.
+   */
+  const tryRun = (run: TriageRun): void => {
+    const accountId = run.message.accountId
+    const uid = run.message.uid
+    if (accountId === undefined || uid === undefined) return
+    setTests((current) => ({ ...current, [run.id]: 'pending' }))
+    void triage.testRun({ accountId, folder: run.message.folder, uid }).then((answer) => {
+      setTests((current) => ({ ...current, [run.id]: answer }))
+    })
+  }
 
   /**
    * Copy a fix instruction for one rule.
@@ -428,7 +481,10 @@ function TriageBody({ t, data, triage, act }: {
         : (
           <>
           <ul className={CLS.runList}>
-            {runs.slice(0, RUNS_SHOWN).map((run) => (
+            {runs.slice(0, RUNS_SHOWN).map((run) => {
+              /** This record's dry-run answer, if it has been asked for. */
+              const test = tests[run.id]
+              return (
               <li key={run.id} className={CLS.runItem}>
                 <div className={CLS.runHead}>
                   <span className={CLS.runWhen}>{new Date(run.at).toLocaleString()}</span>
@@ -436,6 +492,15 @@ function TriageBody({ t, data, triage, act }: {
                   <span className={CLS.runSubject}>{run.message.subject === '' ? run.message.from : run.message.subject}</span>
                   <span className={CLS.runTail}>
                     <Tag tone={runTone(run.status)}>{t(runStatusKey(run.status))}</Tag>
+                    {run.message.accountId !== undefined && run.message.uid !== undefined && (
+                      <Button
+                        size="sm"
+                        disabled={tests[run.id] === 'pending'}
+                        onClick={() => { tryRun(run) }}
+                      >
+                        {t('ruleTest')}
+                      </Button>
+                    )}
                     {run.undoableUntil !== undefined && Date.parse(run.undoableUntil) > now && (
                       <Button size="sm" onClick={() => { act(triage.undo(run.id)) }}>{t('ruleUndo')}</Button>
                     )}
@@ -449,8 +514,31 @@ function TriageBody({ t, data, triage, act }: {
                     </li>
                   ))}
                 </ul>
+                {test === undefined ? null : test === 'pending'
+                  ? <p className={CLS.viewMeta}>{t('ruleTestRunning')}</p>
+                  : (
+                    <div className={CLS.testBox}>
+                      {test.ok
+                        ? (
+                          <>
+                            <p className={CLS.testVerdict}>
+                              {t('ruleTestResult', { rule: test.result.ruleName, reason: test.result.reason })}
+                            </p>
+                            {test.result.actions.length > 0 && (
+                              <ul className={CLS.runActions}>
+                                {test.result.actions.map((action) => (
+                                  <li key={`${action.kind}-${action.detail}`} className={CLS.runAction}>{action.detail}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </>
+                        )
+                        : <p className={CLS.boardFailure}>{t('ruleTestFailed', { message: test.message })}</p>}
+                    </div>
+                  )}
               </li>
-            ))}
+              )
+            })}
           </ul>
           {runs.length > RUNS_SHOWN && (
             <p className={CLS.viewMeta}>{t('rulesRunsMore', { shown: RUNS_SHOWN, total: runs.length })}</p>
