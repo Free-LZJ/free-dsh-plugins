@@ -256,6 +256,8 @@ export interface PendingAction extends CorePending {
    * 删掉，而摘要在到达时就已在内存里。它**不含正文**——磁盘上不留邮件内容。
    */
   readonly summary: MailSummaryLike
+  /** 排队时的账号名：message 里只有 id，延迟执行时拿不到名字。旧记录没有它。 */
+  readonly accountName?: string
 }
 
 /* ──────────────────────────────── 插件配置 ─────────────────────────────── */

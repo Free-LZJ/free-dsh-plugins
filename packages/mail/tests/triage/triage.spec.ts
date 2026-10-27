@@ -518,6 +518,8 @@ describe('suggest 三态：建议是可点的，而不是自动执行的', () =>
     const ports = await makePorts([{ ...SUGGEST_RULE, then: [{ kind: 'markRead' }] }], host, { undoWindowSeconds: 60 })
     await triage(mail({ headers: { 'list-unsubscribe': '<mailto:x@y>' } }), ports)
     expect(ports.pending.list()[0]?.kind).toBe('undo')
+    // 账号名要在排队时记下来：`message` 里只有 id，延迟执行的通知不能显示成一串 id。
+    expect(ports.pending.list()[0]?.accountName).toBe('我的邮箱')
 
     const executed = await runDue(ports, new Date('2030-01-01T00:00:00.000Z'))
     expect(executed).toBe(1)

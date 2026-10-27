@@ -276,6 +276,7 @@ async function apply(
         action: spec,
         message: messageRef(mail),
         summary: mail.summary,
+        accountName: mail.accountName,
         kind: 'undo',
         dueAt,
       })
@@ -482,7 +483,9 @@ export async function runDue(ports: TriagePorts, now: Date = ports.now?.() ?? ne
     const context = ports.replayContext({
       summary: item.summary,
       accountId: item.message.accountId,
-      accountName: item.message.accountId,
+      // 账号名字要在排队时记下来：message 里只有 id，用它当名字会让延迟执行的通知
+      // 显示成一串 id。旧记录没有这个字段时退回 id，而不是空字符串。
+      accountName: item.accountName ?? item.message.accountId,
       ruleId: item.ruleId,
     })
     let ok: boolean
