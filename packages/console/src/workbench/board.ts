@@ -73,6 +73,16 @@ export interface WorkbenchBoardOptions {
 export class WorkbenchBoard {
   private readonly cards = new Map<string, WorkbenchCard>()
   private readonly dedupe = new Map<string, string>()
+  /**
+   * Dedupe keys currently being built, so a concurrent delivery of the same event
+   * waits for the first one instead of racing it.
+   *
+   * The map above is only written *after* classification, which means two
+   * deliveries arriving inside that await would both see "not seen yet" and build
+   * two cards. Reserving the key before the await is the whole fix; it needs no
+   * lock because the reservation happens in the same synchronous step as the check.
+   */
+  private readonly inFlight = new Map<string, Promise<IngestResult>>()
   private readonly sessions = new SessionStore()
   private readonly handles = new Map<string, ExecutorHandle>()
   private readonly listeners = new Set<(state: WorkbenchState) => void>()
@@ -117,7 +127,30 @@ export class WorkbenchBoard {
       const existing = this.cards.get(existingId)
       if (existing !== undefined) return { ok: true, card: existing, duplicate: true, decision: existing.decision }
     }
+    // Same key already mid-flight: answer with that one's result rather than
+    // classifying twice and building two cards.
+    const running = this.inFlight.get(dedupeKey)
+    if (running !== undefined) {
+      const settled = await running
+      return settled.ok ? { ...settled, duplicate: true } : settled
+    }
+    const work = this.buildCard(normalized, dedupeKey)
+    this.inFlight.set(dedupeKey, work)
+    try {
+      return await work
+    } finally {
+      this.inFlight.delete(dedupeKey)
+    }
+  }
 
+  /**
+   * Classify, route and place one event — the half of `ingest` that awaits.
+   * @param normalized - the event with its title trimmed.
+   * @param dedupeKey - the key that was just reserved.
+   * @returns the card and the decision.
+   */
+  private async buildCard(normalized: WorkbenchEvent, dedupeKey: string): Promise<IngestResult> {
+    const { source, title } = normalized
     const classifier = this.options.classifiers.get(this.options.classifierId())
       ?? this.options.classifiers.get(RULE_CLASSIFIER_ID)
     if (classifier === undefined) return { ok: false, error: 'no classifier is registered' }
@@ -168,7 +201,10 @@ export class WorkbenchBoard {
         card = { ...card, column: 'todo', status: 'idle', decision }
         this.cards.set(card.id, card)
       } else {
-        card = this.startSession(card, executorId)
+        // 同上的同步 finish 保护：表里已经有这张卡（上面刚 set 过），派完只补 sessionId。
+        const started = this.startSession(card, executorId)
+        const placed = this.cards.get(started.id) ?? started
+        card = started.sessionId === undefined ? placed : { ...placed, sessionId: started.sessionId }
         this.cards.set(card.id, card)
       }
     }
@@ -195,13 +231,48 @@ export class WorkbenchBoard {
     if (this.options.executors.get(id) === undefined) {
       return { ok: false, error: `unknown executor "${id}"` }
     }
-    const started = this.startSession({ ...card, column: 'processing', status: 'running' }, id)
-    this.cards.set(started.id, started)
+    // A card that still has a live session must reuse it: starting a second run
+    // would overwrite `sessionId`, and the old session plus its handle would never
+    // be ended (the leak the review flagged). A paused run just resumes; a finished
+    // one is closed first, then a fresh one starts.
+    const previous = card.sessionId === undefined ? undefined : this.sessions.get(card.sessionId)
+    if (card.sessionId !== undefined && previous !== undefined) {
+      if (previous.status === 'paused') {
+        this.handles.get(previous.id)?.resume()
+        this.sessions.setStatus(previous.id, 'running')
+        const resumed: WorkbenchCard = {
+          ...card, column: 'processing', status: 'running', updatedAt: Date.now(),
+        }
+        this.cards.set(resumed.id, resumed)
+        this.bump()
+        const live = this.sessions.get(previous.id)
+        return { ok: true, card: resumed, ...(live === undefined ? {} : { session: live }) }
+      }
+      if (previous.status === 'running') {
+        const placed: WorkbenchCard = { ...card, column: 'processing', status: 'running', updatedAt: Date.now() }
+        this.cards.set(placed.id, placed)
+        this.bump()
+        return { ok: true, card: placed, session: previous }
+      }
+      // done / failed / ended：先把它收干净，再开新的。
+      this.handles.get(previous.id)?.end()
+      this.handles.delete(previous.id)
+      this.sessions.setStatus(previous.id, 'ended')
+    }
+    // 先落表再派单：执行器可能**同步**就回调 finish（脚本跑不起来、命令立刻失败），
+    // 那时它要靠表里的这张卡把状态写成 failed。派完之后只补 `sessionId`，否则会把
+    // 已经发生的失败又盖回 running——那正是「failed 变成死状态」的成因。
+    const pending: WorkbenchCard = { ...card, column: 'processing', status: 'running', updatedAt: Date.now() }
+    this.cards.set(pending.id, pending)
+    const started = this.startSession(pending, id)
+    const placed = this.cards.get(started.id) ?? started
+    const withSession: WorkbenchCard = started.sessionId === undefined ? placed : { ...placed, sessionId: started.sessionId }
+    this.cards.set(withSession.id, withSession)
     this.bump()
-    const startedSession = started.sessionId === undefined ? undefined : this.sessions.get(started.sessionId)
+    const startedSession = withSession.sessionId === undefined ? undefined : this.sessions.get(withSession.sessionId)
     return {
       ok: true,
-      card: started,
+      card: withSession,
       ...(startedSession === undefined ? {} : { session: startedSession }),
     }
   }
@@ -232,12 +303,17 @@ export class WorkbenchBoard {
       this.bump()
       return { ok: true, card: done }
     }
-    // Into `todo`: a running run pauses rather than vanishing.
-    if (card.sessionId !== undefined) this.pauseSessionInternal(card.sessionId)
+    // Into `todo`: a running run pauses rather than vanishing. Anything else —
+    // a run that already failed or ended — leaves the card idle: calling it
+    // "paused" would promise a resume that cannot happen (the review flagged
+    // `failed` as a dead state for exactly this reason).
+    const session = card.sessionId === undefined ? undefined : this.sessions.get(card.sessionId)
+    const live = session?.status === 'running'
+    if (live && session !== undefined) this.pauseSessionInternal(session.id)
     const todo: WorkbenchCard = {
       ...card,
       column: 'todo',
-      status: card.sessionId === undefined ? 'idle' : 'paused',
+      status: live ? 'paused' : 'idle',
       updatedAt: Date.now(),
     }
     this.cards.set(todo.id, todo)
