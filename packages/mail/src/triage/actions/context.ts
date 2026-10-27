@@ -115,6 +115,13 @@ export interface ActionContext {
    * 但只有前者来自不可信来源。
    */
   readonly vars: Readonly<Record<string, string>>
+  /**
+   * 这封信能填进模板的值（`{summary}` / `{account}` / `{rule}` / `{repo}`）。
+   *
+   * 与 `vars` 分开：`vars` 是这台机器配的，这里是**这封信说的**。内核不学邮件的形状，
+   * 由连接器投影出这张平表——见 `docs/requirements/feat-workbench/workbench-redesign-analysis.md` §10.5。
+   */
+  readonly templateValues: Readonly<Record<string, string>>
   readonly mail?: {
     /** 账号的文件夹列表；`archive` 用它找 `\Archive`。 */
     listMailboxes(accountId: string): Promise<readonly { readonly path: string; readonly specialUse?: string }[]>
@@ -161,4 +168,29 @@ export function failure(detail: string): ActionOutcome {
 /** 取动作的三态；缺省由配置层填过，这里只兜底。 */
 export function modeOf(spec: ActionSpec): ActionMode {
   return spec.mode ?? 'auto'
+}
+/**
+ * 把一封信投影成模板值。
+ *
+ * 键是这一侧定的，内核只负责 `{name}` 替换；缺的键在填充时变成空串，所以这里只放
+ * 真的有的东西。
+ * @param input - 这封信的摘要、账号与命中的规则。
+ * @param repoRoot - 机器上配的仓库根，模板里常用。
+ * @returns 模板值。
+ */
+export function mailTemplateValues(input: {
+  readonly summary: string
+  readonly accountName: string
+  readonly ruleName: string
+  readonly from?: string
+  readonly body?: string
+}, repoRoot: string): Readonly<Record<string, string>> {
+  return {
+    summary: input.summary,
+    account: input.accountName,
+    rule: input.ruleName,
+    ...(input.from === undefined ? {} : { from: input.from }),
+    ...(input.body === undefined ? {} : { body: input.body }),
+    ...(repoRoot === '' ? {} : { repo: repoRoot }),
+  }
 }

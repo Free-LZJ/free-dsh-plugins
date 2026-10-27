@@ -59,6 +59,7 @@ async function bench(options: { readonly actionFails?: boolean } = {}) {
       rule: { id: 'r1', name: '保守规则', enabled: true, priority: 0, when: [], then: [] } satisfies Rule,
     },
     vars: { repoRoot: 'D:/open' },
+    templateValues: {},
     mail: {
       async listMailboxes() { return [{ path: 'INBOX' }] },
       async ensureFolder(_accountId, path) {

@@ -141,6 +141,7 @@ async function makePorts(
   const contextFor = (rule: Rule, summary: MailSummaryLike, body: string): ActionContext => ({
     task: { accountId: 'acc', accountName: '我的邮箱', summary, body, rule },
     vars: { repoRoot: 'D:/open' },
+    templateValues: {},
     mail: host.mail,
     sessions: host.sessions,
     console: host.console,

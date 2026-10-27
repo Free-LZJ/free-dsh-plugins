@@ -12,6 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { buildSessionPort } from '../src/triage/mount.ts'
+import { mailTemplateValues } from '../src/triage/actions/context.ts'
 
 /** One agent stub, recording what it was asked. */
 function agent(sessionId = 'session-1') {
@@ -31,6 +32,19 @@ function agent(sessionId = 'session-1') {
     },
   }
 }
+
+describe('mailTemplateValues', () => {
+  it('projects the values a template can use, and drops the empty ones', () => {
+    const values = mailTemplateValues({ summary: '限时优惠', accountName: '工作邮箱', ruleName: '推广' }, 'D:/open')
+    expect(values).toMatchObject({ summary: '限时优惠', account: '工作邮箱', rule: '推广', repo: 'D:/open' })
+    // 没有正文就**不放这个键**：{body} 填充时本来就是空串，塞个空键只会让投影看起来有值。
+    expect(values).not.toHaveProperty('body')
+  })
+
+  it('leaves the repo out when the machine names none', () => {
+    expect(mailTemplateValues({ summary: 'x', accountName: 'a', ruleName: 'r' }, '')).not.toHaveProperty('repo')
+  })
+})
 
 describe('buildSessionPort', () => {
   it('answers nothing when the host cannot create sessions', () => {

@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { watch, type FSWatcher } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import { builtinActions, type ActionContext, type SessionPort } from './actions/index.ts'
+import { builtinActions, mailTemplateValues, type ActionContext, type SessionPort } from './actions/index.ts'
 import { createSessionClassifier } from './classify.ts'
 import { builtinConditions } from './conditions.ts'
 import { ActionRegistry, ConditionRegistry, registerAll, writeTextFile } from '@free-lzj/dsh-decision'
@@ -247,6 +247,13 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
         rule: { id: input.ruleId, name: input.ruleName, enabled: true, priority: 0, when: [], then: [] },
       },
       vars: { repoRoot: config.repoRoot },
+      templateValues: mailTemplateValues({
+        summary: input.summary.subject,
+        accountName: input.accountName,
+        ruleName: input.ruleName,
+        from: input.summary.from.address,
+        ...(input.body === undefined ? {} : { body: input.body }),
+      }, config.repoRoot),
       mail: deps.mail as NonNullable<ActionContext['mail']>,
       ...(sessions === undefined ? {} : { sessions }),
       ...(workbench === undefined ? {} : { console: workbench }),
