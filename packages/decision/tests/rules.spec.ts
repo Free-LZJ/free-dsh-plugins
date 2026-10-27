@@ -163,6 +163,14 @@ describe('setConditionValues', () => {
     expect(result.text).toContain('docx')
   })
 
+  it('refuses a regex condition instead of guessing an alternation', () => {
+    // `pattern` 是单值，把一组值合并成 `a|b` 等于页面在编规则——这一版明确拒绝。
+    const source = ['- id: jira', '  when:', '    - kind: regex', '      field: body', '      pattern: EXEPD'].join('\n')
+    const result = setConditionValues(source, 'jira', 0, ['EXEPD', 'MOBOS'])
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toContain('正则')
+  })
   it('refuses an index the rule does not have', () => {
     expect(setConditionValues(SOURCE, 'github', 3, ['x'])).toEqual({ ok: false, error: '规则 github 没有第 4 个条件' })
   })

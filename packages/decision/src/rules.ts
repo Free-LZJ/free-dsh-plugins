@@ -239,30 +239,26 @@ export function setConditionValues(
     const target = document.getIn([...arrayPath(document), index, 'when', conditionIndex], true) as
       | { readonly items?: readonly { readonly key?: { readonly value?: unknown } }[] }
       | undefined
-    const shorthand = target?.items?.length === 1 && target.items[0]?.key?.value !== 'any'
+    // 简写形态是单键 map（`from: [...]`），键名本身就是值所在的键。
     // 路径指向**值节点本身**：整段列表一次替换，不往里塞 `.items`（那是内部结构）。
     //
     // 三种形状共用这一个写操作，因为它们在页面上就是「一组值」：
     // - `any: [...]`（from / to / subject / body / header）
     // - `extensions: [...]`（attachment 的扩展名过滤）
-    // - `pattern: '...'`（regex 只有一条模式，列表合并成一个字符串）
-    const kind = shorthand
-      ? String(target?.items?.[0]?.key?.value ?? '')
-      // 标准形态：值挂在种类自己的键上（regex → pattern，attachment → extensions）。
-      : String((target?.items ?? [])
-        .map(item => item.key?.value)
-        .find(value => value !== undefined && value !== 'has') ?? 'any')
-    const key = shorthand
-      ? kind
-      : kind === 'regex' ? 'pattern' : kind === 'attachment' ? 'extensions' : 'any'
+    // 值挂在哪个键上，看**键名**就够（标准形态：pattern / extensions / any）；先解 `kind`
+    const keys = (target?.items ?? []).map(item => String(item.key?.value ?? ''))
+    const key = keys.length === 1
+      ? keys[0] as string
+      : keys.includes('pattern') ? 'pattern' : keys.includes('extensions') ? 'extensions' : 'any'
     const base = [...arrayPath(document), index, 'when', conditionIndex, key]
     if (key === 'extensions') {
       document.setIn(base, values.map(value => String(value)))
       return undefined
     }
     if (key === 'pattern') {
-      document.setIn(base, values.map(value => String(value)).join('|'))
-      return undefined
+      // 正则条件这一版**不写**：pattern 是单值，把一组值合并成 alternation 是页面在编规则，
+      // 不是用户在改值。与其留一段没验证过的分支，不如让它明确不被支持。
+      return `规则 ${id} 的第 ${String(conditionIndex + 1)} 个条件是正则，暂不支持在这里改`
     }
     document.setIn(base, values.map(value => String(value)))
     return undefined
