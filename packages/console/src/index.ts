@@ -171,6 +171,9 @@ export function apply(ctx: Context, config: Config): void {
   })
   host.attachWorkbench(board)
   registerWorkbenchRoutes(ctx, { board })
+  // 卸载时把最后一次写等完再走：写是合并的（一次写 + 一次补写），如果这一层不先生效，
+  // 插件热重载/停用时最后那次改动就可能只留在内存里。
+  ctx.effect(() => () => { void board.flush() }, 'console: flush the board on unload')
 
   // The Loader row can be re-applied live; reflect the new view preference
   // without a restart.
