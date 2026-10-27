@@ -256,6 +256,7 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 - **看板执行器默认仍是模拟的**：`dsh` / `codex` 目前只跑固定脚本、不调模型、不改代码；接真实 agent 是以后实现同一执行器接口的事，不是改看板。
 - **看板不自动回写**：完工的卡只标「待确认回写」，钉钉 / Jira / 邮箱的出站动作都没有接；确认后回写的流程等用户定。
 - **判据的文字归页面**：卡片上的「判断依据」在 Host 那边是**代码 + 参数**（`classify-none`、`route-matched{route}`…），文字由工作台按 locales 渲染。英文界面下不会再冒出中文句子；页面不认识的代码退化成卡片上存的原文，再退化成一句通用说明——**任何情况下都不会把代码显示给人**。旧卡片存的是整句，读盘时归一化成 `legacy` 行原样保留，不做一次性迁移脚本。
+- **规则条件值可以点开改**：列表型条件（`any`）在规则页上是可点的值，点开是逗号分隔的输入框，回车/失焦保存、Esc 取消；异构条件（`regex` / `attachment` / `classifier`）仍是只读，因为它们的值和别的字段绑在一起，硬做输入框只会写坏 `rules.yml`。已真机确认交互（点开 → 输入框带出当前值 → Esc 不写盘）；**保存**这一步没有在你的实例上跑，那会改你真实的 `rules.yml`——写入路径由内核与路由的测试覆盖。
 - **「待确认回写」有出口**：跑完的卡片带着 `awaitingConfirmation`，详情里给一个「已回写」按钮把它清掉。出站系统还没接，所以这是**人的声明**而不是自动判断——也正因为如此，它必须是一次点击，而不是定时器。
 - **LLM 分类器已真机验证**（`--patch` overlay、`workbenchClassifier: llm`、`workbenchModel: deepseek-account/deepseek-chat`）：投一条「导出报表偶发超时」，卡片判据是 `classify-llm`（`model: deepseek-chat`）加一句人话解释，`kind=bug`、`confidence=0.9`、`priority=high`——同一段文字在规则分类器下只是「命中 bug 关键词 1 个」。
 - **LLM 分类器（`workbenchClassifier: 'llm'` + `workbenchModel: 'provider/model'`）**：同一个 `Classifier` 契约的模型实现。调用形状取自宿主自己的 `dsh-session-title-llm`（`llm.prepareCall` → `stream` 的 `text-delta`），不需要 agent、不需要会话。两条硬规则：**绝不抛错**（调用失败、答案读不懂、没配模型都回退到规则分类，并把原因写进卡片判据）、**绝不臆造分类**（答案里的 kind/priority 必须落在看板自己的词表里，否则整条作废）。
