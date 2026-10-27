@@ -17,7 +17,7 @@
  * @module @free-lzj/dsh-console/client/workbench/card
  */
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button, Input, Menu, MenuItemButton, Modal, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkbenchCard, WorkbenchColumn, WorkbenchReason, WorkbenchSession } from '../../protocol.ts'
 import { REASON_KEYS, type Translate } from '../locales.ts'
@@ -365,15 +365,7 @@ export function CardDetail(props: CardDetailProps): ReactNode {
               <span className={CLS.cardWhen}>{relativeTime(session.updatedAt, now, t)}</span>
             </div>
             <h4 className={CLS.sessionLogTitle}>{t('sessionLog')}</h4>
-            {session.logs.length === 0
-              ? <p className={CLS.detailNote}>{t('sessionLogEmpty')}</p>
-              : (
-                <ul className={CLS.sessionLog}>
-                  {session.logs.map((line, index) => (
-                    <li key={`${line.at}-${index}`} className={CLS.logLine}>{line.text}</li>
-                  ))}
-                </ul>
-              )}
+            <SessionLog t={t} lines={session.logs} />
             {/*
               Q5: the focus depth is read + interrupt only. Pause and end need the
               interrupt semantics settled first, so they stay off the page.
@@ -407,5 +399,32 @@ export function CardDetail(props: CardDetailProps): ReactNode {
         ))}
       </div>
     </Modal>
+  )
+}
+/**
+ * One session's log, kept on the newest line.
+ *
+ * A run prints while the dialog is open, and a log that stays scrolled to the top
+ * makes the newest line the one nobody sees. Following is unconditional (`el` is
+ * scrolled on every append) — a user who scrolled up to read history should not be
+ * yanked back, but the board's logs are short and append-only, so the simpler
+ * behaviour wins until someone asks otherwise.
+ * @param props.t - the translate seat.
+ * @param props.lines - the lines, oldest first.
+ * @returns the log list, or a note when nothing has been printed yet.
+ */
+function SessionLog(props: { readonly t: Translate; readonly lines: readonly { readonly at: number; readonly text: string }[] }): ReactNode {
+  const ref = useRef<HTMLUListElement | null>(null)
+  useEffect(() => {
+    const element = ref.current
+    if (element !== null) element.scrollTop = element.scrollHeight
+  }, [props.lines.length])
+  if (props.lines.length === 0) return <p className={CLS.detailNote}>{props.t('sessionLogEmpty')}</p>
+  return (
+    <ul className={CLS.sessionLog} ref={ref}>
+      {props.lines.map((line, index) => (
+        <li key={`${line.at}-${index}`} className={CLS.logLine}>{line.text}</li>
+      ))}
+    </ul>
   )
 }
