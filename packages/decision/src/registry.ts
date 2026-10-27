@@ -79,6 +79,18 @@ export interface Action<TSpec extends ActionSpecLike, TContext, TOutcome, TKind 
 export type TemplateValues = Readonly<Record<string, string>>
 
 /**
+ * What every action answers with.
+ *
+ * One shape for all of them, so the orchestration layer never switches on which
+ * action ran: `ok` with a sentence for the run history, or a failure with a reason a
+ * human can act on. Actions do not throw — a missing capability and a host refusal
+ * are both answers.
+ */
+export type ActionResult =
+  | { readonly ok: true; readonly detail: string }
+  | { readonly ok: false; readonly message: string }
+
+/**
  * Fill `{name}` placeholders from a projection.
  *
  * Deliberately tiny: no conditionals, no loops, no escaping rules beyond leaving an

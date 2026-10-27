@@ -8,6 +8,7 @@
  * @module @free-lzj/dsh-decision
  */
 
+export * from './actions/mcp.ts'
 export * from './actions/notify.ts'
 export * from './config.ts'
 export * from './pending.ts'
