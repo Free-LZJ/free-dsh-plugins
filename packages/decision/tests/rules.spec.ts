@@ -155,6 +155,14 @@ describe('setConditionValues', () => {
     expect(result.text).not.toContain('a@b.com')
   })
 
+  it('writes the attachment extension list', () => {
+    const source = ['- id: files', '  when:', '    - kind: attachment', '      has: true', '      extensions: [pdf]'].join('\n')
+    const result = setConditionValues(source, 'files', 0, ['pdf', 'docx'])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.text).toContain('docx')
+  })
+
   it('refuses an index the rule does not have', () => {
     expect(setConditionValues(SOURCE, 'github', 3, ['x'])).toEqual({ ok: false, error: '规则 github 没有第 4 个条件' })
   })

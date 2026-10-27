@@ -241,10 +241,30 @@ export function setConditionValues(
       | undefined
     const shorthand = target?.items?.length === 1 && target.items[0]?.key?.value !== 'any'
     // 路径指向**值节点本身**：整段列表一次替换，不往里塞 `.items`（那是内部结构）。
-    const path = shorthand
-      ? [...arrayPath(document), index, 'when', conditionIndex, String(target?.items?.[0]?.key?.value ?? '')]
-      : [...arrayPath(document), index, 'when', conditionIndex, 'any']
-    document.setIn(path, values.map(value => String(value)))
+    //
+    // 三种形状共用这一个写操作，因为它们在页面上就是「一组值」：
+    // - `any: [...]`（from / to / subject / body / header）
+    // - `extensions: [...]`（attachment 的扩展名过滤）
+    // - `pattern: '...'`（regex 只有一条模式，列表合并成一个字符串）
+    const kind = shorthand
+      ? String(target?.items?.[0]?.key?.value ?? '')
+      // 标准形态：值挂在种类自己的键上（regex → pattern，attachment → extensions）。
+      : String((target?.items ?? [])
+        .map(item => item.key?.value)
+        .find(value => value !== undefined && value !== 'has') ?? 'any')
+    const key = shorthand
+      ? kind
+      : kind === 'regex' ? 'pattern' : kind === 'attachment' ? 'extensions' : 'any'
+    const base = [...arrayPath(document), index, 'when', conditionIndex, key]
+    if (key === 'extensions') {
+      document.setIn(base, values.map(value => String(value)))
+      return undefined
+    }
+    if (key === 'pattern') {
+      document.setIn(base, values.map(value => String(value)).join('|'))
+      return undefined
+    }
+    document.setIn(base, values.map(value => String(value)))
     return undefined
   })
 }
