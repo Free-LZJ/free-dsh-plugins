@@ -125,7 +125,7 @@ export class RuleClassifier implements Classifier {
         ...(project === undefined ? {} : { project }),
         priority,
         confidence: 0.3,
-        reasons: ['未命中任何分类关键词，无法判断任务类型'],
+        reasons: [{ code: 'classify-none' }],
       }
     }
     if (second !== undefined && second.hits === top.hits) {
@@ -134,7 +134,7 @@ export class RuleClassifier implements Classifier {
         ...(project === undefined ? {} : { project }),
         priority,
         confidence: 0.45,
-        reasons: [`同时命中 ${top.kind} 与 ${second.kind}，无法唯一确定任务类型`],
+        reasons: [{ code: 'classify-ambiguous', params: { first: top.kind, second: second.kind } }],
       }
     }
     const executor = KIND_EXECUTOR[top.kind]
@@ -145,7 +145,7 @@ export class RuleClassifier implements Classifier {
       ...(executor === undefined ? {} : { executor }),
       // One hit is a hint, more hits are corroboration; never full certainty.
       confidence: Math.min(0.95, 0.6 + 0.1 * (top.hits - 1)),
-      reasons: [`命中 ${top.kind} 关键词 ${top.hits} 个`],
+      reasons: [{ code: 'classify-keyword-hit', params: { kind: top.kind, count: top.hits } }],
     }
   }
 }

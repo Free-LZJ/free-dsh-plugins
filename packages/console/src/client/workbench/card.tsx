@@ -19,8 +19,8 @@
 
 import { useState, type ReactNode } from 'react'
 import { Button, Input, Menu, MenuItemButton, Modal, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { WorkbenchCard, WorkbenchColumn, WorkbenchSession } from '../../protocol.ts'
-import type { Translate } from '../locales.ts'
+import type { WorkbenchCard, WorkbenchColumn, WorkbenchReason, WorkbenchSession } from '../../protocol.ts'
+import { REASON_KEYS, type Translate } from '../locales.ts'
 import { CLS } from '../styles.ts'
 
 /** The columns, in board order. */
@@ -255,6 +255,23 @@ export function BoardCard({ card, t, now, onOpen, onDispatch, onMove, onDragEnd 
   )
 }
 
+/**
+ * Word one line of the audit trail.
+ *
+ * Three fallbacks, in order: the page's own locale for the code, the sentence an
+ * older build stored on the card, then one generic line. None of them is the raw
+ * code — a card's history is read by people, not by the code that wrote it.
+ * @param reason - the stored line.
+ * @param t - the translate seat.
+ * @returns the sentence to show.
+ */
+export function reasonText(reason: WorkbenchReason, t: Translate): string {
+  if (reason.code === 'legacy' && reason.text !== undefined) return reason.text
+  const key = REASON_KEYS[reason.code]
+  if (key !== undefined) return t(key, reason.params)
+  return reason.text === undefined ? t('reasonUnknown') : reason.text
+}
+
 /** What the detail dialog reads and does. */
 export interface CardDetailProps {
   readonly card: WorkbenchCard
@@ -321,7 +338,7 @@ export function CardDetail(props: CardDetailProps): ReactNode {
         : (
           <ul className={CLS.detailReasons}>
             {reasons.map((reason, index) => (
-              <li key={`${index}-${reason}`} className={CLS.detailReason}>{reason}</li>
+              <li key={`${index}-${reason.code}`} className={CLS.detailReason}>{reasonText(reason, t)}</li>
             ))}
           </ul>
         )}

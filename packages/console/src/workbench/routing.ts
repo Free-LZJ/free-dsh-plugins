@@ -79,7 +79,10 @@ export function routeEvent(
       routeId: 'low-confidence',
       ruleVersion: table.version,
       classification,
-      reasons: [...classification.reasons, `置信度 ${classification.confidence} 低于自动派单阈值 ${AUTO_DISPATCH_CONFIDENCE}，落入待办人工处理`],
+      reasons: [
+        ...classification.reasons,
+        { code: 'route-low-confidence', params: { confidence: classification.confidence, threshold: AUTO_DISPATCH_CONFIDENCE } },
+      ],
     }
   }
   for (const rule of table.rules) {
@@ -93,7 +96,7 @@ export function routeEvent(
       routeId: rule.id,
       ruleVersion: table.version,
       classification,
-      reasons: [...classification.reasons, `命中路由 ${rule.id}`],
+      reasons: [...classification.reasons, { code: 'route-matched', params: { route: rule.id } }],
     }
   }
   return {
@@ -101,7 +104,7 @@ export function routeEvent(
     routeId: 'no-route',
     ruleVersion: table.version,
     classification,
-    reasons: [...classification.reasons, '没有路由认领该任务类型，落入待办人工处理'],
+    reasons: [...classification.reasons, { code: 'route-none' }],
   }
 }
 

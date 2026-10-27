@@ -244,6 +244,23 @@ export interface WorkbenchEvent {
   readonly body?: string
 }
 
+/**
+ * One line of a card's audit trail.
+ *
+ * The Host says **what happened** (`code` + `params`); the page says **how to
+ * word it**, through its own locales. A pre-rendered `text` only exists for cards
+ * written by an older build, where the Host spelled the sentence out — showing
+ * that is better than dropping the line.
+ */
+export interface WorkbenchReason {
+  /** Machine-readable id; the page renders the locale key registered for it. */
+  readonly code: string
+  /** Values the sentence needs (a kind, a count, an executor id). */
+  readonly params?: Readonly<Record<string, string | number>>
+  /** Sentence from an older build; shown when the page does not know `code`. */
+  readonly text?: string
+}
+
 /** What the classification core decided about one event. */
 export interface WorkbenchClassification {
   /** Task kind: `bug`, `requirement`, `consult`, or `unknown`. */
@@ -255,8 +272,8 @@ export interface WorkbenchClassification {
   readonly executor?: string
   /** 0–1; below the routing threshold the card is held for a human. */
   readonly confidence: number
-  /** Why, in the classifier's own words; shown on the card. */
-  readonly reasons: readonly string[]
+  /** Why, as codes the page words; shown on the card. */
+  readonly reasons: readonly WorkbenchReason[]
 }
 
 /** What routing does with a classified event. */
@@ -272,8 +289,8 @@ export interface RoutingDecision {
   /** Version of the routing table that decided. */
   readonly ruleVersion: string
   readonly classification: WorkbenchClassification
-  /** Why, in routing's own words; shown on the card. */
-  readonly reasons: readonly string[]
+  /** Why, as codes the page words; shown on the card. */
+  readonly reasons: readonly WorkbenchReason[]
 }
 
 /** One card on the board. */

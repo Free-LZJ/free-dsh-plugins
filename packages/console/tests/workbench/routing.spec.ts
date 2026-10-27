@@ -36,12 +36,23 @@ function classification(overrides: Partial<WorkbenchClassification>): WorkbenchC
     kind: 'bug',
     priority: 'normal',
     confidence: 0.9,
-    reasons: ['test'],
+    reasons: [{ code: 'classify-none' }],
     ...overrides,
   }
 }
 
 describe('routeEvent', () => {
+  it('records the route it matched as a code, not a sentence', () => {
+    const decision = routeEvent(classification({}), {
+      version: 'v1',
+      rules: [{ id: 'bug-to-dsh', action: 'dispatch', executor: 'dsh', kinds: ['bug'] }],
+    }, 'mail')
+    expect(decision.reasons).toEqual([
+      { code: 'classify-none' },
+      { code: 'route-matched', params: { route: 'bug-to-dsh' } },
+    ])
+  })
+
   it('dispatches a confident bug to DSH', () => {
     const decision = routeEvent(classification({}), defaultRoutingTable(), 'webhook')
     expect(decision).toMatchObject({ action: 'dispatch', executor: 'dsh', routeId: 'bug-to-dsh' })

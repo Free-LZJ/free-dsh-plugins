@@ -14,8 +14,9 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { WorkbenchCard, WorkbenchColumn, WorkbenchState } from '../../src/protocol.ts'
-import { zh, type Translate } from '../../src/client/locales.ts'
+import { en as enDictionary, zh, type Translate } from '../../src/client/locales.ts'
 import { BoardView, type WorkbenchFace } from '../../src/client/workbench/board.tsx'
+import { reasonText } from '../../src/client/workbench/card.tsx'
 
 afterEach(cleanup)
 
@@ -47,7 +48,7 @@ function card(overrides: Partial<WorkbenchCard> & Pick<WorkbenchCard, 'id' | 'co
       routeId: 'low-confidence',
       ruleVersion: 'workbench-routes-v1',
       classification: { kind: 'unknown', priority: 'normal', confidence: 0.3, reasons: [] },
-      reasons: ['关键词「报错」命中 bug 类'],
+      reasons: [{ code: 'classify-keyword-hit', params: { kind: 'bug', count: 1 } }],
     },
     ...overrides,
   }
@@ -256,7 +257,8 @@ describe('the board on screen', () => {
     const dialog = screen.getByRole('dialog', { name: '今天天气不错' })
     // The audit trail is the reason the dialog exists: why, and when.
     expect(within(dialog).getByText(t('detailReasons'))).toBeTruthy()
-    expect(within(dialog).getByText('关键词「报错」命中 bug 类')).toBeTruthy()
+    // 判据在 Host 那边是代码，文字由这一页按 locales 渲染。
+    expect(within(dialog).getByText(t('reasonClassifyKeywordHit', { kind: 'bug', count: 1 }))).toBeTruthy()
     expect(within(dialog).getByText(t('detailTimeline'))).toBeTruthy()
     expect(within(dialog).getByText(t('timelineCreated'), { exact: false })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -305,6 +307,39 @@ describe('the board on screen', () => {
     }
     render(<BoardView face={fake} t={t} />)
     expect(screen.getByText(t('boardLoading'))).toBeTruthy()
+  })
+})
+
+describe('reason wording', () => {
+  it('words a code through the locales, with its parameters', () => {
+    expect(reasonText({ code: 'classify-keyword-hit', params: { kind: 'bug', count: 2 } }, t))
+      .toBe(t('reasonClassifyKeywordHit', { kind: 'bug', count: 2 }))
+    expect(reasonText({ code: 'route-matched', params: { route: 'bug-to-dsh' } }, t)).toContain('bug-to-dsh')
+  })
+
+  it('words the same code in the other language too', () => {
+    // 判据的文字归页面：同一张卡在英文界面下不该出现中文句子。
+    const en = (key: string, params?: Record<string, unknown>): string => {
+      const template: string = (enDictionary as Record<string, string>)[key] ?? key
+      return params === undefined ? template : template.replace(/\{(\w+)\}/g, (match, name: string) => String(params[name] ?? match))
+    }
+    const shown = reasonText({ code: 'classify-keyword-hit', params: { kind: 'bug', count: 1 } }, en as unknown as Translate)
+    expect(shown).toBe('Matched 1 bug keyword(s)')
+    expect(shown).not.toMatch(/[\u4e00-\u9fa5]/)
+  })
+
+  it('shows the sentence an older build stored, verbatim', () => {
+    expect(reasonText({ code: 'legacy', text: '关键词「报错」命中 bug 类' }, t)).toBe('关键词「报错」命中 bug 类')
+  })
+
+  it('falls back to stored text for a code this build does not know', () => {
+    expect(reasonText({ code: 'from-a-newer-build', text: '一种新的判据' }, t)).toBe('一种新的判据')
+  })
+
+  it('never shows a raw code to the user', () => {
+    const shown = reasonText({ code: 'from-a-newer-build' }, t)
+    expect(shown).toBe(t('reasonUnknown'))
+    expect(shown).not.toContain('from-a-newer-build')
   })
 })
 

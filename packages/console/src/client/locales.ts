@@ -92,6 +92,14 @@ export const zh = {
   detailRoute: '规则与版本',
   detailReasons: '判断依据',
   detailNoReasons: '没有留下判断依据',
+  reasonClassifyNone: '未命中任何分类关键词，无法判断任务类型',
+  reasonClassifyAmbiguous: '同时命中 {first} 与 {second}，无法唯一确定任务类型',
+  reasonClassifyKeywordHit: '命中 {kind} 关键词 {count} 个',
+  reasonRouteLowConfidence: '置信度 {confidence} 低于自动派单阈值 {threshold}，落入待办人工处理',
+  reasonRouteMatched: '命中路由 {route}',
+  reasonRouteNone: '没有路由认领该任务类型，落入待办人工处理',
+  reasonRouteUnknownExecutor: '路由指定的执行器 {executor} 未注册，落入待办人工处理',
+  reasonUnknown: '（这条判断依据没有可读说明）',
   detailTimeline: '流转时间线',
   detailTimelineSource: '时间线由卡片自身的时间戳推导；完整的审计流在 P2 接入。',
   detailActions: '动作',
@@ -285,6 +293,14 @@ export const en: Record<keyof typeof zh, string> = {
   detailRoute: 'Rule and version',
   detailReasons: 'Why it was classified this way',
   detailNoReasons: 'No reasons were recorded',
+  reasonClassifyNone: 'No classification keyword matched, so the task kind is unknown',
+  reasonClassifyAmbiguous: 'Matched both {first} and {second}, so the kind is ambiguous',
+  reasonClassifyKeywordHit: 'Matched {count} {kind} keyword(s)',
+  reasonRouteLowConfidence: 'Confidence {confidence} is below the auto-dispatch threshold {threshold}; held for a human',
+  reasonRouteMatched: 'Matched route {route}',
+  reasonRouteNone: 'No route claimed this task kind; held for a human',
+  reasonRouteUnknownExecutor: 'Routing named executor {executor}, which is not registered; held for a human',
+  reasonUnknown: '(no readable explanation for this line)',
   detailTimeline: 'Timeline',
   detailTimelineSource: 'Built from the card\'s own timestamps; the full audit stream arrives in P2.',
   detailActions: 'Actions',
@@ -408,3 +424,21 @@ export type ConsoleLocaleKey = keyof typeof zh
  * @returns the localized text.
  */
 export type Translate = (key: ConsoleLocaleKey, params?: Record<string, unknown>) => string
+
+/**
+ * Audit-trail codes the Host emits, mapped to the keys this plugin ships.
+ *
+ * Kept here rather than in the Host: the Host says **what happened**, the page
+ * decides how to word it. A code this table does not know falls back to whatever
+ * the stored card carried (`text`) and then to one generic sentence — a card's
+ * history must never show a raw `classify-none` at the user.
+ */
+export const REASON_KEYS: Readonly<Record<string, ConsoleLocaleKey>> = {
+  'classify-none': 'reasonClassifyNone',
+  'classify-ambiguous': 'reasonClassifyAmbiguous',
+  'classify-keyword-hit': 'reasonClassifyKeywordHit',
+  'route-low-confidence': 'reasonRouteLowConfidence',
+  'route-matched': 'reasonRouteMatched',
+  'route-none': 'reasonRouteNone',
+  'route-unknown-executor': 'reasonRouteUnknownExecutor',
+}

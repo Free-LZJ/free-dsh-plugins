@@ -200,7 +200,7 @@ export class WorkbenchBoard {
           ...decision,
           action: 'hold',
           routeId: 'unknown-executor',
-          reasons: [...decision.reasons, `路由指定的执行器 ${executorId} 未注册，落入待办人工处理`],
+          reasons: [...decision.reasons, { code: 'route-unknown-executor', params: { executor: executorId } }],
         }
         card = { ...card, column: 'todo', status: 'idle', decision }
         this.cards.set(card.id, card)

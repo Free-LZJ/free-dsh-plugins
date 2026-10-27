@@ -15,7 +15,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { WorkbenchCard, WorkbenchSession } from '../protocol.ts'
+import type {
+  RoutingDecision, WorkbenchCard, WorkbenchClassification, WorkbenchReason, WorkbenchSession,
+} from '../protocol.ts'
 import { STATE_DIR } from '../store.ts'
 
 /** The persisted board document. */
@@ -78,10 +80,43 @@ function normalize(value: unknown): WorkbenchDocument {
   return {
     version: 1,
     cards: Array.isArray(candidate.cards)
-      ? (candidate.cards as WorkbenchCard[]).filter((card) => typeof card?.id === 'string')
+      ? (candidate.cards as WorkbenchCard[])
+        .filter((card) => typeof card?.id === 'string')
+        .map(withReadableReasons)
       : [],
     sessions: Array.isArray(candidate.sessions)
       ? (candidate.sessions as WorkbenchSession[]).filter((session) => typeof session?.id === 'string')
       : [],
   }
+}
+
+/**
+ * Turn a card written by an older build into one this page can word.
+ *
+ * Those builds stored the audit trail as finished Chinese sentences. Dropping
+ * them would erase why a card was classified the way it was, so each string
+ * becomes a `legacy` line that keeps its text — the page shows it verbatim, and
+ * every reason it writes from now on is a code it can translate.
+ * @param card - a card as it was stored.
+ * @returns the card with structured reasons.
+ */
+function withReadableReasons(card: WorkbenchCard): WorkbenchCard {
+  const decision = card.decision as RoutingDecision & { reasons?: readonly (string | WorkbenchReason)[] }
+  const classification = card.decision.classification as WorkbenchClassification & {
+    reasons?: readonly (string | WorkbenchReason)[]
+  }
+  return {
+    ...card,
+    decision: {
+      ...card.decision,
+      reasons: readable(decision.reasons),
+      classification: { ...card.decision.classification, reasons: readable(classification.reasons) },
+    },
+  }
+}
+
+/** One reason list, with plain strings from older builds kept as text. */
+function readable(reasons: readonly (string | WorkbenchReason)[] | undefined): readonly WorkbenchReason[] {
+  if (reasons === undefined) return []
+  return reasons.map((reason) => (typeof reason === 'string' ? { code: 'legacy', text: reason } : reason))
 }

@@ -48,13 +48,16 @@ describe('the rule classifier', () => {
     const result = classify('今天天气不错')
     expect(result.kind).toBe('unknown')
     expect(result.confidence).toBeLessThan(0.6)
-    expect(result.reasons).toHaveLength(1)
+    // 判据是代码 + 参数，文字由页面出（§9 #9）。
+    expect(result.reasons).toEqual([{ code: 'classify-none' }])
   })
 
-  it('answers unknown when two kinds tie', () => {
+  it('answers unknown when two kinds tie, and says which two', () => {
     const result = classify('报错咨询')
     expect(result.kind).toBe('unknown')
     expect(result.confidence).toBeLessThan(0.6)
+    // 代码 + 参数：页面自己把这些参数拼成一句话。
+    expect(result.reasons).toEqual([{ code: 'classify-ambiguous', params: { first: 'bug', second: 'consult' } }])
   })
 
   it('grows more confident with corroborating keywords', () => {
