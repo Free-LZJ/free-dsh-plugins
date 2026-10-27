@@ -516,15 +516,16 @@ function TriageBody({ t, data, triage, act }: {
                     : rule.when.map((condition, position) => (
                       <span key={`${condition.kind}-${String(position)}`} className={CLS.ruleCondition}>
                         <Tag tone="quiet">{condition.kind}</Tag>
-                        {condition.any === undefined
-                          // 异构条件（regex / header / attachment / classifier）这一版不内联编辑：
-                          // 它们的值与其它字段绑在一起，硬做一个输入框只会写坏文件。
+                        {condition.any === undefined && condition.extensions === undefined
+                          // 可编辑的是「一组值」：`any` 与 `extensions` 都是这种形状。
+                          // regex 的单值 `pattern`、classifier 的 `prompt` 不是——内核也会拒绝，
+                          // 所以那些条件保持只读，不给一个点了没用的输入框。
                           ? <span className={CLS.ruleWhenValue}>{conditionValue(condition)}</span>
                           : (
                             <ConditionValues
                               t={t}
                               {...(condition.name === undefined ? {} : { label: condition.name })}
-                              values={condition.any}
+                              values={condition.any ?? condition.extensions ?? []}
                               onSubmit={(values) => { act(triage.setCondition(rule.id, position, values)) }}
                             />
                           )}
