@@ -151,6 +151,7 @@ export const CLS = {
   ruleThen: 'dshc-rule-then',
   ruleWhenLabel: 'dshc-rule-when-label',
   ruleWhenValue: 'dshc-rule-when-value',
+  ruleValueInput: 'dshc-rule-value-input',
   ruleCondition: 'dshc-rule-condition',
   ruleAction: 'dshc-rule-action',
   runList: 'dshc-run-list',

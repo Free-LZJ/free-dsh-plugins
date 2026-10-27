@@ -129,6 +129,16 @@ export interface TriageSource {
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
   setMode(ruleId: string, actionIndex: number, mode: 'auto' | 'suggest' | 'off'): Promise<TriageResult>
+  /**
+   * Replace one condition's match values.
+   *
+   * Only the values: changing what a condition compares is a different rule, not an
+   * edit of this one, so there is deliberately no way to do it from here.
+   * @param ruleId - the rule.
+   * @param conditionIndex - the condition's position in when.
+   * @param values - the new values.
+   */
+  setCondition(ruleId: string, conditionIndex: number, values: readonly string[]): Promise<TriageResult>
   undo(runId: string): Promise<TriageResult>
   /**
    * Run the current rules against one real mail without touching it.
@@ -186,6 +196,8 @@ export function createTriageSource(): TriageSource {
     setEnabled: async (ruleId, enabled) => await write('/rules/enabled', { ruleId, enabled }),
     movePriority: async (ruleId, direction) => await write('/rules/priority', { ruleId, direction }),
     setMode: async (ruleId, actionIndex, mode) => await write('/rules/mode', { ruleId, actionIndex, mode }),
+    setCondition: async (ruleId, conditionIndex, values) =>
+      await write('/rules/condition', { ruleId, conditionIndex, values }),
     undo: async (runId) => await write('/undo', { runId }),
     testRun: async (ref) => {
       const response = await fetch(`${TRIAGE_PREFIX}/test`, {
@@ -235,6 +247,61 @@ function runTone(status: string): TagTone {
   if (status === 'partial') return 'warning'
   if (status === 'suggested') return 'info'
   return 'outline'
+}
+
+/**
+ * One condition's match values, editable in place.
+ *
+ * A list of values is the one shape the rule file makes unambiguous (`any`), so it
+ * is the one shape this page edits. Saving sends the whole list — the kernel
+ * replaces it wholesale, which is why an emptied field is a real edit ("match
+ * nothing") rather than a no-op.
+ * @param props.t - the translate seat.
+ * @param props.values - the current values.
+ * @param props.onSubmit - called with the new list.
+ * @returns the field, or the read-only text when nothing is being edited.
+ */
+function ConditionValues(props: {
+  readonly t: Translate
+  /** A header condition names the header it looks at; the values edit keeps it. */
+  readonly label?: string
+  readonly values: readonly string[]
+  readonly onSubmit: (values: readonly string[]) => void
+}): ReactNode {
+  const [draft, setDraft] = useState<string | undefined>(undefined)
+  if (draft === undefined) {
+    return (
+      <button
+        type="button"
+        className={CLS.ruleWhenValue}
+        title={props.t('ruleEditValuesHint')}
+        onClick={() => { setDraft(props.values.join(', ')) }}
+      >
+        {props.label === undefined
+          ? props.values.join(' · ')
+          : `${props.label}: ${props.values.join(' · ')}`}
+      </button>
+    )
+  }
+  const save = (): void => {
+    const values = draft.split(',').map(value => value.trim()).filter(value => value !== '')
+    setDraft(undefined)
+    props.onSubmit(values)
+  }
+  return (
+    <input
+      className={CLS.ruleValueInput}
+      aria-label={props.t('ruleEditValues')}
+      value={draft}
+      autoFocus
+      onChange={(event) => { setDraft(event.target.value) }}
+      onBlur={save}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') save()
+        if (event.key === 'Escape') setDraft(undefined)
+      }}
+    />
+  )
 }
 
 /**
@@ -449,7 +516,18 @@ function TriageBody({ t, data, triage, act }: {
                     : rule.when.map((condition, position) => (
                       <span key={`${condition.kind}-${String(position)}`} className={CLS.ruleCondition}>
                         <Tag tone="quiet">{condition.kind}</Tag>
-                        <span className={CLS.ruleWhenValue}>{conditionValue(condition)}</span>
+                        {condition.any === undefined
+                          // 异构条件（regex / header / attachment / classifier）这一版不内联编辑：
+                          // 它们的值与其它字段绑在一起，硬做一个输入框只会写坏文件。
+                          ? <span className={CLS.ruleWhenValue}>{conditionValue(condition)}</span>
+                          : (
+                            <ConditionValues
+                              t={t}
+                              {...(condition.name === undefined ? {} : { label: condition.name })}
+                              values={condition.any}
+                              onSubmit={(values) => { act(triage.setCondition(rule.id, position, values)) }}
+                            />
+                          )}
                       </span>
                     ))}
                 </div>

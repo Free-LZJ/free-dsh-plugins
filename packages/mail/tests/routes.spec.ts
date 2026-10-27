@@ -220,7 +220,42 @@ describe('the registered routes', () => {
     expect(routes.size).toBe(16)
   })
 
+  it('posts a condition edit with its values, and refuses a body without an index', async () => {
+    // 这条是「页面点了保存，文件真的被改」的服务端那一半：参数必须原样到达 triage。
+    const seen: { ruleId: string; conditionIndex: number; values: readonly string[] }[] = []
+    const stub = host()
+    const { call } = mounted(host({
+      triage: {
+        ...stub.triage,
+        setCondition: async (ruleId, conditionIndex, values) => {
+          seen.push({ ruleId, conditionIndex, values })
+          return { ok: true }
+        },
+      },
+    }))
 
+    const accepted = new RecordedResponse()
+    await call(
+      TRIAGE_RULE_CONDITION_PATH,
+      request({
+        url: TRIAGE_RULE_CONDITION_PATH,
+        method: 'POST',
+        headers: asJson,
+        body: JSON.stringify({ ruleId: 'jira', conditionIndex: 0, values: ['a@b.com', 'c@d.com'] }),
+      }),
+      accepted as unknown as ServerResponse,
+    )
+    expect(accepted.status).toBe(200)
+    expect(seen).toEqual([{ ruleId: 'jira', conditionIndex: 0, values: ['a@b.com', 'c@d.com'] }])
+
+    const refused = new RecordedResponse()
+    await call(
+      TRIAGE_RULE_CONDITION_PATH,
+      request({ url: TRIAGE_RULE_CONDITION_PATH, method: 'POST', headers: asJson, body: '{"ruleId":"jira"}' }),
+      refused as unknown as ServerResponse,
+    )
+    expect(refused.status).toBe(400)
+  })
 
   it('runs an older page through the same mutation guards as a refresh', async () => {
     const run = vi.fn(async () => ({ ok: true, added: 30, exhausted: false }) as RouteResult)
