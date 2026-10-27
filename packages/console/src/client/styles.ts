@@ -134,6 +134,28 @@ export const CLS = {
   sessionLogTitle: 'dshc-session-log-title',
   sessionLog: 'dshc-session-log',
   logLine: 'dshc-log-line',
+  ruleDropped: 'dshc-rule-dropped',
+  ruleList: 'dshc-rule-list',
+  ruleItem: 'dshc-rule-item',
+  ruleHead: 'dshc-rule-head',
+  ruleOrder: 'dshc-rule-order',
+  ruleName: 'dshc-rule-name',
+  ruleTools: 'dshc-rule-tools',
+  ruleWhen: 'dshc-rule-when',
+  ruleThen: 'dshc-rule-then',
+  ruleWhenLabel: 'dshc-rule-when-label',
+  ruleWhenValue: 'dshc-rule-when-value',
+  ruleCondition: 'dshc-rule-condition',
+  ruleAction: 'dshc-rule-action',
+  runList: 'dshc-run-list',
+  runItem: 'dshc-run-item',
+  runHead: 'dshc-run-head',
+  runWhen: 'dshc-run-when',
+  runRule: 'dshc-run-rule',
+  runSubject: 'dshc-run-subject',
+  runTail: 'dshc-run-tail',
+  runActions: 'dshc-run-actions',
+  runAction: 'dshc-run-action',
   focus: 'dshc-focus',
   focusList: 'dshc-focus-list',
   focusItem: 'dshc-focus-item',
@@ -237,6 +259,27 @@ const CSS = `
 .${CLS.sessionLogTitle}{margin:0;font-size:11px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-secondary)}
 .${CLS.sessionLog}{display:flex;flex-direction:column;gap:2px;max-height:160px;overflow-y:auto;margin:0;padding:0;list-style:none}
 .${CLS.logLine}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap}
+/* 规则视图：一条规则一张卡（Rule → conditions → actions），命中记录各自一条。 */
+.${CLS.ruleDropped}{margin:0;padding:0 0 0 16px;font-size:11px;line-height:16px;color:var(--dsw-alias-state-warn-primary)}
+.${CLS.ruleList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.${CLS.ruleItem}{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill)}
+.${CLS.ruleHead}{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.${CLS.ruleOrder}{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-bg-layer-3);font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.${CLS.ruleName}{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.ruleTools}{display:inline-flex;align-items:center;gap:4px;margin-left:auto}
+.${CLS.ruleWhen},.${CLS.ruleThen}{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;line-height:18px}
+.${CLS.ruleWhenLabel}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.ruleWhenValue}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.${CLS.ruleCondition},.${CLS.ruleAction}{display:inline-flex;align-items:center;gap:4px}
+.${CLS.runList}{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.${CLS.runItem}{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2)}
+.${CLS.runHead}{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.${CLS.runWhen}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.runRule}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}
+.${CLS.runSubject}{flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.${CLS.runTail}{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.${CLS.runActions}{display:flex;flex-direction:column;gap:2px;margin:0;padding:0 0 0 4px;list-style:none}
+.${CLS.runAction}{display:flex;align-items:center;gap:6px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
 .${CLS.focus}{display:flex;flex-direction:column;gap:10px}
 .${CLS.focusList}{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
 .${CLS.focusItem}{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-settings-card-fill)}

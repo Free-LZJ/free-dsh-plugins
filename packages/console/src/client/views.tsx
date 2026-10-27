@@ -1,18 +1,13 @@
 /**
- * The three content views the workbench shows beside the board: 规则, 连接器 and
- * 应用.
+ * Two of the content views the workbench shows beside the board: 连接器 and 应用.
  *
- * Two of them are honest about where they are. **规则** is a placeholder with a
- * reason: the decision core (rule file, condition and action registries, hit
- * records, undo window) moves into the workbench in P1b, so until then this view
- * offers the one thing it really has — the board's routing-table version — and
- * says plainly that there is nothing to edit. **连接器** is real capability that
- * already exists: the connector metadata the board advertises, plus the event
- * simulator, which is marked as a debug tool rather than a product feature.
+ * **连接器** is real capability that already exists: the connector metadata the
+ * board advertises, plus the event simulator, which is marked as a debug tool
+ * rather than a product feature. **应用** is the old home page's reason for
+ * existing, demoted from the whole workbench body to one view: the panel
+ * directory, with its three layouts and its search.
  *
- * **应用** is the old home page's reason for existing, demoted from the whole
- * workbench body to one view: the panel directory, with its three layouts and
- * its search. Nothing about it changed except where it lives.
+ * 规则 has its own module (`./rules.tsx`) because it talks to another plugin.
  *
  * @module @free-lzj/dsh-console/client/views
  */
@@ -26,43 +21,6 @@ import { LAYOUTS, LAYOUT_ORDER, type HomeListProps } from './home.tsx'
 import { CLS } from './styles.ts'
 import type { WorkbenchFace } from './workbench/board.tsx'
 import { WorkbenchSimulator } from './workbench/simulator.tsx'
-
-/**
- * Draw the rules view.
- * @param props.t - the translate seat.
- * @param props.face - the board face, when the Host mounted one.
- * @returns the placeholder, plus the one fact that already exists.
- */
-export function RulesView({ t, face }: {
-  readonly t: Translate
-  readonly face?: WorkbenchFace | undefined
-}): ReactNode {
-  return (
-    <section className={CLS.view}>
-      <header className={CLS.viewHead}>
-        <h2 className={CLS.viewHeading}>{t('rulesTitle')}</h2>
-        <p className={CLS.viewHint}>{t('rulesHint')}</p>
-      </header>
-      {face !== undefined && <RoutingVersion face={face} t={t} />}
-      <p className={CLS.viewEmpty}>{t('rulesLater')}</p>
-    </section>
-  )
-}
-
-/**
- * The routing-table version the board is currently deciding with.
- *
- * A component of its own because it calls a selector hook, and a hook may not be
- * called conditionally from the view that may or may not have a face.
- * @param props.face - the board face.
- * @param props.t - the translate seat.
- * @returns the version line, or nothing before the first snapshot.
- */
-function RoutingVersion({ face, t }: { readonly face: WorkbenchFace; readonly t: Translate }): ReactNode {
-  const state = face.useBoard((current) => current)
-  if (state === undefined) return null
-  return <p className={CLS.viewMeta}>{t('routingVersion', { version: state.routingVersion })}</p>
-}
 
 /**
  * Draw the connectors view: what comes in, what goes out, and the debug simulator.

@@ -38,6 +38,7 @@ import { bindSelector, link } from './link.ts'
 import { WorkbenchLink } from './workbench/link.ts'
 import type { WorkbenchFace } from './workbench/board.tsx'
 import { PanelRegistry, panelRows, type PanelRow } from './registry.ts'
+import { createTriageSource } from './rules.tsx'
 import { ConsoleIcon, ConsoleShell, FocusShell, type ConsoleShellProps } from './shell.tsx'
 import { ConsoleSettingsRow } from './settings-row.tsx'
 import { createPageFace, desktopBlockedReason } from './surfaces.ts'
@@ -84,6 +85,8 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => installConsoleStyles(), 'console: styles')
 
   const registry = new PanelRegistry()
+  // 规则视图的数据源：引擎现在住在 mail 里，P1a 之后换的是这一个对象。
+  const triage = createTriageSource()
   const face = createPageFace()
   const workbenchLink = new WorkbenchLink()
   const useBoard = bindSelector<WorkbenchState | undefined>(workbenchLink)
@@ -276,6 +279,7 @@ export function apply(ctx: ClientContext): void {
     dismissItem: (id: string) => link.actOnItem({ op: 'dismiss', id }),
     liveNotices: () => liveNotices,
     workbench: workbenchFace,
+    triage,
   })
 
   ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({

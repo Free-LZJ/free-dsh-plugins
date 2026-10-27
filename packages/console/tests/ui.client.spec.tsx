@@ -190,6 +190,15 @@ function shellFace(
         return { ok: true }
       },
       liveNotices: () => [],
+      // 规则视图读的是另一个插件（mail）的引擎；这一层的用例只关心导航，所以给空引擎。
+      triage: {
+        rules: async () => ({ rules: [], source: 'file' as const, path: 'C:/dsh/mail/triage/rules.yml', dropped: [] }),
+        runs: async () => [],
+        setEnabled: async () => ({ ok: true }),
+        movePriority: async () => ({ ok: true }),
+        setMode: async () => ({ ok: true }),
+        undo: async () => ({ ok: true }),
+      },
     },
   }
 }
@@ -286,12 +295,13 @@ describe('the workbench on screen', () => {
     expect(screen.getByText(/is not registered/)).toBeTruthy()
   })
 
-  it('draws the rules placeholder with its reason instead of fake buttons', () => {
+  it('draws the rules view from the engine it was handed', () => {
     const { face } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
     fireEvent.click(screen.getByRole('button', { name: t('viewRules') }))
     expect(screen.getByText(t('rulesHint'))).toBeTruthy()
-    expect(screen.getByText(t('rulesLater'))).toBeTruthy()
+    // 引擎回的是空规则表：页面说「一条规则也没有」，不是空壳。
+    return screen.findByText(t('rulesNone'))
   })
 
   it('opens the row the user clicked', () => {

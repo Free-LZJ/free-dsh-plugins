@@ -29,7 +29,8 @@ import type {
 import type { PanelRow } from './registry.ts'
 import { FocusPage } from './focus.tsx'
 import { ViewNav } from './nav.tsx'
-import { AppsView, ConnectorsView, RulesView } from './views.tsx'
+import { RulesView, type TriageSource } from './rules.tsx'
+import { AppsView, ConnectorsView } from './views.tsx'
 import { BoardView, WorkbenchUnavailable, type WorkbenchFace } from './workbench/board.tsx'
 import { AttentionQueue } from './attention.tsx'
 import type { Translate } from './locales.ts'
@@ -106,6 +107,8 @@ export interface ShellInjected {
    * without one — and every existing spec face — renders the home list alone.
    */
   readonly workbench?: WorkbenchFace
+  /** The decision engine's public surface, wherever it currently lives. */
+  readonly triage: TriageSource
 }
 
 /**
@@ -179,7 +182,7 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
             {workbench === undefined ? <WorkbenchUnavailable t={t} /> : <BoardView face={workbench} t={t} />}
           </>
         )}
-        {current === 'rules' && <RulesView t={t} face={workbench} />}
+        {current === 'rules' && <RulesView t={t} triage={props.triage} />}
         {current === 'connectors' && (workbench === undefined
           ? <WorkbenchUnavailable t={t} />
           : <ConnectorsView face={workbench} t={t} />)}
