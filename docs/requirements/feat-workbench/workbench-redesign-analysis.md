@@ -489,7 +489,7 @@ ctx.uiWorkspace.openSession(target: SessionTarget): void
 | 可达性：键盘全路径、拖拽有等价菜单 | ✅ | 卡片有 `role`/`tabIndex`/Enter 打开；移列有「移到…」菜单，拖拽不是唯一手段 |
 | 性能：首屏不拉全量日志；轮询增量 | ✅ | `/workbench/state?since=<revision>` 未变时只回 `{unchanged:true}`（实测 331 vs 1494 字节）；标签页隐藏时不轮询；写盘合并 |
 
-**两处未达成且原因明确**：P1a 最后一刀（通用动作 + 编排）原等一个 payload 设计决定——**该决定已按保守方案记录在 §11（A14）**，剩下的只是实施；P2 执行器真实化等宿主暴露建会话入口（证据见 `docs/workbench-session-api.md`）。两者都不影响上面六条的验收。
+**一处未达成且原因明确**：P2 执行器真实化等宿主暴露建会话入口（证据见 `docs/workbench-session-api.md`），不影响上面六条的验收。P1a 的第四刀已按 §10.5 收口：五个动作 + 匹配 + 到期执行 + 撤销进了内核，主编排按同一节的判断留在连接器。
 
 ---
 
@@ -515,6 +515,19 @@ ctx.uiWorkspace.openSession(target: SessionTarget): void
 - 内核的 `runHttp` 只收「URL/method + 一个**已经拼好的**载荷」，载荷由连接器给；
 - 内核的 `runSession` 只收「标题、prompt、目标仓库与预设」，同样是连接器给的平表；
 - 判断标准一致：**内核不认识邮件的字段名**，只做投递与错误折叠。
+
+**第四刀的收口（2026-10，读完 `apply` 之后定）**：`triage()` 的主编排**不搬**。
+
+搬完 `notify` / `mcp` / `script` / `http` / `session`、`ruleMatches`、`runDueActions`、`undoRunById`
+之后，`apply()` 里剩下的东西是：试运行策略、三态策略（off / suggest / auto）、延迟秒数怎么算、
+以及「建议」怎么举成一条可点的条目。这四件事**没有一件是通用的**——它们都依赖连接器的概念
+（邮件有 `delaySeconds` 与工作台条目，别的连接器未必有）。
+
+再往下搬只有两种结局：给内核加一层回调（`advise` / `queue` / `runNow` 各一个），那是用抽象
+换同样的代码行数；或者把邮件概念塞进内核，那是方案 A 从后门回来。两者都不比现在好。
+
+**所以第四刀的边界就是：通用的进内核，策略留在连接器。** 已经搬过去的七样东西（五个动作 +
+匹配 + 到期执行 + 撤销）都是「换个连接器也成立」的，而 `apply()` 不是。
 
 实施顺序（留给下一轮或接手的人）：先给内核的 `ActionContext` 加 `templateValues`（连接器注入），再逐个把动作搬进内核（`notify` → `mcp` → `script` → `session` → `http`，从简单到复杂），每搬一个都保留原有测试，最后把邮件的 `triage/triage.ts` 编排也搬过去。
 
