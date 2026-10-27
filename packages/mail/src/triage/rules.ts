@@ -16,7 +16,7 @@
 import { readFile } from 'node:fs/promises'
 import { parseDocument, YAMLParseError, type Document } from 'yaml'
 import { normalizeRules, isRecord } from './config.ts'
-import { writeTextFile } from './store.ts'
+import { writeTextFile } from '@free-lzj/dsh-decision'
 import type { ActionMode, Rule, RuleFileError } from './types.ts'
 
 /** 规则文件里认识的版本号；不认识的版本拒绝加载而不是猜。 */

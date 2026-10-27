@@ -17,10 +17,10 @@ import { builtinActions, type ActionContext, type SessionPort } from '../../src/
 import { builtinConditions } from '../../src/triage/conditions.ts'
 import { ActionRegistry, ConditionRegistry, registerAll } from '../../src/triage/registry.ts'
 import { createPendingStore } from '../../src/triage/pending.ts'
-import { createRunStore } from '../../src/triage/runs.ts'
+import { createRunStore } from '@free-lzj/dsh-decision'
 import { normalizeConfig, normalizeRules } from '../../src/triage/config.ts'
 import { runDue, triage, undoRun, type IncomingMail, type TriagePorts } from '../../src/triage/triage.ts'
-import type { Config, MailSummaryLike, Rule } from '../../src/triage/types.ts'
+import type { Config, MailEvent, MailSummaryLike, Rule } from '../../src/triage/types.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -150,7 +150,10 @@ async function makePorts(
     config: () => config,
     conditions,
     actions,
-    runs: createRunStore({ path: join(home, 'runs.json') }),
+    runs: createRunStore<MailEvent>({
+      path: join(home, 'runs.json'),
+      parseEvent: (record) => record['event'] as MailEvent | undefined,
+    }),
     pending: createPendingStore({ path: join(home, 'pending.json') }),
     context: input => contextFor(input.rule, input.mail.summary, input.body),
     replayContext: input => contextFor(
@@ -571,8 +574,8 @@ describe('没有命中规则时也写一条记录，好回答「这封为什么�
     const host = makeHost()
     const ports = await makePorts([], host)
     const run = await triage(mail(), ports)
-    expect(run.message.subject).toBe('Run failed: E2E')
-    expect(run.message.uid).toBe(7)
-    expect(run.message.from).toContain('notifications@github.com')
+    expect(run.event.subject).toBe('Run failed: E2E')
+    expect(run.event.uid).toBe(7)
+    expect(run.event.from).toContain('notifications@github.com')
   })
 })

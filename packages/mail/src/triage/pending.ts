@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { readJson, serialWriter } from './store.ts'
+import { readJson, serialWriter } from '@free-lzj/dsh-decision'
 import type { ActionSpec, MailSummaryLike, PendingAction, Run } from './types.ts'
 
 /** `pending.json` 的形状。 */
@@ -36,7 +36,7 @@ export interface PendingStore {
     readonly ruleId: string
     readonly actionIndex: number
     readonly action: ActionSpec
-    readonly message: Run['message']
+    readonly message: Run['event']
     readonly summary: MailSummaryLike
     readonly dueAt: string
     readonly kind: 'undo' | 'suggest'

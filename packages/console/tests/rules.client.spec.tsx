@@ -57,7 +57,7 @@ function runs(): readonly TriageRun[] {
       ruleId: 'github',
       ruleName: 'GitHub 通知',
       label: 'GitHub 通知',
-      message: {
+      event: {
         from: 'lzj@example.com',
         subject: '[Free-LZJ/free-dsh-plugins] Run failed: CI',
         folder: 'INBOX',
@@ -77,7 +77,7 @@ function runs(): readonly TriageRun[] {
       ruleId: 'promo',
       ruleName: '推广与电子报',
       label: '推广',
-      message: { from: 'news@example.com', subject: '限时优惠', folder: 'INBOX', accountId: 'work', uid: 43 },
+      event: { from: 'news@example.com', subject: '限时优惠', folder: 'INBOX', accountId: 'work', uid: 43 },
       actions: [{ kind: 'move', mode: 'auto', ok: true, detail: '已移动到 其他文件夹/广告' }],
       status: 'done',
       undoableUntil: new Date(Date.now() - 60_000).toISOString(),
@@ -308,7 +308,7 @@ describe('changing a rule', () => {
   it('offers no dry run for a record with no mailbox reference', async () => {
     // 旧记录可能没存 accountId：宁可没有这个按钮，也不发一个必然被拒的请求。
     const { source } = engine({
-      runs: async () => [{ ...(runs()[0] as TriageRun), message: { from: 'a@b', subject: 'x', folder: 'INBOX' } }],
+      runs: async () => [{ ...(runs()[0] as TriageRun), event: { from: 'a@b', subject: 'x', folder: 'INBOX' } }],
     })
     await draw(source)
     expect(screen.queryByRole('button', { name: t('ruleTest') })).toBeNull()

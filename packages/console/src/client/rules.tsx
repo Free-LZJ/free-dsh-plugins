@@ -73,7 +73,13 @@ export interface TriageRun {
   readonly ruleId: string
   readonly ruleName: string
   readonly label: string
-  readonly message: {
+  /**
+   * The mail this run is about, as the decision core stores it.
+   *
+   * The core keeps the connector's own shape (`event`), so the fields below are
+   * what the mail connector writes — a different connector would carry its own.
+   */
+  readonly event: {
     readonly from: string
     readonly subject: string
     readonly folder: string
@@ -344,11 +350,11 @@ function TriageBody({ t, data, triage, act }: {
    * @param run - the hit record whose mail to re-read.
    */
   const tryRun = (run: TriageRun): void => {
-    const accountId = run.message.accountId
-    const uid = run.message.uid
+    const accountId = run.event.accountId
+    const uid = run.event.uid
     if (accountId === undefined || uid === undefined) return
     setTests((current) => ({ ...current, [run.id]: 'pending' }))
-    void triage.testRun({ accountId, folder: run.message.folder, uid }).then((answer) => {
+    void triage.testRun({ accountId, folder: run.event.folder, uid }).then((answer) => {
       setTests((current) => ({ ...current, [run.id]: answer }))
     })
   }
@@ -489,10 +495,10 @@ function TriageBody({ t, data, triage, act }: {
                 <div className={CLS.runHead}>
                   <span className={CLS.runWhen}>{new Date(run.at).toLocaleString()}</span>
                   <span className={CLS.runRule}>{run.ruleName}</span>
-                  <span className={CLS.runSubject}>{run.message.subject === '' ? run.message.from : run.message.subject}</span>
+                  <span className={CLS.runSubject}>{run.event.subject === '' ? run.event.from : run.event.subject}</span>
                   <span className={CLS.runTail}>
                     <Tag tone={runTone(run.status)}>{t(runStatusKey(run.status))}</Tag>
-                    {run.message.accountId !== undefined && run.message.uid !== undefined && (
+                    {run.event.accountId !== undefined && run.event.uid !== undefined && (
                       <Button
                         size="sm"
                         disabled={tests[run.id] === 'pending'}

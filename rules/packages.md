@@ -21,6 +21,15 @@
 - `cordis.patch.yml` 里的 `id` **不是自由命名**：它同时是设置命名空间、路由前缀或面板 id。改名等于破坏已有用户的 profile，因此任何包改 id 都按破坏性变更处理（须升 minor 并在包 README 写迁移步骤）。
 - 每个包只允许一条 Loader 行。此前拆成两个包（Host 包 + `-client-ui-settings-*` 包）的形态已废弃，不要恢复。
 
+## 库包：没有 Loader 行
+
+被别的插件 `import` 的包（例如 `@free-lzj/dsh-decision`）是**库，不是插件**：
+
+- 没有 `src/client/`、没有 `apply`、不依赖 `@deepseek-ai/cordis`；
+- **没有 `cordis.patch.yml`**，`package.json` 里**不写 `dsh.bundle`**——写上去会让 `dsh plugin add` 插一行指向一个没有插件的模块；
+- `files` 只含 `lib/index.js`、`lib/types/**/*.d.ts`、`README.md`；`exports` 只有 `.` 与 `./src/*`；
+- README 第一句必须写明「库，不是插件」并说明谁依赖它；
+- 消费者把它写进 `dependencies`（`workspace:^`）。**包之间的类型解析走两条路**：`tsconfig.base.json` 的 `paths` 让 `typecheck` 直接读源码（否则新克隆在 `build` 之前过不了 `typecheck`），各包的 `tsconfig.build.json` 把 `paths` 清空、改读已产出的 `lib/types`；测试侧在 `vitest.config.ts` 里有一条对应的 `resolve.alias`。
 ## 新增一个包的检查清单
 
 1. 目录 `packages/<名>/`，复制同仓库现有包的 `tsconfig.json`、`tsconfig.build.json`、`tsdown.config.ts`（只改 `PACKAGE_NAME`、entry、平台模块表——除非确有新平台模块，否则不改表）。

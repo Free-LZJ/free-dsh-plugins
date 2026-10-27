@@ -10,14 +10,15 @@
 
 import type { ActionRegistry } from './registry.ts'
 import type { PendingStore } from './pending.ts'
-import type { RunStore } from './runs.ts'
+import type { RunStore } from '@free-lzj/dsh-decision'
+import type { Run } from './types.ts'
 import type { TriagePorts } from './triage.ts'
 
 /** 处理一次建议点击需要的东西。 */
 export interface SuggestDeps {
   readonly pending: PendingStore
   readonly actions: ActionRegistry
-  readonly runs: RunStore
+  readonly runs: RunStore<Run['event']>
   readonly ports: TriagePorts
 }
 

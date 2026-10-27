@@ -6,9 +6,9 @@
  * 短暂占用、权限要在创建时带上而不是改名之后），复制三遍迟早会有一份漏掉。
  *
  * 读到坏 JSON 一律**回落成空**而不是抛：插件必须能起来，否则用户连设置页都打不开
- * 去修它。规则文件是例外——它是用户写的配置，坏了要报错给人看（见 `src/rules.ts`）。
+ * 去修它。规则文件是例外——它是用户写的配置，坏了要报错给人看（见 `rules.ts`）。
  *
- * @module @free-lzj/dsh-mail/triage/store
+ * @module @free-lzj/dsh-decision/store
  */
 
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'

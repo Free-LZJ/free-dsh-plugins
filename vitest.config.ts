@@ -1,6 +1,14 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // Workspace libraries are consumed as sources in tests, mirroring the
+  // `paths` entry in tsconfig.base.json: their `exports` point at `lib/`, which
+  // only exists after a build.
+  resolve: {
+    alias: {
+      '@free-lzj/dsh-decision': new URL('./packages/decision/src/index.ts', import.meta.url).pathname,
+    },
+  },
   // The published dsh packages ship no source maps while their bundles reference
   // them; Vite's per-file warnings about that would bury real output.
   logLevel: 'error',

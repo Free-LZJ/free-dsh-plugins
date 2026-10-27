@@ -26,7 +26,7 @@ import type { ActionContext } from './actions/context.ts'
 import type { ClassifyRequest, ClassifyResult } from './conditions.ts'
 import type { ActionRegistry, ConditionRegistry } from './registry.ts'
 import type { PendingStore } from './pending.ts'
-import type { RunStore } from './runs.ts'
+import type { RunStore } from '@free-lzj/dsh-decision'
 import type { Config, MailSummaryLike, Rule, Run, RunAction, RunStatus } from './types.ts'
 
 /** 一封刚到的邮件。 */
@@ -44,7 +44,7 @@ export interface TriagePorts {
   readonly config: () => Config
   readonly conditions: ConditionRegistry
   readonly actions: ActionRegistry
-  readonly runs: RunStore
+  readonly runs: RunStore<Run['event']>
   readonly pending: PendingStore
   /** 造一个动作上下文（含 mail / sessions / console 等端口与 `vars`）。 */
   readonly context: (input: {
@@ -378,7 +378,7 @@ function statusOf(results: readonly RunAction[], options: { readonly dryRun: boo
 }
 
 /** 记录里的邮件身份。 */
-function messageRef(mail: IncomingMail): Run['message'] {
+function messageRef(mail: IncomingMail): Run['event'] {
   return {
     accountId: mail.accountId,
     folder: mail.summary.folder,
@@ -412,7 +412,7 @@ async function record(
     ruleId: input.ruleId,
     ruleName: input.ruleName,
     label: input.label,
-    message: messageRef(mail),
+    event: messageRef(mail),
     actions: input.actions,
     status: input.status,
     ...(input.undoableUntil === undefined ? {} : { undoableUntil: input.undoableUntil }),

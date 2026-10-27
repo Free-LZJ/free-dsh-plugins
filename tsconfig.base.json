@@ -1,5 +1,11 @@
 {
   "compilerOptions": {
+    // Workspace libraries resolve to their **sources** for typechecking, so a
+    // fresh clone can typecheck before anything has been built. The build
+    // configs clear this map and resolve the emitted `.d.ts` instead.
+    "paths": {
+      "@free-lzj/dsh-decision": ["./packages/decision/src/index.ts"]
+    },
     "target": "es2024",
     "module": "esnext",
     "moduleResolution": "bundler",

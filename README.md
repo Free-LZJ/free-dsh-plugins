@@ -22,6 +22,7 @@
 |---|---|---|
 | [`@free-lzj/dsh-agent-import`](packages/agent-import/README.md) | `0.3.3` | 把 Codex / Claude Code 已经声明好的 MCP 服务器挂进 dsh，并把各 Agent 工具的技能以**符号链接**导入 dsh 自己的技能目录统一管理；同一个包在设置页里带一页「代理配置导入」 |
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.2.0` | **工作台**：dsh 的首页。第一块是**注意力队列**——「现在需要我决定什么」，每条都带按钮与状态（执行 / 忽略 / 稍后），下面才是**接入它面板契约**的插件列表；再下面是**正在跑的会话**（它现在在替你干什么）。同时是**通知与条目出口**：`ctx.console.notify()` 是纯通知，`ctx.console.raise()` 是**能被处理的条目**（插件按 `kind` 注册动作处理器，点击被路由回去）。送达渠道**可替换、可多选**（桌面通知 / 应用内 / 提示音）。界面完全用 DSH 的设计系统（`ui-primitives` 控件 + `--dsw-*` token），不另起一套。另给会话里的 agent 两个工具：`console_notify` 主动通知你、`open_session` 在指定目录建工作区并开会话 |
+| [`@free-lzj/dsh-decision`](packages/decision/README.md) | `0.1.0` | **库，不是插件**（不能 `dsh plugin add`）：来源无关的决策内核——命中记录与撤销窗口当下在这里，规则解析与条件/动作注册表正从 `@free-lzj/dsh-mail` 逐步搬过来。连接器依赖它，工作台读它。
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**）；同时是**邮件 I/O 提供方**（`ctx.mail`）。再带一套**规则分诊**：把新邮件按邮件头 / 正则 / 附件 / 模型判断分流到已读、移动、开会话、脚本、MCP、HTTP，带**命中记录与撤销**。装了工作台时它列在工作台里，不再单独占侧边栏 |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
 | [`@free-lzj/dsh-worktree`](packages/worktree/README.md) | `0.5.0` | **工作树管理页**：按**仓库**分组列出全部工作树，可配置检出目录（默认 `<仓库>/.agents/worktrees`）、可开关「创建前拉取上游更新」；会话标题栏与空会话首屏各有一个入口，直接在新检出里开会话，也能进入 / 删除已有检出（**任何** Git 已注册的检出都能删，不只是本插件建的那几个）。原检出不动；布局与官方实验 bundle「Git 工作树」一致 |
@@ -156,7 +157,7 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 pnpm install
 pnpm run typecheck   # 每个包，两个半边一起
 pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js（Node 半边）、lib/client.js（浏览器半边）
-pnpm run test        # vitest：58 个 spec 文件 / 869 个测试（含 1 个 Windows 跳过项）
+pnpm run test        # vitest：60 个 spec 文件 / 884 个测试（含 1 个 Windows 跳过项）
 ```
 
 先 `build` 再 `test`：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口没有向 Host 半边取值，以及 `console` 的契约产物仍是可被内联的普通模块），没有 `lib/` 时其中一条会显示为 skipped。

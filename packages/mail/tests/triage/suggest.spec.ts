@@ -13,11 +13,11 @@ import { builtinActions, type ActionContext } from '../../src/triage/actions/ind
 import { builtinConditions } from '../../src/triage/conditions.ts'
 import { ActionRegistry, ConditionRegistry, registerAll } from '../../src/triage/registry.ts'
 import { createPendingStore } from '../../src/triage/pending.ts'
-import { createRunStore } from '../../src/triage/runs.ts'
+import { createRunStore } from '@free-lzj/dsh-decision'
 import { normalizeConfig } from '../../src/triage/config.ts'
 import { applySuggestion } from '../../src/triage/suggest.ts'
 import type { TriagePorts } from '../../src/triage/triage.ts'
-import type { MailSummaryLike, Rule } from '../../src/triage/types.ts'
+import type { MailEvent, MailSummaryLike, Rule } from '../../src/triage/types.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,7 +49,10 @@ async function bench(options: { readonly actionFails?: boolean } = {}) {
   const conditions = new ConditionRegistry()
   registerAll(conditions, builtinConditions())
   const pending = createPendingStore({ path: join(home, 'pending.json') })
-  const runs = createRunStore({ path: join(home, 'runs.json') })
+  const runs = createRunStore<MailEvent>({
+    path: join(home, 'runs.json'),
+    parseEvent: (record) => record['event'] as MailEvent | undefined,
+  })
 
   const context = (): ActionContext => ({
     task: {
@@ -98,7 +101,7 @@ async function queueSuggestion(benchResult: Awaited<ReturnType<typeof bench>>, i
     ruleId: 'r1',
     ruleName: '保守规则',
     label: 'suggested',
-    message: {
+    event: {
       accountId: 'acc', folder: 'INBOX', uid: 7, uidValidity: 3,
       from: 'news@shop.example', subject: '限时优惠',
     },
@@ -110,7 +113,7 @@ async function queueSuggestion(benchResult: Awaited<ReturnType<typeof bench>>, i
     ruleId: 'r1',
     actionIndex: 0,
     action: { kind: 'move', folder: '推广', mode: 'suggest' },
-    message: run.message,
+    message: run.event,
     summary: summary(),
     dueAt: '2030-01-01T00:00:00.000Z',
     kind: 'suggest',

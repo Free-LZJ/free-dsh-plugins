@@ -78,6 +78,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@free-lzj/dsh-decision": "workspace:^",
     "imapflow": "^2.5.0",
     "mailparser": "^3.9.0",
     "yaml": "^2.8.1"

@@ -8,6 +8,8 @@
  * @module @free-lzj/dsh-mail/triage/types
  */
 
+import type { Run as CoreRun } from '@free-lzj/dsh-decision'
+
 /* ───────────────────────── 对 mail 插件的结构依赖 ───────────────────────── */
 
 /**
@@ -218,45 +220,27 @@ export interface Rule {
 
 /* ──────────────────────────────── 命中记录 ─────────────────────────────── */
 
-/** 一条命中记录的状态。 */
-export type RunStatus = 'done' | 'partial' | 'skipped' | 'suggested' | 'undone'
-
-/** 一个动作的执行结果，页面按它渲染一行。 */
-export interface RunAction {
-  readonly kind: ActionKind
-  readonly mode: ActionMode
-  readonly ok: boolean
-  /** 面板上的一行中文说明，含失败原因。 */
-  readonly detail: string
-  /** `session` 动作建出的会话，供人点进去看。 */
-  readonly sessionId?: string
-}
-
-/**
- * 一封邮件的处理记录。
- *
- * 这是「它背着我做了什么」的唯一答案，所以字段以**可读**为准：主题与发件人
- * 直接存下来，而不是只存 uid 让人去别处查。
+/*
+ * 命中记录本身归内核（`@free-lzj/dsh-decision`）：它只管「写下来、读回来、按天裁」，
+ * 不认识邮件。这里只说明**一封邮件在这条记录里长什么样**。
  */
-export interface Run {
-  readonly id: string
-  readonly at: string
-  readonly ruleId: string
-  readonly ruleName: string
-  readonly label: string
-  readonly message: {
-    readonly accountId: string
-    readonly folder: string
-    readonly uid: number
-    readonly uidValidity: number
-    readonly from: string
-    readonly subject: string
-  }
-  readonly actions: readonly RunAction[]
-  readonly status: RunStatus
-  /** 撤销窗口的截止时间；过了就不能撤了。 */
-  readonly undoableUntil?: string
+
+/** 记录里那封邮件：够人读懂，也够重读它（`accountId` + `uid`）。 */
+export interface MailEvent {
+  readonly accountId: string
+  readonly folder: string
+  readonly uid: number
+  readonly uidValidity: number
+  readonly from: string
+  readonly subject: string
 }
+
+/** 一条以邮件为输入的命中记录。 */
+export type Run = CoreRun<MailEvent>
+
+export type { RunAction, RunStatus } from '@free-lzj/dsh-decision'
+
+
 
 /** 排着队等撤销窗口过去的动作。 */
 export interface PendingAction {
@@ -278,7 +262,7 @@ export interface PendingAction {
   /** 它是 `rule.then` 里的第几个；执行完要回填那条命中记录的这一项。 */
   readonly actionIndex: number
   /** 记录里显示的那几个字段。 */
-  readonly message: Run['message']
+  readonly message: Run['event']
   /**
    * 重放这次动作需要的邮件摘要。
    *

@@ -1,6 +1,8 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    // Build resolves the built library, not its sources: see tsconfig.base.json.
+    "paths": {},
     "noEmit": false,
     "declaration": true,
     "declarationMap": true,
