@@ -46,7 +46,7 @@ rules/                 # 开发规则（约束的唯一权威位置）
 | [`rules/build.md`](rules/build.md) | 改 `package.json`、`tsconfig*.json`、`tsdown.config.ts`，或新增 import / 依赖时 |
 | [`rules/design-patterns.md`](rules/design-patterns.md) | 新增/修改「可替换实现」「多选配置」「跨插件接口」时——通知渠道、导入源、面板接入、存储后端、provider；以及评审这类代码时 |
 | [`rules/plugin-ui.md`](rules/plugin-ui.md) | 改任何插件的浏览器半边界面（`src/client/**` 的组件、样式、文案）时；排查 DSH 自身的渲染或布局行为时 |
-| [`rules/testing.md`](rules/testing.md) | 改 `src/` 之后、新增路由 / 组件 / 产物契约时 |
+| [`rules/testing.md`](rules/testing.md) | 改 `src/` 之后、新增路由 / 组件 / 产物契约时；需要在真实运行的 DSH 里验证插件行为时 |
 | [`rules/git-release.md`](rules/git-release.md) | **执行 Git 写操作之前**；`npm publish` 或改版本号之前（只读 `status`/`diff`/`log` 不需要） |
 | [`rules/workspace.md`](rules/workspace.md) | 需要写脚本、抓数据、截图、存调研产物时 |
 

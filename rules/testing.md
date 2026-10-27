@@ -1,6 +1,6 @@
 # 测试
 
-**何时加载**：改动任一包的 `src/` 后，以及新增包、新增 Host 路由、新增浏览器组件、修改产物契约（`package.json` 的 `dsh` 字段、`cordis.patch.yml`、`tsdown.config.ts`）时。
+**何时加载**：改动任一包的 `src/` 后，以及新增包、新增 Host 路由、新增浏览器组件、修改产物契约（`package.json` 的 `dsh` 字段、`cordis.patch.yml`、`tsdown.config.ts`）时；需要在真实运行的 DSH 里验证插件行为时。
 
 ## 命令与顺序
 
@@ -28,3 +28,19 @@ CI 在 `windows-latest` 上跑同样三步。`tests/**` 里 adapter 类 spec 断
 - 不以"覆盖率数字"为目标；不为了覆盖率给一行 getter 写测试。
 - 测试不得依赖真实网络、真实邮箱、真实 `~/.codex` / `~/.claude`；全部用临时目录与夹具替代。
 - 改动了 `packages/agent-import/tests/support/`、`packages/mail/tests/support/` 这类共享接线（模块表、运行时、jsdom 注入）时必须跑全量 `pnpm run test`，而不是单文件。
+
+## 运行时验证：另开第二实例
+
+要在真实界面里看插件效果时，**另起一个 DSH 实例**，不要碰用户当前在用的那个：
+
+```sh
+pnpm run build
+dsh --profile web --port 0 --no-open          # 0 = 系统挑空闲端口；也可以给个具体端口
+# 或 overlay 方式，不写进任何 profile
+dsh --profile web --patch examples/agent-import.cordis.yml --port 0 --no-open
+```
+
+- 端口必须与用户当前实例（见运行时上下文里的 Web GUI URL）不同，`--port 0` 最省事。
+- 不重启、不 `dsh plugin add` 进用户 profile 来验证；用户正在用的实例归用户。
+- Host 半边改动仍需重启实例（新的第二实例天然满足）；浏览器半边刷新页面即可。
+- 验证完关掉第二实例，别留后台进程。
