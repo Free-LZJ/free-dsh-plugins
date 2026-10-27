@@ -35,6 +35,7 @@ import { registerRoutes, type RouteHost } from './routes.ts'
 import { registerAgentTools } from './tools.ts'
 import { WorkbenchBoard } from './workbench/board.ts'
 import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
+import { LlmClassifier, modelRoute, type LlmPortLike } from './workbench/llm-classifier.ts'
 import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
 import { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
 import {
@@ -89,6 +90,7 @@ type ConfigInput = {
   workbenchConnectors?: string[]
   workbenchClassifier?: string
   workbenchWorkspace?: string
+  workbenchModel?: string
 }
 
 /** Live workbench configuration, resolved by the Loader row. */
@@ -103,6 +105,8 @@ export interface Config {
   workbenchClassifier: string
   /** Directory real runs happen in; empty means the real executor is not registered. */
   workbenchWorkspace: string
+  /** `provider/model` the LLM classifier asks; empty leaves it without a route. */
+  workbenchModel: string
 }
 
 export const Config = Schema.object({
@@ -121,6 +125,9 @@ export const Config = Schema.object({
   workbenchWorkspace: Schema.string()
     .default('')
     .description('Directory real sessions run in; empty keeps the board on the simulated executors.'),
+  workbenchModel: Schema.string()
+    .default('')
+    .description('provider/model the LLM classifier asks (e.g. deepseek/deepseek-chat); empty names none.'),
 }) as Schema<ConfigInput, Config>
 
 /**
@@ -156,6 +163,18 @@ export function apply(ctx: Context, config: Config): void {
   // editing this file — the same extension shape as the notification channels.
   const classifiers = new ClassifierRegistry()
   classifiers.register(new RuleClassifier())
+  // 模型分类器：宿主组合了 `llm` 且配置里点了模型时才注册。调用形状取自宿主自己的
+  // `dsh-session-title-llm`（prepareCall → stream 的 text-delta），不是猜的。
+  ctx.inject(['llm'], (inner) => {
+    const llm = inner.get('llm') as LlmPortLike | undefined
+    if (llm === undefined) return
+    classifiers.register(new LlmClassifier({
+      llm,
+      route: () => modelRoute(config.workbenchModel),
+      fallback: new RuleClassifier(),
+    }))
+    inner.logger.info(`console: llm classifier ${config.workbenchModel === '' ? 'registered (no model configured)' : `on (${config.workbenchModel})`}`)
+  })
   const executors = new ExecutorRegistry()
   executors.register(new SimulatedExecutor('dsh', 'DSH（模拟）'))
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))

@@ -210,6 +210,7 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 | `layout` | `'grid' \| 'list' \| 'compact'` | `grid` | 首页布局。首页右上角切换，写回这一行 |
 | `workbenchConnectors` | `('mail' \| 'webhook' \| 'dingtalk' \| 'jira')[]` | `['mail', 'webhook']` | 看板启用哪些连接器；写了实现里没有的 id 会被丢弃并告警 |
 | `workbenchClassifier` | `string` | `'rule'` | 看板用哪个分类器；写了没注册的 id 会回落到规则分类器并告警 |
+| `workbenchModel` | `string` | `''` | LLM 分类器用哪个模型（`provider/model`）。留空则该分类器没有路由，一律回退到规则分类 |
 | `workbenchWorkspace` | `string` | `''` | **真实会话执行器**在哪个目录里跑。留空 = 不注册它（看板只有模拟执行器）；填了目录且宿主有会话服务时，session 执行器才会出现 |
 
 页面的置顶与「上次停在哪一页」（`$DSH_HOME/dsh-console/prefs.json`）不在这一行里：它们是**用户点击产生**的状态，不是配置。
@@ -256,6 +257,7 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 - **看板不自动回写**：完工的卡只标「待确认回写」，钉钉 / Jira / 邮箱的出站动作都没有接；确认后回写的流程等用户定。
 - **判据的文字归页面**：卡片上的「判断依据」在 Host 那边是**代码 + 参数**（`classify-none`、`route-matched{route}`…），文字由工作台按 locales 渲染。英文界面下不会再冒出中文句子；页面不认识的代码退化成卡片上存的原文，再退化成一句通用说明——**任何情况下都不会把代码显示给人**。旧卡片存的是整句，读盘时归一化成 `legacy` 行原样保留，不做一次性迁移脚本。
 - **「待确认回写」有出口**：跑完的卡片带着 `awaitingConfirmation`，详情里给一个「已回写」按钮把它清掉。出站系统还没接，所以这是**人的声明**而不是自动判断——也正因为如此，它必须是一次点击，而不是定时器。
+- **LLM 分类器（`workbenchClassifier: 'llm'` + `workbenchModel: 'provider/model'`）**：同一个 `Classifier` 契约的模型实现。调用形状取自宿主自己的 `dsh-session-title-llm`（`llm.prepareCall` → `stream` 的 `text-delta`），不需要 agent、不需要会话。两条硬规则：**绝不抛错**（调用失败、答案读不懂、没配模型都回退到规则分类，并把原因写进卡片判据）、**绝不臆造分类**（答案里的 kind/priority 必须落在看板自己的词表里，否则整条作废）。
 - **连接器页多了一块「执行器」**：列出这个部署**真正注册了**哪些执行器（`已注册`）。路由表指着一个不在名单里的 id 是配置问题，用户得看得见——这也正是文档说的「没有接口就不给假按钮」。
 - **聚焦页「正在跑的会话」改成从 `agents` 读**（`agents.list()` + `isActive()`）。以前读 `sessionController`——那是浏览器侧的 Remote 名字，宿主没有这个服务，所以那一块永远是空的。
 - **执行器名单进状态**：`/workbench/state` 现在带 `executors`（`{id,label}[]`），页面因此能区分「还没接」和「接了但坏了」——路由表指着一个不存在的执行器是配置问题，不是点坏了。
