@@ -38,7 +38,7 @@ import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbe
 import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
 import { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
 import {
-  createHarnessRunner, type SessionControllerLike, type WorkspaceRegistryLike,
+  createHarnessRunner, runningSessionsOf, type HarnessAgentsLike, type HarnessSessionEventLike,
 } from './workbench/harness-session.ts'
 import { RealSessionExecutor } from './workbench/real-session.ts'
 import { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
@@ -159,27 +159,24 @@ export function apply(ctx: Context, config: Config): void {
   const executors = new ExecutorRegistry()
   executors.register(new SimulatedExecutor('dsh', 'DSH（模拟）'))
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
-  // 真实会话执行器：等会话服务真的就位之后才注册。
+  // 真实会话执行器：等 `agents` 服务就位之后才注册。
   //
-  // 不能在这里直接 `ctx.get('sessionController')`：服务的挂载顺序不由本插件决定，
-  // 早读一次只会拿到 undefined。`inject` 会等它出现（服务重启后还会再触发）。
-  //
-  // **实测结论（harness 0.2.x，2026-10）**：宿主里有 `sessions` 与 `agents`，**没有**
-  // `sessionController` / `workspaceRegistry`，这两个名字因此永远等不到——真实执行器
-  // 也就永远不会注册（比注册一个假装能跑的实现好，但仍是待修的）。它们的 API 在服务
-  // 原型上（`Object.keys` 只能看到 store/projections 这类字段），要等 P2 把真正的
-  // 建会话入口摸清再改这里；这个包和 mail 的会话端口都受同一问题影响。
+  // 实测过的名字（见 `docs/workbench-session-api.md`）：宿主给的是 `agents` 与
+  // `sessions`，**没有** `sessionController` / `workspaceRegistry`——按后者写代码会
+  // 永远等不到服务、静默什么都不做。`agents.createSession({cwd})` 是唯一同时建出
+  // 代理与其会话的入口；`ctx.on('session/event')` 才是真正的事件源。
   let realRegistered = false
-  ctx.inject(['sessionController'], (inner) => {
+  ctx.inject(['agents'], (inner) => {
     if (realRegistered) return
-    const controller = inner.get('sessionController') as SessionControllerLike | undefined
-    if (controller === undefined) return
-    const workspaces = inner.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
+    const agents = inner.get('agents') as HarnessAgentsLike | undefined
+    if (agents === undefined) return
     const runner = createHarnessRunner({
-      controller,
-      ...(workspaces === undefined ? {} : { workspaces }),
+      agents,
       cwd: config.workbenchWorkspace,
-      subscribe: (listener) => inner.on('session/event', listener),
+      // 事件类型是宿主自己的联合类型；消费方只关心 type 与 reason.kind，所以在边界上收窄一次。
+      subscribe: (listener) => inner.on('session/event', (session, event) => {
+        listener(session as { id?: string }, event as unknown as HarnessSessionEventLike)
+      }),
       log: (line) => {
         inner.logger.warn(line)
       },
@@ -263,35 +260,16 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info(`console: board mounted (connectors: ${connectors.list().map((connector) => connector.id).join(', ')})`)
 }
 
-/** 会话服务里「列出会话」那一半（与驱动会话的 {@link SessionControllerLike} 分开）。 */
-interface SessionListLike {
-  list?(request?: unknown, signal?: unknown): Promise<{
-    readonly items?: readonly {
-      readonly sessionId?: string
-      readonly running?: boolean
-      readonly cwd?: string
-      readonly projections?: { readonly values?: { readonly title?: string } }
-    }[]
-  }>
-}
-
 /**
  * 现在有哪些会话在干活。
  *
- * 结构化声明而不是 import 会话控制器的类型：那是**可选**依赖——没挂它的部署只是首页
- * 少一块，不该因此起不来（`rules/design-patterns.md`）。
+ * 从 **`agents`** 读，不是从 `sessionController` 读——后者是浏览器的 Remote 名字，
+ * 宿主上下文里没有这个服务，所以这里以前永远返回空（`docs/workbench-session-api.md`）。
+ * 结构化声明而不是 import 宿主类型：那是**可选**依赖，没挂它的部署只是首页少一块。
  * @param ctx - Host 上下文。
  * @returns 正在运行的会话；读不到时给空数组。
  */
-async function readRunningSessions(ctx: Context): Promise<readonly RunningSession[]> {
-  const controller = ctx.get('sessionController') as SessionListLike | undefined
-  if (controller?.list === undefined) return []
-  const page = await controller.list({})
-  return (page.items ?? [])
-    .filter(item => item.running === true && typeof item.sessionId === 'string')
-    .map(item => ({
-      sessionId: item.sessionId as string,
-      title: item.projections?.values?.title?.trim() ?? '',
-      ...(item.cwd === undefined ? {} : { cwd: item.cwd }),
-    }))
+function readRunningSessions(ctx: Context): readonly RunningSession[] {
+  return runningSessionsOf(ctx.get('agents') as HarnessAgentsLike | undefined)
+    .map(agent => ({ sessionId: agent.sessionId, title: '', ...(agent.cwd === undefined ? {} : { cwd: agent.cwd }) }))
 }

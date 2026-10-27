@@ -1,105 +1,112 @@
 /**
- * Turning the harness's own session services into a {@link SessionRunner}.
+ * Turning the harness's own agent services into a {@link SessionRunner}.
  *
- * The board must not know about `sessionController`, workspace attachment, or
- * session events — it asks for "start a real run", which is the one thing this
- * module does. Everything here is best-effort by design: a deployment whose
- * harness is older (no workspace registry, no rename) still gets a working run,
- * it just gets fewer niceties, and a deployment without a session controller
- * gets **no** real executor at all rather than a broken one.
+ * The names here are **verified against the running host**, not guessed: the host
+ * composes `agents` (create / resume / list) and `sessions` (the store), and
+ * `ctx.on('session/event', (session, event) => ...)` delivers a session's own
+ * events. `sessionController` and `workspaceRegistry` do **not** exist — they are
+ * Remote-layer names for the browser half, and referring to them here was the bug
+ * that kept this bridge from ever connecting (`docs/workbench-session-api.md`).
  *
- * @module @free-dsh-plugins/dsh-console/workbench/harness-session
+ * Everything is written structurally: this package must not import host types,
+ * because these services are an *optional* dependency — a deployment composing
+ * none of them simply gets no real executor.
+ *
+ * @module @free-lzj/dsh-console/workbench/harness-session
  */
 
-import type { SessionRunner, RealRun } from './real-session.ts'
+import type { RealRun, SessionRunner } from './real-session.ts'
 
-/** The session controller verbs this module uses; all verified against the harness. */
-export interface SessionControllerLike {
-  create(request: { readonly cwd: string; readonly agentPreset?: string }): Promise<{ readonly sessionId: string }>
-  resolveAgent(sessionId: string): Promise<{ readonly agent: LiveAgentLike } | { readonly error: unknown }>
-  rename?(request: { readonly sessionId: string; readonly title: string }): Promise<unknown>
-  archive?(sessionId: string): Promise<unknown>
-}
-
-/** The agent handle a session resolves to. */
-export interface LiveAgentLike {
+/** One live agent, as far as this bridge cares. */
+export interface HarnessAgentLike {
+  /** The session this agent drives. */
+  readonly session?: { readonly id?: string; readonly header?: { readonly cwd?: string } }
+  /** Queue one user message; the agent loop turns it into a turn. */
   followup(message: {
     readonly role: 'user'
     readonly content: readonly { readonly type: 'text'; readonly text: string }[]
     readonly source: Readonly<Record<string, unknown>>
   }): unknown
+  /** Stop the current turn. */
+  cancel?(): unknown
+  /** Whether the agent is driving a turn right now. */
+  isActive?(): boolean
 }
 
-/** The workspace registry: a session must be attached before it can read files. */
-export interface WorkspaceRegistryLike {
-  create(cwd: string): Promise<{ attachSession(sessionId: string): Promise<void> }>
+/** The agents service: the one entry point that builds an agent *and* its session. */
+export interface HarnessAgentsLike {
+  createSession(request: {
+    readonly cwd: string
+    readonly agentPreset?: string
+  }): Promise<{ readonly agent: HarnessAgentLike }>
+  list?(): readonly HarnessAgentLike[]
 }
 
-/** What one harness session event looks like; only `type` and the session id are used. */
-export interface SessionEventLike {
+/** One session event, as `session/event` delivers it. */
+export interface HarnessSessionEventLike {
   readonly type?: string
+  readonly data?: { readonly reason?: { readonly kind?: string } }
 }
 
 /** Everything the runner needs, injected so it can be driven without a harness. */
 export interface HarnessSessionOptions {
-  readonly controller: SessionControllerLike
-  readonly workspaces?: WorkspaceRegistryLike
+  readonly agents: HarnessAgentsLike
   /** Directory real runs happen in; without it there is no place to run. */
   readonly cwd: string
-  /** Subscribe to session events; returns the unsubscribe. */
-  readonly subscribe: (listener: (session: { readonly id?: string }, event: SessionEventLike) => void) => () => void
+  /** Subscribe to session events; the host's `session/event`. */
+  readonly subscribe: (
+    listener: (session: { readonly id?: string }, event: HarnessSessionEventLike) => void,
+  ) => () => void
   readonly log: (line: string) => void
 }
 
 /**
- * Build the runner, or undefined when the harness cannot host a real run.
- * @param options - the services and the directory.
+ * Build the runner, or undefined when there is nowhere to run.
+ * @param options - the service and the directory.
  * @returns the runner, or undefined when a real run is impossible here.
  */
 export function createHarnessRunner(options: HarnessSessionOptions): SessionRunner | undefined {
-  const { controller, workspaces, cwd } = options
+  const { agents, cwd } = options
   if (cwd === '') return undefined
+  // `agents` 这个服务本身只有 create/resume；**createSession 是别处加上去的**
+  // （实测：`SessionController` 插件构造的内部 ApiSessionAgentController）。没被
+  // 加上时早点说清楚，而不是等到派单那一步才抛一句看不懂的 TypeError。
+  if (typeof agents.createSession !== 'function') {
+    options.log(
+      'workbench: this deployment\'s agents service has no createSession, so the real executor stays off '
+      + '(it needs the sessionController plugin composed)',
+    )
+    return undefined
+  }
+  /** The agents this runner started, so a follow-up reaches the right one. */
+  const started = new Map<string, HarnessAgentLike>()
+
   return {
     async start(request): Promise<RealRun> {
-      const created = await controller.create({ cwd })
-      const sessionId = created.sessionId
-      // The workspace must be attached before the first message, and the title is
-      // cosmetic — both are skipped rather than failing the run when absent.
-      if (workspaces !== undefined) {
-        try {
-          const workspace = await workspaces.create(cwd)
-          await workspace.attachSession(sessionId)
-        } catch (error: unknown) {
-          options.log(`workbench: attaching ${sessionId} to ${cwd} failed: ${describe(error)}`)
-        }
+      const { agent } = await agents.createSession({ cwd })
+      const sessionId = agent.session?.id
+      if (sessionId === undefined) {
+        // 建了代理却没有会话 id：既不能收尾也不能投话，别让它挂在「进行中」。
+        agent.cancel?.()
+        throw new Error('the created agent reported no session id')
       }
-      if (controller.rename !== undefined) {
-        await Promise.resolve(controller.rename({ sessionId, title: request.title })).catch((error: unknown) => {
-          options.log(`workbench: renaming ${sessionId} failed: ${describe(error)}`)
-        })
-      }
-      const resolved = await controller.resolveAgent(sessionId)
-      if ('error' in resolved) {
-        await Promise.resolve(controller.archive?.(sessionId)).catch(() => undefined)
-        throw new Error(`session ${sessionId} could not be resolved: ${describe(resolved.error)}`)
-      }
+      started.set(sessionId, agent)
       /** Settles the run's outcome; assigned by the promise below, used by `stop`. */
       let settle: ((status: 'done' | 'failed') => void) | undefined
       const finished = new Promise<'done' | 'failed'>((resolve) => {
+        // 订阅要在投话**之前**：一轮对话可能结束得很快，先投话再订阅会漏掉 turn/end。
         const unsubscribe = options.subscribe((session, event) => {
           if (session.id !== sessionId) return
           if (event.type !== 'turn/end') return
           unsubscribe()
-          resolve('done')
+          resolve(event.data?.reason?.kind === 'completed' ? 'done' : 'failed')
         })
-        // A run that is archived or stopped without a turn still has to settle, or
-        // the card would sit in `processing` forever.
         settle = (status) => {
           unsubscribe()
           resolve(status)
         }
       })
-      resolved.agent.followup({
+      agent.followup({
         role: 'user',
         content: [{ type: 'text', text: request.prompt }],
         source: { plugin: 'dsh-console', card: { title: request.title } },
@@ -109,22 +116,53 @@ export function createHarnessRunner(options: HarnessSessionOptions): SessionRunn
         finished,
         stop: () => {
           settle?.('failed')
-          void Promise.resolve(controller.archive?.(sessionId)).catch((error: unknown) => {
-            options.log(`workbench: archiving ${sessionId} failed: ${describe(error)}`)
-          })
+          started.delete(sessionId)
+          try {
+            agent.cancel?.()
+          } catch (error: unknown) {
+            options.log(`workbench: cancelling ${sessionId} failed: ${describe(error)}`)
+          }
         },
       }
     },
+
     async send(sessionId, text): Promise<void> {
-      const resolved = await controller.resolveAgent(sessionId)
-      if ('error' in resolved) throw new Error(describe(resolved.error))
-      resolved.agent.followup({
+      const agent = started.get(sessionId)
+      if (agent === undefined) throw new Error(`session "${sessionId}" was not started here`)
+      agent.followup({
         role: 'user',
         content: [{ type: 'text', text }],
         source: { plugin: 'dsh-console', followup: true },
       })
     },
   }
+}
+
+/** One session that is driving a turn right now. */
+export interface RunningAgent {
+  readonly sessionId: string
+  readonly cwd?: string
+}
+
+/**
+ * Which sessions are driving a turn right now.
+ *
+ * Read off the live agents rather than the persisted sessions: "running" means an
+ * agent is active *now*, which is exactly what the focus page asks.
+ * @param agents - the agents service, when composed.
+ * @returns one entry per active agent.
+ */
+export function runningSessionsOf(agents: HarnessAgentsLike | undefined): readonly RunningAgent[] {
+  if (agents?.list === undefined) return []
+  const running: RunningAgent[] = []
+  for (const agent of agents.list()) {
+    if (agent.isActive?.() !== true) continue
+    const sessionId = agent.session?.id
+    if (sessionId === undefined) continue
+    const cwd = agent.session?.header?.cwd
+    running.push(cwd === undefined ? { sessionId } : { sessionId, cwd })
+  }
+  return running
 }
 
 /** One error as a sentence. */

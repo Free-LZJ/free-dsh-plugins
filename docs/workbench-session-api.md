@@ -27,7 +27,43 @@
 `Object.keys(service)` 只能看到 `counter` / `store` / `projections` 这类字段——**方法在原型上**。
 `Object.getOwnPropertyNames(Object.getPrototypeOf(service))` 才看得到 `create` / `list` / `get`。
 
-## 真正的入口（给下一轮用）
+## 建会话这件事，第三方插件其实够不到（第二轮实测，2026-10）
+
+按上一版写的 `ctx.get('agents').createSession({cwd})` 去接，真机跑出来是：
+
+```
+正在为「真实执行器冒烟」创建会话… | 创建会话失败：agents.createSession is not a function
+```
+
+去看 asar 才明白：`createSession` **不在 `agents` 服务上**，它属于
+`SessionController` 插件内部 new 出来的 `ApiSessionAgentController`：
+
+```js
+// dsh-api-session-controller/lib/index.js
+class SessionController {                      // Loader 行：id `sessionController`
+  constructor(ctx, config, internals = {}) {
+    super(ctx, "sessionController", { namespace: "session" })
+    this.agents = new ApiSessionAgentController(ctx)      // ← createSession / resolveAgent 在这
+    this.commands = new SessionCommandController(ctx, this.agents, process.cwd())
+```
+
+也就是说：
+
+- `sessionController` 是**这个插件注册的 Remote 服务名**（`super(ctx, "sessionController")`），
+  它的方法通过 typert RPC 暴露给浏览器，**不是**普通的 cordis 方法集合；
+- `agents.createSession` 在宿主里不存在，除非该插件被组合进来——而即便组合了，拿到的也是
+  Remote，不是可以直接 await 的本地方法；
+- 宿主自己建会话用 `agents.create({ sessionId, agentOptions, meta: { cwd }, setup })`，
+  其中 `agentOptions()`（模型选择 / 工具 / 预设）是控制器内部的组装，第三方复刻不了。
+
+**结论：本版本没有给第三方 Host 插件留「建一个会话」的公开缝。** 想在 Host 侧做到，只有两条路：
+(a) 走 typert 从宿主调用 Remote（要摸 `ctx.typert` 的调用语法）；(b) 让**浏览器半边**用与
+GUI 相同的 RPC 建会话，再把 sessionId 交回 Host 绑卡片。两条都要单独验证，别靠猜。
+
+当前的落地方式：`createHarnessRunner` 先检查 `agents.createSession` 是不是函数，不是就
+**不注册真实执行器**并写明原因——而不是注册一个派单时才抛 `TypeError` 的壳。
+
+## 真正的入口（原记录，保留）'
 
 - 建会话 + 起代理：`ctx.get('agents').createSession({ cwd, agentPreset?, sessionId? })`
   （`dsh-api-session-controller` 的 Host 侧就是这么用的：`await this.ctx.agents.createSession(...)`）

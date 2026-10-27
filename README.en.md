@@ -132,7 +132,7 @@ A pnpm monorepo: one directory under `packages/*` is one package.
 pnpm install
 pnpm run typecheck   # every package, both halves
 pnpm run build       # tsc for types, tsdown for lib/index.js (Node half) and lib/client.js (browser half)
-pnpm run test        # vitest: 68 spec files / 960 tests (one skipped on Windows)
+pnpm run test        # vitest: 68 spec files / 964 tests (one skipped on Windows)
 ```
 
 Build before testing: the artifacts have contract specs of their own (registration id, the `dsh.client` declaration, `exports["./client"]`, that nothing in the browser entry takes a value from the Host half, and that `console`'s contract artifact stays an inlinable plain module), and one of them reports as skipped without `lib/`.

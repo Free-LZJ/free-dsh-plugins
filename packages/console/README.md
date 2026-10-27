@@ -249,12 +249,14 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 
 - **规则视图依赖邮件插件**：规则、命中记录与撤销都在 `@free-lzj/dsh-mail` 的 triage 引擎里，这一页读的是它自己的路由（`/dsh-mail/triage/*`）。没装邮件插件时这页只说「引擎没加载」，不画空列表——「没有规则」和「没有引擎」是两件事。P1a 把内核抽成 `@free-lzj/dsh-decision` 之后，换的是 `src/client/rules.tsx` 里那个数据源，不是这一页。
 - **规则视图只读回来了最近 20 条命中**：引擎最多给 100 条，页面画 20 条再报一句「共 N 条」；再往前翻要等搜索/分页，v0 不做。
-- **真实会话执行器目前注册不上（已知，待修）**：它靠在 `inject(['sessionController'])` 里等会话服务就位。实测（harness 0.2.x）宿主提供的是 `sessions` 与 `agents`，**没有** `sessionController` / `workspaceRegistry`——所以这段回调不会触发，执行器不会被注册。这比注册一个假装能跑的实现好，但它仍是没接通：真正的建会话入口要从 `sessions`/`agents` 的原型上摸（`Object.keys` 只暴露 `store`/`projections`）。**同一个服务名问题也影响 mail 的会话动作**，一并待修。
+- **真实会话执行器要宿主组合 `sessionController` 才可能开（现状：开不了）**：桥接调用的是 `agents.createSession({cwd})`，但真机实测该方法是 `SessionController` 插件内部 `ApiSessionAgentController` 上的，**不在 `agents` 服务上**。所以 `createHarnessRunner` 现在先检查这个能力，没有就**不注册**执行器并写明原因（而不是注册一个派单时才抛 `TypeError` 的壳）。完整的实测记录、为什么第三方 Host 插件够不到、两条候选路径见 [`docs/workbench-session-api.md`](../../docs/workbench-session-api.md)。
+- **（旧记录）真实会话执行器注册不上**：它靠在 `inject(['sessionController'])` 里等会话服务就位。实测（harness 0.2.x）宿主提供的是 `sessions` 与 `agents`，**没有** `sessionController` / `workspaceRegistry`——所以这段回调不会触发，执行器不会被注册。这比注册一个假装能跑的实现好，但它仍是没接通：真正的建会话入口要从 `sessions`/`agents` 的原型上摸（`Object.keys` 只暴露 `store`/`projections`）。**同一个服务名问题也影响 mail 的会话动作**，一并待修。
 - **真实会话执行器要显式打开**：`workbenchWorkspace` 填一个目录、且宿主的 `sessionController` / `workspaceRegistry` 在，`session` 执行器才注册（卡片派给它就跑一次真实对话）。留空则该执行器**根本不存在**，路由表指着它只会得到「执行器未注册」的 hold，而不是一个假装在跑的壳。真实会话**不支持暂停**（一轮对话没法暂停），`end` 会归档会话并以失败收尾，`interrupt` 会把话投进会话。
 - **看板执行器默认仍是模拟的**：`dsh` / `codex` 目前只跑固定脚本、不调模型、不改代码；接真实 agent 是以后实现同一执行器接口的事，不是改看板。
 - **看板不自动回写**：完工的卡只标「待确认回写」，钉钉 / Jira / 邮箱的出站动作都没有接；确认后回写的流程等用户定。
 - **判据的文字归页面**：卡片上的「判断依据」在 Host 那边是**代码 + 参数**（`classify-none`、`route-matched{route}`…），文字由工作台按 locales 渲染。英文界面下不会再冒出中文句子；页面不认识的代码退化成卡片上存的原文，再退化成一句通用说明——**任何情况下都不会把代码显示给人**。旧卡片存的是整句，读盘时归一化成 `legacy` 行原样保留，不做一次性迁移脚本。
 - **「待确认回写」有出口**：跑完的卡片带着 `awaitingConfirmation`，详情里给一个「已回写」按钮把它清掉。出站系统还没接，所以这是**人的声明**而不是自动判断——也正因为如此，它必须是一次点击，而不是定时器。
+- **聚焦页「正在跑的会话」改成从 `agents` 读**（`agents.list()` + `isActive()`）。以前读 `sessionController`——那是浏览器侧的 Remote 名字，宿主没有这个服务，所以那一块永远是空的。
 - **执行器名单进状态**：`/workbench/state` 现在带 `executors`（`{id,label}[]`），页面因此能区分「还没接」和「接了但坏了」——路由表指着一个不存在的执行器是配置问题，不是点坏了。
 - **重启不留僵尸卡**：落盘时正处在「进行中」的卡片，读回来会回到待办（会话还在就标「已暂停」，否则 idle）——重启后没有任何运行还活着，说它在跑是假话。那种暂停的会话也**恢复不了**（handle 随进程消失），所以派单会收尾旧会话、开一条新的，而不是把按钮做成假动作。
 - **轮询是增量的**：页面每两秒带 `?since=<revision>` 读一次看板，没变时只回 `{ unchanged: true }`（实测 331 字节 vs 整份 1494 字节），且不触发重绘；标签页在后台时不轮询，切回来读一次。
