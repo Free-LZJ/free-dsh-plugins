@@ -10,6 +10,7 @@
 
 export * from './actions/mcp.ts'
 export * from './actions/notify.ts'
+export * from './actions/script.ts'
 export * from './config.ts'
 export * from './pending.ts'
 export * from './registry.ts'
