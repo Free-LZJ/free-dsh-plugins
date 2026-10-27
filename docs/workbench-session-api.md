@@ -86,3 +86,25 @@ GUI 相同的 RPC 建会话，再把 sessionId 交回 Host 绑卡片。两条都
 2. console 与 mail 都改成用这层端口；两边各自补「服务缺失时的行为」测试。
 3. 再回临时 profile 做真机验证：派单 → 真会话建起来 → 日志流回卡片 → `turn/end` 收尾。
 4. 最后更新本文档与两个包的 README，把「已修」写进去。
+
+## 附：LLM 服务的真实用法（真机验证过）
+
+同一类「名字靠猜」的坑：`llm` 服务没有 `complete()` 这种入口，正确的形状抄自宿主自己的
+`dsh-session-title-llm`：
+
+```js
+const call = await ctx.llm.prepareCall({ ...route, maxTokens }, signal, (controls) => controls)
+for await (const chunk of call.stream({ ...call.config, messages, system, purpose, signal })) {
+  if (chunk.type === 'text-delta') text += chunk.text
+}
+```
+
+provider 名写错会得到 `no adapter registered for provider "..."`。真实的可选值只有两个：
+
+| provider | 凭据来源 |
+|---|---|
+| `deepseek-account` | 账号登录 |
+| `deepseek-official` | API key |
+
+模型名用目录 id（`deepseek-chat` / `deepseek-reasoner` 这类）。本仓的 `LlmClassifier`
+（`packages/console/src/workbench/llm-classifier.ts`）用的就是这套，并且已经真机跑通。
