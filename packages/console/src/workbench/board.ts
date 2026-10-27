@@ -241,7 +241,9 @@ export class WorkbenchBoard {
     // one is closed first, then a fresh one starts.
     const previous = card.sessionId === undefined ? undefined : this.sessions.get(card.sessionId)
     if (card.sessionId !== undefined && previous !== undefined) {
-      if (previous.status === 'paused') {
+      // 只有还握着 handle 的会话才真的能恢复：重启之后那次运行已经没了，把它标成
+      // running 就是假跑。那种情况的处理与 done/failed 一样——收干净，然后重开。
+      if (previous.status === 'paused' && this.handles.has(previous.id)) {
         this.handles.get(previous.id)?.resume()
         this.sessions.setStatus(previous.id, 'running')
         const resumed: WorkbenchCard = {
@@ -428,6 +430,20 @@ export class WorkbenchBoard {
       this.dedupe.set(card.dedupeKey, card.id)
     }
     this.sessions.restore(document.sessions)
+    // 重启之后没有任何运行还活着（handle 随进程没了），所以停在进行中的卡片是在
+    // 说谎：把它们放回待办，能恢复的标「已暂停」、其余标 idle。留着 processing 的
+    // 后果是卡片卡死——派单对 processing 直接早退，而界面看起来「它在跑」。
+    for (const card of [...this.cards.values()]) {
+      if (card.column !== 'processing') continue
+      const session = card.sessionId === undefined ? undefined : this.sessions.get(card.sessionId)
+      const paused = session?.status === 'paused'
+      this.cards.set(card.id, {
+        ...card,
+        column: 'todo',
+        status: paused ? 'paused' : 'idle',
+        updatedAt: Date.now(),
+      })
+    }
   }
 
   /**

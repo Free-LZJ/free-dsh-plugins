@@ -26,7 +26,8 @@ import { defaultRoutingTable, RoutingTableStore } from '../../src/workbench/rout
 const homes: string[] = []
 
 afterEach(async () => {
-  for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true })
+  // 看板的写是异步的：测试结束时可能还有一次补写在路上，删目录要容忍这种竞态。
+  for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true, maxRetries: 5 })
 })
 
 /** @returns a fresh directory this test owns. */
@@ -282,6 +283,33 @@ describe('connectors and persistence', () => {
     expect(reopened.board.state().sessions[0]?.logs.map((line) => line.text)).toContain('用户插话：第 19 条')
   })
 
+  it('brings a card that was processing back to todo, not a fake "running"', async () => {
+    // 重启之后没有任何运行还活着（handle 随进程消失）。卡片如果照原样读回
+    // processing，界面会说它在跑，而派单对 processing 又早退——那正是「重启僵尸卡」。
+    const directory = await home()
+    const first = bench({ homeDir: directory })
+    const ingested = await first.board.ingest({ source: 'webhook', title: '页面报错' })
+    expect(ingested.ok).toBe(true)
+    if (!ingested.ok || ingested.card.sessionId === undefined) return
+    // 让运行停在「暂停」上，这样落盘的就是一张停在 processing 的卡。
+    expect(first.board.pauseSession(ingested.card.sessionId).ok).toBe(true)
+    await first.board.flush()
+
+    const reopened = bench({ homeDir: directory })
+    await reopened.board.ready
+    const card = reopened.board.state().cards[0]
+    expect(card?.column).toBe('todo')
+    // 会话还在，所以「已暂停」是诚实的说法；但它没有 handle，恢复不了。
+    expect(card?.status).toBe('paused')
+    const again = reopened.board.dispatch(card?.id ?? '', 'dsh')
+    expect(again.ok).toBe(true)
+    if (!again.ok || again.card === undefined) return
+    expect(again.card.column).toBe('processing')
+    // 那条会话的 handle 已经随进程消失，所以派单必须开新的，而不是假装恢复。
+    expect(again.card.sessionId).not.toBe(card?.sessionId)
+    expect(reopened.board.state().sessions.some((session) => session.status === 'paused')).toBe(false)
+    await reopened.board.flush()
+  })
   it('reloads cards and finished sessions from the persisted document', async () => {
     const directory = await home()
     const first = bench({ homeDir: directory })
