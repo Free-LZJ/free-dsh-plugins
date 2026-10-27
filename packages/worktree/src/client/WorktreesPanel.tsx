@@ -185,7 +185,7 @@ export function WorktreesPanel({
             {t('enter')}
           </Button>
         )}
-        {entry.managed && !entry.main && !entry.locked
+        {!entry.main && !entry.locked
           ? (
             <Button variant="ghost" size="sm" disabled={busy} onClick={() => { remove(repo, entry.path) }}>
               {armed === entry.path ? t('removeConfirm') : t('remove')}

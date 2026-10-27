@@ -122,7 +122,7 @@ async function handleOverview(ctx: Context, req: IncomingMessage, res: ServerRes
         const repo = await primaryRoot(workspace.path)
         const key = repo.toLowerCase()
         if (repos.has(key)) continue
-        const { worktrees } = await listWorktrees(repo, settings)
+        const { worktrees } = await listWorktrees(repo)
         repos.set(key, { repo, worktrees })
       } catch {
         // A Workspace whose directory is gone, or is not a repository, simply
@@ -204,12 +204,10 @@ async function handleRemove(ctx: Context, req: IncomingMessage, res: ServerRespo
     return
   }
   try {
-    const settings = await readSettings()
     respond(res, 200, await removeWorktree(
       request.value.dir,
       request.value.path,
       request.value.deleteBranch === true,
-      { parent: settings.parent },
     ))
   } catch (error: unknown) {
     // A removal can fail after the checkout is already gone (the branch was

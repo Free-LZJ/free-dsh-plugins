@@ -81,8 +81,6 @@ export interface WorktreeSummary {
   readonly main: boolean
   /** Git holds a lock on it, so it cannot be removed without a force. */
   readonly locked: boolean
-  /** Whether it lives under a managed parent, i.e. is removable here. */
-  readonly managed: boolean
 }
 
 /** Every checkout of one repository. */

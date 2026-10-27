@@ -14,7 +14,7 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdir, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { WORKTREE_PARENT } from './protocol.ts'
 
@@ -207,8 +207,6 @@ export interface WorktreeEntry {
   readonly main: boolean
   /** Git has this checkout locked, so removal would need a force. */
   readonly locked: boolean
-  /** Whether the checkout sits under the repository's own `.agents/worktrees`. */
-  readonly managed: boolean
 }
 
 /**
@@ -268,24 +266,12 @@ function samePath(left: string, right: string): boolean {
 }
 
 /**
- * Whether one checkout lives under the repository's own managed parent.
- * @param repo - repository top level.
- * @param path - checkout path.
- * @returns whether it is inside `<repo>/.agents/worktrees`.
- */
-function isManaged(repo: string, path: string, configured?: string): boolean {
-  const rest = relative(managedParent(repo, configured), path)
-  return rest !== '' && !rest.startsWith('..') && !isAbsolute(rest)
-}
-
-/**
  * Every checkout registered with a directory's repository.
  * @param dir - any directory inside the repository.
  * @returns the repository top level and its checkouts, main checkout first.
  */
 export async function listWorktrees(
   dir: string,
-  options: { readonly parent?: string } = {},
 ): Promise<{ repo: string; worktrees: WorktreeEntry[] }> {
   const repo = await repositoryRoot(dir)
   const text = await git(['worktree', 'list', '--porcelain'], repo)
@@ -308,23 +294,26 @@ export async function listWorktrees(
       path,
       ...branch === undefined ? {} : { branch },
       head,
-      // Git prints the main checkout first, and only it can be a path that is
-      // not under the managed parent while still being this repository's.
+      // Git prints the main checkout first; every later block is a linked
+      // checkout of this repository.
       main: worktrees.length === 0,
       locked,
-      managed: isManaged(repo, path, options.parent),
     })
   }
   return { repo, worktrees }
 }
 
 /**
- * Remove one managed checkout, and its branch when asked and safe.
+ * Remove one checkout Git has registered with this repository, and its branch
+ * when asked and safe.
  *
- * Only checkouts under `<repo>/.agents/worktrees` are removable: that boundary
- * is what keeps a stray call from deleting a checkout someone else made next to
- * the repository. The branch is dropped with `-d`, so Git refuses an unmerged
- * one instead of losing commits.
+ * Every registered checkout is removable, not only one this plugin created
+ * under `.agents/worktrees`: a checkout made by the official runtime, by Codex,
+ * or by hand is the same Git object, and refusing it left the user with a row
+ * that only offered "enter". The guards that remain are the ones Git itself
+ * cannot be talked out of — the repository's own checkout, and a lock.
+ * The branch is dropped with `-d`, so Git refuses an unmerged one instead of
+ * losing commits.
  * `ponytail:` no `--force` — a checkout with local changes or a lock refuses and
  * says why; add an explicit force toggle when someone actually needs it.
  * @param dir - any directory inside the repository.
@@ -336,14 +325,12 @@ export async function removeWorktree(
   dir: string,
   target: string,
   deleteBranch: boolean,
-  options: { readonly parent?: string } = {},
 ): Promise<{ removed: string; branch?: string }> {
   const repo = await repositoryRoot(dir)
-  const { worktrees } = await listWorktrees(repo, options)
+  const { worktrees } = await listWorktrees(repo)
   const entry = worktrees.find(candidate => samePath(candidate.path, target))
   if (entry === undefined) throw new Error(`不是这个仓库的工作树：${target}`)
   if (entry.main) throw new Error('不能删除仓库自己的主检出')
-  if (!entry.managed) throw new Error(`只删除工作树目录下的检出：${entry.path}`)
   if (entry.locked) throw new Error(`该工作树被 Git 锁定：${entry.path}`)
 
   try {

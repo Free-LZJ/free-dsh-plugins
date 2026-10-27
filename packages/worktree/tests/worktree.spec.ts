@@ -108,7 +108,7 @@ describe('route guards', () => {
 })
 
 describe('listWorktrees', () => {
-  it('lists the repository checkout first, then the managed ones', async () => {
+  it('lists the repository checkout first, then its linked checkouts', async () => {
     const repo = repository()
     await createWorktree(repo, 'listed-a')
 
@@ -116,17 +116,16 @@ describe('listWorktrees', () => {
 
     expect(resolved).toBe(repo)
     expect(worktrees).toHaveLength(2)
-    const [main, managed] = worktrees
-    expect(main).toMatchObject({ path: repo, main: true, managed: false })
-    expect(managed).toMatchObject({
+    const [main, linked] = worktrees
+    expect(main).toMatchObject({ path: repo, main: true })
+    expect(linked).toMatchObject({
       path: join(repo, '.agents', 'worktrees', 'listed-a'),
       branch: 'listed-a',
       main: false,
-      managed: true,
       locked: false,
     })
     // The commit the checkout sits on is reported, so the list can show it.
-    expect(managed?.head).toMatch(/^[0-9a-f]{7,}$/)
+    expect(linked?.head).toMatch(/^[0-9a-f]{7,}$/)
   })
 
   it('marks a lock Git holds', async () => {
@@ -140,7 +139,7 @@ describe('listWorktrees', () => {
 })
 
 describe('removeWorktree', () => {
-  it('removes a managed checkout and the branch that came with it', async () => {
+  it('removes a checkout and the branch that came with it', async () => {
     const repo = repository()
     const created = await createWorktree(repo, 'disposable')
 
@@ -156,13 +155,17 @@ describe('removeWorktree', () => {
     await expect(removeWorktree(repo, repo, false)).rejects.toThrow(/主检出/)
   })
 
-  it('refuses a checkout outside the managed parent', async () => {
+  // Checkouts made by the official runtime, by Codex, or by hand sit anywhere
+  // on disk; the list has to be able to clear them, not only `.agents/worktrees`.
+  it('removes a checkout that lives beside the repository', async () => {
     const repo = repository()
     const outside = join(scratch(), 'beside')
     git(repo, ['worktree', 'add', '-b', 'beside', outside, 'HEAD'])
 
-    await expect(removeWorktree(repo, outside, false)).rejects.toThrow(/工作树目录/)
-    expect(existsSync(outside)).toBe(true)
+    await removeWorktree(repo, outside, true)
+
+    expect(existsSync(outside)).toBe(false)
+    expect(git(repo, ['branch', '--list', 'beside']).trim()).toBe('')
   })
 
   it('refuses an unknown path', async () => {
