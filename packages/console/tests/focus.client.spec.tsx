@@ -37,7 +37,7 @@ describe('the focus page', () => {
       session({ sessionId: 's-2' }),
     ]
     render(<FocusPage t={t} running={running}
-      waitingOn={() => false} />)
+      waitingOn={() => []} />)
     expect(screen.getByText(t('focusCurrent', { count: 2 }))).toBeTruthy()
     expect(screen.getByText('修 FormSubmit 的回归测试')).toBeTruthy()
     expect(screen.getByText(`D:\\open\\free-dsh-plugins`, { exact: false })).toBeTruthy()
@@ -48,13 +48,13 @@ describe('the focus page', () => {
   })
 
   it('explains an empty page instead of leaving a blank one', () => {
-    render(<FocusPage t={t} running={() => []} waitingOn={() => false} />)
+    render(<FocusPage t={t} running={() => []} waitingOn={() => []} />)
     expect(screen.getByText(t('focusCurrent', { count: 0 }))).toBeTruthy()
     expect(screen.getByText(t('focusEmpty'))).toBeTruthy()
   })
 
   it('says which parts wait for P2 rather than showing dead controls', () => {
-    render(<FocusPage t={t} running={() => []} waitingOn={() => false} />)
+    render(<FocusPage t={t} running={() => []} waitingOn={() => []} />)
     expect(screen.getByText(t('focusHint'))).toBeTruthy()
     expect(screen.getByText(t('focusLater'))).toBeTruthy()
     // 没有假按钮：这一版不给「进入会话」，因为它需要一个还没注入的服务。
@@ -64,6 +64,8 @@ describe('the focus page', () => {
 
   it('says which running sessions are waiting on you', () => {
     // 「在跑」与「在等你」是两件事：一条会话跑着但等你确认时，该做的动作完全不同。
-    render(<FocusPage t={t} running={() => [session({ sessionId: 's1', title: '看板' })]} waitingOn={(id) => id === 's1'} />)
+    render(<FocusPage t={t} running={() => [session({ sessionId: 's1', title: '看板' })]} waitingOn={(id) => (id === 's1' ? ['邮件分诊：限时优惠'] : [])} />)
     expect(screen.getByText('等你处置')).toBeTruthy()
+    // 还要说清等的是哪一件，否则等于让人再去找一遍。
+    expect(screen.getByText(/限时优惠/)).toBeTruthy()
   })})

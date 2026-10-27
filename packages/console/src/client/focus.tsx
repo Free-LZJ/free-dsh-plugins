@@ -30,12 +30,12 @@ export function FocusPage(props: {
   readonly t: Translate
   readonly running: () => readonly RunningSession[]
   /**
-   * 会话 id → 它有一条**还没处理**的条目。
+   * 会话 id → 它**还没处理**的条目标题（空数组＝没人等）。
    *
    * 这不是「在跑」，而是「在等你」——两者在页面上必须分开：一条会话在跑但等你确认，与
    * 它自己空转，需要的动作完全不同。数据来自工作台已有的条目，不依赖宿主暴露会话状态。
    */
-  readonly waitingOn: (sessionId: string) => boolean
+  readonly waitingOn: (sessionId: string) => readonly string[]
 }): ReactNode {
   const { t } = props
   const sessions = props.running()
@@ -52,31 +52,40 @@ export function FocusPage(props: {
         ? <p className={CLS.emptyLine}>{t('focusEmpty')}</p>
         : (
           <ul className={CLS.focusList}>
-            {sessions.map((session) => (
-              <li key={session.sessionId} className={CLS.focusItem}>
-                <div className={CLS.focusMain}>
-                  <span className={CLS.focusTitle}>
-                    {session.title === '' ? session.sessionId : session.title}
+            {sessions.map((session) => {
+              const waiting = props.waitingOn(session.sessionId)
+              return (
+                <li key={session.sessionId} className={CLS.focusItem}>
+                  <div className={CLS.focusMain}>
+                    <span className={CLS.focusTitle}>
+                      {session.title === '' ? session.sessionId : session.title}
+                    </span>
+                    {session.cwd !== undefined && (
+                      <span className={CLS.focusMeta}>{t('focusCwd')}：{session.cwd}</span>
+                    )}
+                    {/* 等的是什么：只说「等你处置」等于让人再点两下去找。 */}
+                    {waiting.map((title, index) => (
+                      <span key={`${title}-${String(index)}`} className={CLS.focusMeta}>
+                        {t('focusWaitingFor')}：{title}
+                      </span>
+                    ))}
+                  </div>
+                  <span className={CLS.focusState}>
+                    {waiting.length > 0 ? (
+                      <>
+                        <StateDot state="ongoing" />
+                        <Tag tone="quiet">{t('focusWaiting')}</Tag>
+                      </>
+                    ) : (
+                      <>
+                        <StateDot state="ongoing" />
+                        <Tag tone="info">{t('statusRunning')}</Tag>
+                      </>
+                    )}
                   </span>
-                  {session.cwd !== undefined && (
-                    <span className={CLS.focusMeta}>{t('focusCwd')}：{session.cwd}</span>
-                  )}
-                </div>
-                <span className={CLS.focusState}>
-                  {props.waitingOn(session.sessionId) ? (
-                    <>
-                      <StateDot state="ongoing" />
-                      <Tag tone="quiet">{t('focusWaiting')}</Tag>
-                    </>
-                  ) : (
-                    <>
-                      <StateDot state="ongoing" />
-                      <Tag tone="info">{t('statusRunning')}</Tag>
-                    </>
-                  )}
-                </span>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         )}
       <p className={CLS.viewMeta}>{t('focusLater')}</p>

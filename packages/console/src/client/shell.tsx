@@ -228,7 +228,9 @@ export function FocusShell(props: ConsoleShellProps): ReactNode {
         <FocusPage
           t={t}
           running={props.running}
-          waitingOn={sessionId => notices.some(notice => notice.state === 'new' && notice.sessionId === sessionId)}
+          waitingOn={sessionId => notices
+            .filter(notice => notice.state === 'new' && notice.sessionId === sessionId)
+            .map(notice => notice.title)}
         />
       </div>
     </div>
