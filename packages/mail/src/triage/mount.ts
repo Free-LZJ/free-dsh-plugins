@@ -50,6 +50,15 @@ interface LiveAgentLike {
   followup(message: unknown): void
 }
 
+/** `agents` 服务上本插件用得到的那部分。 */
+interface AgentsLike {
+  /** 建代理 + 会话（实测入口；旧版宿主没有这个方法）。 */
+  createSession?(request: {
+    readonly cwd: string
+    readonly agentPreset?: string
+  }): Promise<{ readonly agent: LiveAgentLike }>
+}
+
 /** 会话对象上本插件用得到的那部分。 */
 interface LiveSessionLike {
   readonly id?: string
@@ -57,22 +66,11 @@ interface LiveSessionLike {
   snapshotEvents?(fromSeq?: number, toSeqExclusive?: number): readonly { readonly type: string; readonly data?: unknown }[]
   /** 当前事件序号。 */
   readonly seq?: number
+  /** 往会话里追加一个事件（改名走 `session/title`）。 */
+  append?(type: string, data: unknown): unknown
 }
 
-/** 工作区服务里本插件用得到的那部分。 */
-interface WorkspaceRegistryLike {
-  create(path: string): Promise<{
-    readonly path: string
-    attachSession(id: string): Promise<void>
-    detachSession(id: string): Promise<void>
-  }>
-}
 
-/** 权限预设服务。 */
-interface PermissionsLike {
-  readonly defaultPreset?: string
-  set(session: unknown, name: string): void
-}
 
 /** 工作台通知与条目。 */
 interface ConsoleLike {
@@ -216,43 +214,7 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
     }
   }
 
-  /**
-   * 会话端口：把「建会话 → 挂工作区 → 改名 → 挂权限 → 投递」这五个动词按宿主服务
-   * 拼出来。顺序在这里固定，动作实现不需要知道。
-   */
-  const sessionPort = (): SessionPort | undefined => {
-    const controller = ctx.get('sessionController') as SessionControllerLike | undefined
-    const workspaces = ctx.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
-    if (controller === undefined || workspaces === undefined) return undefined
-    const permissions = ctx.get('permissionPresets') as PermissionsLike | undefined
-    return {
-      createSession: async request => await controller.create(request),
-      attachSession: async (cwd, sessionId) => {
-        const workspace = await workspaces.create(cwd)
-        await workspace.attachSession(sessionId)
-      },
-      rename: async (sessionId, title) => {
-        await controller.rename?.({ sessionId, title })
-      },
-      setPermission: (sessionId, preset) => {
-        // 权限要挂在会话对象上，而动作层只有 id；用 resolveAgent 拿会话是异步的，
-        // 而 `setPermission` 是同步接口——所以这里退化成用部署默认值，并把这件事
-        // 记进日志，而不是假装挂上了。
-        void sessionId
-        void preset
-        void permissions
-      },
-      followup: async (sessionId, text, source) => {
-        const resolved = await controller.resolveAgent(sessionId)
-        if ('error' in resolved) throw new Error(String((resolved.error as { message?: string })?.message ?? resolved.error))
-        resolved.agent.followup({
-          role: 'user',
-          content: [{ type: 'text', text }],
-          source,
-        })
-      },
-    }
-  }
+  const sessionPort = (): SessionPort | undefined => buildSessionPort(ctx.get('agents') as AgentsLike | undefined)
 
   /** 工具端口：宿主的 tools 服务可能只给 list/invoke 之一。 */
   function toolsPort(): ActionContext['tools'] | undefined {
@@ -638,4 +600,55 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
 /** 描述任意抛出物。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+/** 本插件建过的会话，用来给改名与投话找到那只 agent。 */
+const triageAgents = new Map<string, LiveAgentLike>()
+
+/**
+ * 会话端口。
+ *
+ * 服务名是**实测过的**（`docs/workbench-session-api.md`）：宿主给的是 `agents`，它上面
+ * 的 `createSession({cwd})` 是唯一同时建出代理与会话的入口；改名是往会话里追加一个
+ * `session/title` 事件；投话走 `agent.followup`。这里以前按 `sessionController` /
+ * `workspaceRegistry` 拼，那两个名字在宿主里不存在，所以整条会话动作从来没跑起来过。
+ *
+ * 老接口里的「挂工作区」「挂权限」这一版没有对应动词：目录在建会话时就带上了，权限是
+ * 会话上的 `permission/*` 事件、动作层只有 id——两处都按**空实现**处理，而不是假装做过了。
+ * @param agents - 宿主的 `agents` 服务，可能不存在或没有建会话能力。
+ * @returns 端口；宿主不给建会话能力时 undefined，动作层据此回答「没有会话服务」。
+ */
+export function buildSessionPort(agents: AgentsLike | undefined): SessionPort | undefined {
+  const createSession = agents?.createSession
+  if (createSession === undefined) return undefined
+  return {
+    createSession: async request => {
+      const { agent } = await createSession.call(agents, request)
+      const sessionId = agent.session?.id
+      if (sessionId === undefined) throw new Error('the created agent reported no session id')
+      triageAgents.set(sessionId, agent)
+      return { sessionId }
+    },
+    attachSession: async (cwd, sessionId) => {
+      // 目录随 `createSession({cwd})` 一起进会话 header，这一版没有单独的挂载动词。
+      void cwd
+      void sessionId
+    },
+    rename: async (sessionId, title) => {
+      triageAgents.get(sessionId)?.session?.append?.('session/title', {
+        title,
+        messageSeqs: [],
+        source: { kind: 'user' },
+      })
+    },
+    setPermission: (sessionId, preset) => {
+      // 权限是会话上的 `permission/*` 事件，而动作层只有 id；这一版不假装挂上。
+      void sessionId
+      void preset
+    },
+    followup: async (sessionId, text, source) => {
+      const agent = triageAgents.get(sessionId)
+      if (agent === undefined) throw new Error(`session "${sessionId}" was not created by this plugin`)
+      agent.followup({ role: 'user', content: [{ type: 'text', text }], source })
+    },
+  }
 }

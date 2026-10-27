@@ -312,6 +312,16 @@ pnpm exec vitest run packages/mail
 
 [MIT](LICENSE)
 
-## 已知问题：会话动作读的服务名不存在
+## 会话动作现在接的是实测过的服务
 
-session 动作（含 ollowup 投递）通过 ctx.get('sessionController') 拿会话服务，但宿主提供的是 sessions / gents，所以这一支在真实部署里**从未真正跑过**——它不会崩，只是每次都报告拿不到会话服务。实测记录与真实入口见 [docs/workbench-session-api.md](../../docs/workbench-session-api.md)。
+`session` 动作（含 `followup` 投递）以前按 `sessionController` / `workspaceRegistry` 拼端口，而宿主里没有这两个服务——所以它在真实部署里**从未真正跑过**，每次都只是报「拿不到会话服务」。
+
+现在改成宿主真实提供的 `agents`：
+
+- 建会话 + 起代理：`agents.createSession({ cwd, agentPreset? })`（唯一同时建出代理与会话的入口）
+- 改名：往会话追加 `session/title` 事件（`{ title, messageSeqs: [], source: { kind: 'user' } }`）
+- 投话：`agent.followup({ role: 'user', content: [{ type: 'text', text }], source })`
+- **挂工作区 / 挂权限**：这一版没有对应动词（目录在建会话时就进了 header，权限是会话上的 `permission/*` 事件而动作层只有 id），所以按**空实现**处理，不假装做过了
+- 宿主没给 `createSession` 能力时端口返回 `undefined`，动作层照旧回答「没有会话服务」
+
+实测记录与判断依据见 [`docs/workbench-session-api.md`](../../docs/workbench-session-api.md)。
