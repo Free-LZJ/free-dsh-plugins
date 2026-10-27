@@ -489,7 +489,28 @@ ctx.uiWorkspace.openSession(target: SessionTarget): void
 | 可达性：键盘全路径、拖拽有等价菜单 | ✅ | 卡片有 `role`/`tabIndex`/Enter 打开；移列有「移到…」菜单，拖拽不是唯一手段 |
 | 性能：首屏不拉全量日志；轮询增量 | ✅ | `/workbench/state?since=<revision>` 未变时只回 `{unchanged:true}`（实测 331 vs 1494 字节）；标签页隐藏时不轮询；写盘合并 |
 
-**两处未达成且原因明确**：P1a 最后一刀（通用动作 + 编排）等一个 payload 设计决定；P2 执行器真实化等宿主暴露建会话入口（证据见 `docs/workbench-session-api.md`）。两者都不影响上面六条的验收。
+**两处未达成且原因明确**：P1a 最后一刀（通用动作 + 编排）原等一个 payload 设计决定——**该决定已按保守方案记录在 §11（A14）**，剩下的只是实施；P2 执行器真实化等宿主暴露建会话入口（证据见 `docs/workbench-session-api.md`）。两者都不影响上面六条的验收。
+
+---
+
+## 10.5 记录：P1a payload 的定案（2026-10，采纳保守方案）
+
+问题：把 `notify` / `mcp` / `script` / `session` / `http` 这些动作搬进 `@free-lzj/dsh-decision` 时，内核需要知道「邮件这条事件长什么样」吗？
+
+两种做法：
+
+| 方案 | 代价 |
+|---|---|
+| A：把邮件 payload 收敛成内核的 `EventPayload { source, id, title, body }` | 内核与来源解耦得更彻底，但 `runs.json` / `pending.json` 的字段形状要再变一次，得写迁移；邮件正文里的 `from` / `subject` / `repo` 这些模板值会挤进通用字段或丢掉 |
+| B：保留内核的 `TEvent` 泛型；动作需要的模板值由**连接器投影**（`templateValues`） | 不动任何已存数据的形状；内核多一个「从事件取模板值」的注入点，多一层间接 |
+
+**定案：B。** 理由按重要性排序：
+
+1. **数据形状已经变过两次**（抽取 runs store 时一次、rules 文件归一一次）。第三次变动带来的迁移风险，换不来用户可见的收益。
+2. 动作真正需要的是**模板值**，不是「事件」本身——`notify` 要标题与摘要、`http` 要一段 JSON、`session` 要仓库与发件人。把这些压成 `EventPayload` 会丢掉每个来源特有的字段，最后还是要一层投影。
+3. 内核保持 `TEvent` 泛型只需要一个注入点；出问题时排查范围小。
+
+实施顺序（留给下一轮或接手的人）：先给内核的 `ActionContext` 加 `templateValues`（连接器注入），再逐个把动作搬进内核（`notify` → `mcp` → `script` → `session` → `http`，从简单到复杂），每搬一个都保留原有测试，最后把邮件的 `triage/triage.ts` 编排也搬过去。
 
 ---
 
