@@ -11,7 +11,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseRuleFile, loadRuleFile, setActionMode, setRuleEnabled, swapPriority, RULES_VERSION } from '../src/rules.ts'
+import {
+  parseRuleFile, loadRuleFile, setActionMode, setConditionValues, setRuleEnabled, swapPriority, RULES_VERSION,
+} from '../src/rules.ts'
 import type { RuleVocabulary } from '../src/config.ts'
 import type { Rule } from '../src/types.ts'
 
@@ -131,6 +133,36 @@ describe('loadRuleFile', () => {
   })
 })
 
+describe('setConditionValues', () => {
+  it('rewrites a standard condition list and keeps every comment', () => {
+    const result = setConditionValues(SOURCE, 'github', 0, ['gitlab', 'bitbucket'])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.text).toContain('gitlab')
+    expect(result.text).not.toContain('any: [github]')
+    // 写操作不能吃掉注释——这是这个模块最容易改坏的地方。
+    expect(result.text).toContain('# 顶部说明')
+    expect(result.text).toContain('# 第一条：GitHub 通知')
+    expect(result.text).toContain('# 动作上的注释')
+  })
+
+  it('rewrites the shorthand form as well', () => {
+    const shorthand = ['- id: jira', '  when:', '    - from: [a@b.com]', '  then:', '    - kind: notify'].join('\n')
+    const result = setConditionValues(shorthand, 'jira', 0, ['x@y.com'])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.text).toContain('x@y.com')
+    expect(result.text).not.toContain('a@b.com')
+  })
+
+  it('refuses an index the rule does not have', () => {
+    expect(setConditionValues(SOURCE, 'github', 3, ['x'])).toEqual({ ok: false, error: '规则 github 没有第 4 个条件' })
+  })
+
+  it('refuses an id the file does not have', () => {
+    expect(setConditionValues(SOURCE, 'nope', 0, ['x'])).toEqual({ ok: false, error: '找不到规则 nope' })
+  })
+})
 describe('targeted edits keep the file readable', () => {
   /** 改完之后再读一遍：写操作唯一可信的验收是「文件仍然是一份规则文件」。 */
   function reread(text: string): readonly Rule<Spec, Spec>[] {

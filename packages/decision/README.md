@@ -28,3 +28,16 @@
 
 - **还没有编排**：`triage.ts`（判定流程：取正文 → 匹配 → 执行 → 记账）与通用动作（`session`/`http`/`mcp`/`script`/`notify`）还在 `@free-lzj/dsh-mail`，按 P1a 的分片继续搬。
 - **没有版本化迁移**：`runs.json` 的 `version: 1` 只增不减；形状变了靠连接器的 `parseEvent` 兼容旧记录，不写一次性迁移脚本。
+## 规则文件的写操作
+
+四个「改一个点、其余一字不动」的操作，全部在 yaml 文档上原地改，注释与顺序都保留：
+
+| 函数 | 改什么 |
+|---|---|
+| `setRuleEnabled(source, id, enabled)` | 一条规则的开关 |
+| `swapPriority(source, id, parsed, 'up' \| 'down')` | 与相邻规则的先后顺序 |
+| `setActionMode(source, id, actionIndex, mode)` | 一个动作的三态（auto / suggest / off） |
+| `setConditionValues(source, id, conditionIndex, values)` | 一个条件**匹配的值列表**（不动条件种类；标准形态与 `- from: [...]` 简写都认） |
+
+`setConditionValues` 的边界是刻意的：换一种判据等于换一条规则，不该在旧规则上原地改——否则
+这条规则的历史（命中记录挂在 id 上）就说不清是哪种判据产生的。

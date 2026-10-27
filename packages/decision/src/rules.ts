@@ -206,6 +206,50 @@ export function setRuleEnabled(source: string, id: string, enabled: boolean): Ed
 }
 
 /**
+ * 改一条规则里某个条件的**值**。
+ *
+ * 只动值、不动种类：`from: [a, b]` 换成 `[c]` 是日常改动，而换一种判据等于换一条规则
+ * （否则这条规则的历史就没了）。列表型条件按「一个值一个元素」写回；两种写法都认——
+ * 简写形态 `- from: [...]` 与标准形态 `{ kind: from, any: [...] }`，否则同一次编辑在
+ * 两种写法下行为不一致。
+ *
+ * 值是文本：一律按字符串写回，用户填 `123` 不该变成数字节点。
+ * @param source - 当前文件全文。
+ * @param id - 规则 id。
+ * @param conditionIndex - 条件在 `when` 里的下标。
+ * @param values - 新的值列表（空列表表示「这个条件不再匹配任何东西」）。
+ * @returns 新文本，或失败原因。
+ */
+export function setConditionValues(
+  source: string,
+  id: string,
+  conditionIndex: number,
+  values: readonly string[],
+): EditResult {
+  return editDocument(source, (document) => {
+    const index = indexOfRule(document, id)
+    if (index === undefined) return `找不到规则 ${id}`
+    const when = document.getIn([...arrayPath(document), index, 'when'], true) as
+      | { readonly items?: readonly unknown[] }
+      | undefined
+    const items = when?.items
+    if (items === undefined || conditionIndex < 0 || conditionIndex >= items.length) {
+      return `规则 ${id} 没有第 ${String(conditionIndex + 1)} 个条件`
+    }
+    const target = document.getIn([...arrayPath(document), index, 'when', conditionIndex], true) as
+      | { readonly items?: readonly { readonly key?: { readonly value?: unknown } }[] }
+      | undefined
+    const shorthand = target?.items?.length === 1 && target.items[0]?.key?.value !== 'any'
+    // 路径指向**值节点本身**：整段列表一次替换，不往里塞 `.items`（那是内部结构）。
+    const path = shorthand
+      ? [...arrayPath(document), index, 'when', conditionIndex, String(target?.items?.[0]?.key?.value ?? '')]
+      : [...arrayPath(document), index, 'when', conditionIndex, 'any']
+    document.setIn(path, values.map(value => String(value)))
+    return undefined
+  })
+}
+
+/**
  * 改一条规则里某个动作的三态。
  * @param source - 当前文件全文。
  * @param id - 规则 id。
