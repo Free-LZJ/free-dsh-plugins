@@ -311,3 +311,7 @@ pnpm exec vitest run packages/mail
 ## License
 
 [MIT](LICENSE)
+
+## 已知问题：会话动作读的服务名不存在
+
+session 动作（含 ollowup 投递）通过 ctx.get('sessionController') 拿会话服务，但宿主提供的是 sessions / gents，所以这一支在真实部署里**从未真正跑过**——它不会崩，只是每次都报告拿不到会话服务。实测记录与真实入口见 [docs/workbench-session-api.md](../../docs/workbench-session-api.md)。

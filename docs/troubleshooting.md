@@ -87,3 +87,8 @@ tarball 走普通安装路径（`node_modules` 下的实体目录），不进「
 3. **同一封邮件只处理一次**：账本是 `文件夹:UIDVALIDITY:UID`，重连、重启、重复投递都不会二次触发；改了 IMAP 文件夹或账号后 UIDVALIDITY 会变，旧的账本条目自然失效，这是预期行为。分诊只对 `INBOX` 生效，其他文件夹既不触发也不进分诊。
 4. **工作台的「规则」页空白但 Host 正常**：规则界面在工作台（`@free-lzj/dsh-console`），不在邮件面板里；它读的是本插件的 `/dsh-mail/triage/*` 路由。页面说「引擎没加载」就是 mail 没装上或没启用；有引擎但读不出规则，按第 2 条看 Host 日志。写请求要带 `x-dsh-mail: 1` 与 JSON content-type，跨站请求会被 403 挡掉。
 
+## 会话服务用错了名字（工作台 / 邮件的会话动作）
+
+症状：聚焦页「正在跑的会话」永远是空的；看板的真实会话执行器从来不会出现；邮件的 session 动作像被跳过。
+
+原因：代码按 sessionController / workspaceRegistry 找服务，而宿主里没有这两个名字（sessions 与 gents 才是真的）。完整实测记录、真实入口与修复顺序见 [workbench-session-api.md](workbench-session-api.md)。
