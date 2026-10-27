@@ -15,6 +15,7 @@
  * @module @free-lzj/dsh-mail/triage/actions/session
  */
 
+import { runSession } from '@free-lzj/dsh-decision'
 import { fillTemplate, fullNameFromListId, repoFromListId } from '../repo.ts'
 import type { Action, ActionContext, ActionOutcome } from './context.ts'
 import { failure } from './context.ts'
@@ -149,54 +150,42 @@ export function resolveWorkspace(
   return { ok: true, path: spec.workspacePath as string }
 }
 
-/** 会话动作：建会话并把邮件内容投递进去。 */
+/** 会话动作：渲染这一侧的形状，然后交给内核按固定顺序执行。 */
 export const sessionAction: Action = {
   kind: 'session',
   sideEffect: true,
   async run(spec, context): Promise<ActionOutcome> {
-    const sessions = context.sessions
-    if (sessions === undefined) {
-      return failure('未挂载会话服务，无法新建会话（需要 sessionController 与 workspaceRegistry）')
-    }
     const workspace = resolveWorkspace(spec, context)
     if (!workspace.ok) return workspace.outcome
     const { summary, rule } = context.task
-
-    let sessionId: string
-    try {
-      const created = await sessions.createSession({
-        cwd: workspace.path,
+    const outcome = await runSession(
+      {
+        workspace: workspace.path,
+        title: truncateUtf8(`[邮件] ${renderSessionTitle(spec, context)}`, TITLE_MAX_BYTES),
+        prompt: renderMailPrompt(context, spec.instructions),
+        ...(spec.permissionPreset === undefined ? {} : { permissionPreset: spec.permissionPreset }),
         ...(spec.agentPreset === undefined ? {} : { agentPreset: spec.agentPreset }),
-      })
-      sessionId = created.sessionId
-    } catch (error: unknown) {
-      return failure(`新建会话失败：${error instanceof Error ? error.message : String(error)}`)
+        source: {
+          kind: 'plugin:dsh-mail',
+          form: 'mail',
+          ruleId: rule.id,
+          accountId: context.task.accountId,
+          folder: summary.folder,
+          uid: summary.uid,
+          uidValidity: summary.uidValidity,
+        },
+      },
+      {
+        ...(context.sessions === undefined ? {} : { sessions: context.sessions }),
+        log: context.log,
+      },
+    )
+    if (!outcome.ok) {
+      return { ok: false, detail: outcome.message, ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }) }
     }
-
-    try {
-      await sessions.attachSession(workspace.path, sessionId)
-      await sessions.rename(sessionId, truncateUtf8(`[邮件] ${renderSessionTitle(spec, context)}`, TITLE_MAX_BYTES))
-      if (spec.permissionPreset !== undefined) sessions.setPermission(sessionId, spec.permissionPreset)
-      await sessions.followup(sessionId, renderMailPrompt(context, spec.instructions), {
-        kind: 'plugin:dsh-mail',
-        form: 'mail',
-        ruleId: rule.id,
-        accountId: context.task.accountId,
-        folder: summary.folder,
-        uid: summary.uid,
-        uidValidity: summary.uidValidity,
-      })
-    } catch (error: unknown) {
-      // 会话已经建出来了，回滚它比留着更糟（它可能已经收到消息）；把失败说清楚，
-      // 并把 sessionId 带回去让人能进去看。
-      const message = error instanceof Error ? error.message : String(error)
-      context.log(`[mail 分诊] 会话 ${sessionId} 交接失败：${message}`)
-      return { ok: false, detail: `会话已建但交接失败（${message}）`, sessionId }
-    }
-    return { ok: true, detail: `已在「${workspace.path}」新建会话`, sessionId }
+    return { ok: true, detail: outcome.detail, sessionId: outcome.sessionId }
   },
 }
-
 /** 会话标题：优先用模板，缺省用「规则名：主题」。 */
 function renderSessionTitle(spec: { readonly titleTemplate?: string }, context: ActionContext): string {
   const { summary, rule } = context.task
