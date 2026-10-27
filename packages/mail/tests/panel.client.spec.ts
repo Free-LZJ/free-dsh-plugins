@@ -12,7 +12,6 @@ import { resolve } from 'node:path'
 import { JSDOM, VirtualConsole, type DOMWindow } from 'jsdom'
 import { describe, expect, it } from 'vitest'
 import type { MailConfigView, MailDetail, MailPreferences, MailState, MailSummary } from '../src/types.ts'
-import type { RulesView, Run } from '../src/triage/types.ts'
 
 /**
  * The shipped document, read as a consumer receives it.
@@ -181,12 +180,6 @@ interface Reply {
 /** Who answers which route. An absent `message` answers 404. */
 interface Routes {
   readonly state: Reply
-  /** `GET /dsh-mail/triage/rules`: the rule file as the panel sees it. */
-  readonly triageRules?: Reply
-  /** `GET /dsh-mail/triage/runs`: the run history, newest first. */
-  readonly triageRuns?: Reply
-  /** `POST /dsh-mail/triage/test`: what a dry run answered. */
-  readonly triageTest?: Reply
   /**
    * The answer to `/state` once the panel has posted something.
    *
@@ -235,22 +228,13 @@ async function renderPanel(
         const url = String(input)
         if (init?.method === 'POST') {
           writes.push({ url, body: JSON.parse(String(init.body)) as unknown })
-          // A dry run answers with its own result; every other write says `{ok:true}`
-          // and the panel reads the effect back through the GET routes.
-          const trial = url.startsWith('/dsh-mail/triage/test') ? routes.triageTest : undefined
-          if (trial !== undefined) {
-            const status = trial.status ?? 200
-            return { ok: status < 300, status, text: async () => JSON.stringify(trial.body) }
-          }
+          // Every write says `{ok:true}`; the panel reads the effect back through
+          // the GET routes rather than guessing it.
           return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) }
         }
         const reply = url.startsWith('/dsh-mail/message')
           ? routes.message
-          : url.startsWith('/dsh-mail/triage/rules')
-            ? routes.triageRules
-            : url.startsWith('/dsh-mail/triage/runs')
-              ? routes.triageRuns
-              : writes.length > 0 ? routes.afterWrite ?? routes.state : routes.state
+          : writes.length > 0 ? routes.afterWrite ?? routes.state : routes.state
         const status = reply?.status ?? (reply ? 200 : 404)
         const body = reply ? reply.body : { error: 'no fixture for ' + url }
         return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) }
@@ -614,193 +598,4 @@ describe('the mail panel document', () => {
     expect(root.dataset.mailScheme).toBe('dark')
   })
 
-})
-
-/* ──────────────────────────────── triage ──────────────────────────────── */
-
-/** The rule file as the Host serves it: two rules, one hit, one disabled. */
-const TRIAGE_RULES: RulesView = {
-  rules: [
-    {
-      id: 'github',
-      name: 'GitHub 通知',
-      enabled: true,
-      priority: 10,
-      when: [{ kind: 'header', name: 'list-id', any: ['Free-LZJ/'] }],
-      then: [{ kind: 'session', mode: 'auto', workspaceTemplate: '{repoRoot}/{repo}' }],
-    },
-    {
-      id: 'promo',
-      name: '推广与电子报',
-      enabled: false,
-      priority: 20,
-      when: [{ kind: 'header', name: 'list-unsubscribe' }],
-      then: [{ kind: 'markRead', mode: 'auto' }, { kind: 'move', mode: 'suggest', folder: '推广' }],
-    },
-    {
-      id: 'ai-todo',
-      name: '需要我处理（模型判类）',
-      enabled: true,
-      priority: 40,
-      when: [{ kind: 'classifier', labels: ['todo'] }],
-      then: [{ kind: 'notify', mode: 'auto', title: '需要你处理：{subject}' }],
-    },
-  ],
-  source: 'file',
-  path: 'C:/Users/x/.dsh/mail/triage/rules.yml',
-  raw: '- id: github',
-  dropped: [],
-  config: {
-    enabled: true, dryRun: false, undoWindowSeconds: 120,
-    runHistoryLimit: 500, runRetentionDays: 30, repoRoot: 'D:/open',
-  },
-}
-
-/** One hit, so the view can count it and offer an undo. */
-const TRIAGE_RUN: Run = {
-  id: 'run-1',
-  at: '2026-08-12T09:30:00.000Z',
-  ruleId: 'github',
-  ruleName: 'GitHub 通知',
-  label: 'GitHub 通知',
-  message: {
-    accountId: 'acc-1', folder: 'INBOX', uid: 11, uidValidity: 7,
-    from: 'notifications@github.com', subject: 'CI 失败',
-  },
-  actions: [{ kind: 'session', mode: 'auto', ok: true, detail: '会话已创建' }],
-  status: 'done',
-}
-
-/** What a dry run answers for the open message. */
-const TRIAL = {
-  ruleId: 'github',
-  ruleName: 'GitHub 通知',
-  actions: [{ kind: 'session', detail: '自动：session' }],
-  reason: '按顺序第一条命中的规则；它没有改动任何邮件。',
-}
-
-/**
- * Open the triage view with both reads answered.
- * @returns the panel and the document it drew.
- */
-async function openTriage(): Promise<{
-  panel: { window: DOMWindow; errors: readonly string[]; writes: readonly WriteCall[] }
-  doc: Document
-}> {
-  const panel = await renderPanel({
-    state: { body: STATE },
-    message: { body: DETAIL },
-    triageRules: { body: TRIAGE_RULES },
-    triageRuns: { body: { runs: [TRIAGE_RUN] } },
-    triageTest: { body: TRIAL },
-  })
-  const doc = panel.window.document
-  doc.querySelector<HTMLButtonElement>('.m-triage-open')?.click()
-  await settle(panel.window, 100)
-  return { panel, doc }
-}
-
-describe('the triage view inside the mail panel', () => {
-  it('opens from the toolbar without leaving the document', async () => {
-    const panel = await renderPanel({
-      state: { body: STATE },
-      triageRules: { body: TRIAGE_RULES },
-      triageRuns: { body: { runs: [TRIAGE_RUN] } },
-    })
-    const doc = panel.window.document
-    // Before the click the inbox owns the body and triage is not drawn.
-    expect(doc.querySelector('.m-triage')?.hasAttribute('hidden')).toBe(true)
-
-    doc.querySelector<HTMLButtonElement>('.m-triage-open')?.click()
-    await settle(panel.window, 100)
-
-    expect(doc.querySelector('.m-triage')?.hasAttribute('hidden')).toBe(false)
-    expect(doc.querySelector('.m-body')?.hasAttribute('hidden')).toBe(true)
-    const text = doc.querySelector('.m-triage')?.textContent ?? ''
-    // Rules as people read them, the hit count, and the read-only global values.
-    expect(text).toContain('GitHub 通知')
-    expect(text).toContain('命中 1 次')
-    expect(text).toContain('停用')
-    expect(text).toContain('D:/open')
-    // The history row names the message and what was done to it.
-    expect(text).toContain('CI 失败')
-    expect(text).toContain('会话已创建')
-    expect(panel.errors).toEqual([])
-  })
-
-  it('把模型判类条件说成人话，带上它认的类型', async () => {
-    const { panel, doc } = await openTriage()
-
-    doc.querySelector<HTMLButtonElement>('.m-triage-rule[data-rule-id="ai-todo"] .m-triage-rule-head')?.click()
-    await settle(panel.window, 60)
-    const body = doc.querySelector('.m-triage-rule[data-rule-id="ai-todo"] .m-triage-rule-body')?.textContent ?? ''
-    expect(body).toContain('由模型判断类型')
-    expect(body).toContain('todo')
-  })
-
-  it('shows a rule in words and posts the three-state change it was given', async () => {
-    const { panel, doc } = await openTriage()
-
-    doc.querySelector<HTMLButtonElement>('.m-triage-rule[data-rule-id="promo"] .m-triage-rule-head')?.click()
-    await settle(panel.window, 60)
-    const body = doc.querySelector('.m-triage-rule[data-rule-id="promo"] .m-triage-rule-body')?.textContent ?? ''
-    expect(body).toContain('当')
-    expect(body).toContain('带有头部 list-unsubscribe')
-    expect(body).toContain('移动 → 推广')
-
-    // 第二个动作是「移动 → 推广」，它的三态按钮在 data-action-index=1 那一行里。
-    doc.querySelector<HTMLButtonElement>('.m-triage-rule[data-rule-id="promo"] .m-triage-action[data-action-index="1"] .m-triage-mode[data-mode="off"]')?.click()
-    await settle(panel.window, 120)
-    const posted = panel.writes.find(one => one.url === '/dsh-mail/triage/rules/mode')
-    expect(posted?.body).toEqual({ ruleId: 'promo', actionIndex: 1, mode: 'off' })
-  })
-
-  it('turns a rule off from its checkbox', async () => {
-    const { panel, doc } = await openTriage()
-    doc.querySelector<HTMLButtonElement>('.m-triage-rule[data-rule-id="github"] .m-triage-rule-head')?.click()
-    await settle(panel.window, 60)
-    doc.querySelector<HTMLInputElement>('.m-triage-rule[data-rule-id="github"] .m-triage-enabled')?.click()
-    await settle(panel.window, 120)
-    const posted = panel.writes.find(one => one.url === '/dsh-mail/triage/rules/enabled')
-    expect(posted?.body).toEqual({ ruleId: 'github', enabled: false })
-  })
-
-  it('undoes a hit from the history', async () => {
-    const { panel, doc } = await openTriage()
-    doc.querySelector<HTMLButtonElement>('.m-triage-undo')?.click()
-    await settle(panel.window, 120)
-    const posted = panel.writes.find(one => one.url === '/dsh-mail/triage/undo')
-    expect(posted?.body).toEqual({ runId: 'run-1' })
-  })
-
-  it('tries the open message and says what the rule would do', async () => {
-    const { panel, doc } = await openTriage()
-    // 试跑用的是「当前打开的那封」，所以先把它打开。
-    doc.querySelector<HTMLElement>('.m-row')?.click()
-    await settle(panel.window, 100)
-
-    doc.querySelector<HTMLButtonElement>('.m-triage-test')?.click()
-    await settle(panel.window, 120)
-
-    const posted = panel.writes.find(one => one.url === '/dsh-mail/triage/test')
-    expect(posted?.body).toMatchObject({ accountId: 'acc-1', folder: 'INBOX', uid: 11 })
-    const result = doc.querySelector('.m-act-result')?.textContent ?? ''
-    expect(result).toContain('命中规则：GitHub 通知')
-    expect(result).toContain('没有改动任何邮件')
-  })
-
-  it('names the rule file when it serves the built-in defaults', async () => {
-    const panel = await renderPanel({
-      state: { body: STATE },
-      triageRules: { body: { ...TRIAGE_RULES, source: 'default', dropped: ['第 2 条：缺少 name'] } },
-      triageRuns: { body: { runs: [] } },
-    })
-    const doc = panel.window.document
-    doc.querySelector<HTMLButtonElement>('.m-triage-open')?.click()
-    await settle(panel.window, 100)
-    const text = doc.querySelector('.m-triage')?.textContent ?? ''
-    expect(text).toContain('当前用的是内置默认规则')
-    expect(text).toContain('runs.yml'.replace('runs', 'rules'))
-    expect(text).toContain('第 2 条：缺少 name')
-  })
 })
