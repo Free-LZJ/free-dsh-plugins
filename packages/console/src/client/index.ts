@@ -103,6 +103,7 @@ export function apply(ctx: ClientContext): void {
     pause: (sessionId) => workbenchLink.act({ action: 'pause', sessionId }),
     resume: (sessionId) => workbenchLink.act({ action: 'resume', sessionId }),
     end: (sessionId) => workbenchLink.act({ action: 'end', sessionId }),
+    confirm: (cardId) => workbenchLink.act({ action: 'confirm', cardId }),
   }
   let liveNotices: readonly ConsoleNoticeRecord[] = []
 

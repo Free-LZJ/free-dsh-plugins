@@ -266,6 +266,8 @@ export interface CardDetailProps {
   readonly onDispatch: () => void
   readonly onMove: (column: WorkbenchColumn) => void
   readonly onInterrupt: (text: string) => void
+  /** Mark the card written back; only shown on a finished card still awaiting it. */
+  readonly onConfirm: () => void
 }
 
 /**
@@ -293,6 +295,9 @@ export function CardDetail(props: CardDetailProps): ReactNode {
       footer={(
         <>
           {card.column === 'todo' && <Button variant="primary" onClick={props.onDispatch}>{t('cardDispatch')}</Button>}
+          {card.column === 'done' && card.awaitingConfirmation && (
+            <Button variant="primary" onClick={props.onConfirm}>{t('cardConfirm')}</Button>
+          )}
           <Button onClick={props.onClose}>{t('close')}</Button>
         </>
       )}

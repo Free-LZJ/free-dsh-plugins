@@ -113,6 +113,7 @@ function face(state: WorkbenchState = board()) {
     dispatch: [] as string[],
     move: [] as { cardId: string; column: WorkbenchColumn }[],
     interrupt: [] as { sessionId: string; text: string }[],
+    confirm: [] as string[],
   }
   const fake: WorkbenchFace = {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
@@ -123,6 +124,10 @@ function face(state: WorkbenchState = board()) {
     },
     move: async (cardId, column) => {
       calls.move.push({ cardId, column })
+      return true
+    },
+    confirm: async (cardId) => {
+      calls.confirm.push(cardId)
       return true
     },
     interrupt: async (sessionId, text) => {
@@ -269,6 +274,23 @@ describe('the board on screen', () => {
     expect(calls.interrupt).toEqual([{ sessionId: 'session-1', text: '先别动那一行' }])
   })
 
+  it('offers "written back" on a finished card that still awaits it', () => {
+    const done = board({
+      cards: [{
+        ...(board().cards[0] as WorkbenchState['cards'][number]),
+        column: 'done',
+        status: 'done',
+        awaitingConfirmation: true,
+      }],
+    })
+    const { calls, face: fake } = face(done)
+    render(<BoardView face={fake} t={t} />)
+    fireEvent.click(within(cardOf('今天天气不错')).getByRole('button', { name: t('cardDetail') }))
+    const dialog = screen.getByRole('dialog', { name: '今天天气不错' })
+    fireEvent.click(within(dialog).getByRole('button', { name: t('cardConfirm') }))
+    expect(calls.confirm).toEqual([(done.cards[0] as WorkbenchState['cards'][number]).id])
+  })
+
   it('says the board is loading before the first snapshot', () => {
     const fake: WorkbenchFace = {
       useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(undefined),
@@ -279,6 +301,7 @@ describe('the board on screen', () => {
       pause: async () => true,
       resume: async () => true,
       end: async () => true,
+      confirm: async () => true,
     }
     render(<BoardView face={fake} t={t} />)
     expect(screen.getByText(t('boardLoading'))).toBeTruthy()

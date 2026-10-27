@@ -198,6 +198,10 @@ function runAction(board: WorkbenchBoard, value: unknown): ActionResult {
       }
       return board.move(body.cardId, column as WorkbenchColumn)
     }
+    case 'confirm': {
+      if (typeof body.cardId !== 'string') return { ok: false, error: 'confirm needs a cardId' }
+      return board.confirm(body.cardId)
+    }
     case 'interrupt': {
       if (typeof body.sessionId !== 'string') return { ok: false, error: 'interrupt needs a sessionId' }
       if (typeof body.text !== 'string') return { ok: false, error: 'interrupt needs text' }

@@ -246,6 +246,27 @@ describe('manual dispatch and session control', () => {
     expect(board.state().sessions.filter((session) => session.status === 'failed')).toHaveLength(1)
   })
 
+  it('clears the write-back flag only when a finished card is confirmed', async () => {
+    // `awaitingConfirmation` 只在运行结束时被写上；没有这个动作它就是单向状态，
+    // 卡片永远挂着「待确认」。确认是人的声明（出站系统还没接），所以要一次点击。
+    const { board } = bench()
+    const ingested = await board.ingest({ source: 'webhook', title: '页面报错' })
+    expect(ingested.ok).toBe(true)
+    if (!ingested.ok) return
+    // 未完成的卡片不能确认。
+    expect(board.confirm(ingested.card.id)).toEqual({ ok: false, error: 'only a finished card can be confirmed' })
+    const done = board.move(ingested.card.id, 'done')
+    expect(done.ok).toBe(true)
+    if (!done.ok || done.card === undefined) return
+    expect(done.card.awaitingConfirmation).toBe(true)
+    const confirmed = board.confirm(ingested.card.id)
+    expect(confirmed.ok).toBe(true)
+    if (!confirmed.ok || confirmed.card === undefined) return
+    expect(confirmed.card.awaitingConfirmation).toBe(false)
+    // 再点一次是幂等的，不是错误。
+    expect(board.confirm(ingested.card.id).ok).toBe(true)
+  })
+
   it('refuses unknown cards and sessions', () => {
     const { board } = bench()
     expect(board.dispatch('nope').ok).toBe(false)

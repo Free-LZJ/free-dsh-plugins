@@ -328,6 +328,27 @@ export class WorkbenchBoard {
   }
 
   /**
+   * Mark a finished card as written back.
+   *
+   * `awaitingConfirmation` is set when a run ends and cleared **here** — nothing
+   * else clears it, so without an action the flag would be a one-way state that
+   * the card wears forever. "Written back" is a human claim (the outbound systems
+   * are not wired), which is exactly why it takes a click rather than a timer.
+   * @param cardId - the card.
+   * @returns the card, or why it cannot be confirmed.
+   */
+  confirm(cardId: string): ActionResult {
+    const card = this.cards.get(cardId)
+    if (card === undefined) return { ok: false, error: `unknown card "${cardId}"` }
+    if (card.column !== 'done') return { ok: false, error: 'only a finished card can be confirmed' }
+    if (!card.awaitingConfirmation) return { ok: true, card }
+    const confirmed: WorkbenchCard = { ...card, awaitingConfirmation: false, updatedAt: Date.now() }
+    this.cards.set(confirmed.id, confirmed)
+    this.bump()
+    return { ok: true, card: confirmed }
+  }
+
+  /**
    * Send a follow-up message into a session.
    * @param sessionId - the session.
    * @param text - the message.

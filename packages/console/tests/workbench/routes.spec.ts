@@ -235,4 +235,17 @@ describe('workbench routes', () => {
     expect((await call(route, write(WORKBENCH_ACTION_PATH, { action: 'explode', cardId }))).status).toBe(400)
     expect((await call(route, write(WORKBENCH_ACTION_PATH, { action: 'dispatch', cardId: 'nope' }))).status).toBe(400)
   })
+
+  it('confirms a finished card through the route, and refuses a running one', async () => {
+    const route = bench()
+    const ingested = await call(route, write(WORKBENCH_INGEST_PATH, { source: 'mail', title: '今天天气不错' }))
+    const cardId = (ingested.json as { card: { id: string } }).card.id
+    // 还没跑完的卡片不能确认回写。
+    expect((await call(route, write(WORKBENCH_ACTION_PATH, { action: 'confirm', cardId }))).status).toBe(400)
+    await call(route, write(WORKBENCH_ACTION_PATH, { action: 'move', cardId, column: 'done' }))
+    const confirmed = await call(route, write(WORKBENCH_ACTION_PATH, { action: 'confirm', cardId }))
+    expect(confirmed.status).toBe(200)
+    expect((confirmed.json as { card: { awaitingConfirmation: boolean } }).card.awaitingConfirmation).toBe(false)
+    expect((await call(route, write(WORKBENCH_ACTION_PATH, { action: 'confirm' }))).status).toBe(400)
+  })
 })

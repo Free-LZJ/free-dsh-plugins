@@ -47,6 +47,8 @@ export interface WorkbenchFace {
   readonly resume: (sessionId: string) => Promise<boolean>
   /** End a session. */
   readonly end: (sessionId: string) => Promise<boolean>
+  /** Mark a finished card as written back (clears the confirmation flag). */
+  readonly confirm: (cardId: string) => Promise<boolean>
 }
 
 /**
@@ -280,6 +282,7 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
           onClose={() => { setOpenCardId(undefined) }}
           onDispatch={() => { run(face.dispatch(openCard.id, openCard.executor)) }}
           onMove={(column) => { run(face.move(openCard.id, column)) }}
+          onConfirm={() => { run(face.confirm(openCard.id)) }}
           onInterrupt={(text) => {
             if (openSession === undefined) return
             run(face.interrupt(openSession.id, text))
