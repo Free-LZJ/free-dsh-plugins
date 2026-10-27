@@ -26,6 +26,7 @@ import type { ActionContext } from './actions/context.ts'
 import type { ActionOutcome } from './actions/index.ts'
 import type { ClassifyRequest, ClassifyResult, MatchContext } from './conditions.ts'
 import type { ActionRegistry, ConditionRegistry, PendingStore, RunStore } from '@free-lzj/dsh-decision'
+import { ruleMatches } from '@free-lzj/dsh-decision'
 import type {
   ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, PendingAction, Rule, Run,
   RunAction, RunStatus,
@@ -158,26 +159,27 @@ export async function triage(mail: IncomingMail, ports: TriagePorts): Promise<Ru
  * @returns 全部条件成立时为 true。
  */
 export async function matches(rule: Rule, mail: IncomingMail, ports: TriagePorts, state: MatchState): Promise<boolean> {
-  for (const spec of rule.when) {
-    const condition = ports.conditions.get(spec.kind)
-    if (condition === undefined) {
-      ports.log(`[mail 分诊] 规则「${rule.name}」用了本部署没有的条件 ${spec.kind}，判为不命中`)
-      return false
-    }
-    // 正文是这条链路上唯一昂贵的 IMAP 往返，所以只在该条件**真的**用得上时才取：
-    // `needsBody` 是「总是要」，`needsBodyFor` 是「看配置」（目前是 regex 的 body 字段）。
-    if ((condition.needsBody || condition.needsBodyFor?.(spec) === true) && state.body === undefined) {
-      state.body = await mail.readBody()
-    }
-    const matched = await condition.test(spec, {
-      summary: mail.summary,
-      accountName: mail.accountName,
-      ...(state.body === undefined ? {} : { body: state.body }),
-      ...(ports.classify === undefined ? {} : { classify: classifierFor(ports, state) }),
-    })
-    if (!matched) return false
-  }
-  return true
+  // 匹配的骨架在内核（懒取正文、短路、未知条件算不命中并记一行），这里只提供邮件这一侧的
+  // 上下文：那三件事对所有连接器都一样，而 `summary` / `classify` 只有这里知道。
+  return await ruleMatches(
+    { name: rule.name, when: rule.when },
+    {
+      conditions: ports.conditions,
+      context: inner => ({
+        summary: mail.summary,
+        accountName: mail.accountName,
+        ...(inner.body === undefined ? {} : { body: inner.body }),
+        ...(ports.classify === undefined ? {} : { classify: classifierFor(ports, state) }),
+      }),
+      // 正文写回调用方那份 state：「先匹配再执行」的后续步骤要复用同一次读取。
+      readBody: async () => {
+        const body = await mail.readBody()
+        state.body = body
+        return body
+      },
+      log: ports.log,
+    },
+  )
 }
 
 /**
