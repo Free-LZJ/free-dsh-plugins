@@ -97,9 +97,9 @@ describe('createHarnessRunner', () => {
     expect(runner({ cwd: '' }).runner).toBeUndefined()
   })
 
-  it('answers undefined, and says why, when the agents service cannot create sessions', () => {
-    // `agents` 自己只有 create/resume；`createSession` 是 SessionController 插件加上去的。
-    // 没有它时宁可注册不了执行器，也不要在派单那一刻抛一句 TypeError。
+  it('still gets built without createSession, and only complains when a run is attempted', async () => {
+    // `createSession` 是 SessionController 插件**在构造之后**挂上去的，所以构造时看不见它
+    // 不代表这个部署不能建会话——构造时就放弃，会把能用的情况也一并关掉。
     const lines: string[] = []
     const value = createHarnessRunner({
       agents: { create: async () => ({ agent: agent() }) } as unknown as HarnessAgentsLike,
@@ -107,8 +107,23 @@ describe('createHarnessRunner', () => {
       subscribe: events().subscribe,
       log: (line) => lines.push(line),
     })
-    expect(value).toBeUndefined()
+    expect(value).toBeDefined()
+    await expect(value?.start({ title: 'c', prompt: 'p' })).rejects.toThrow(/createSession/)
     expect(lines.join('\n')).toContain('createSession')
+  })
+
+  it('uses a createSession that appeared after construction', async () => {
+    // 这一条是 P2 的关键：先构造、后挂方法（真实的启动顺序），派单时必须能建出会话。
+    const agents: Record<string, unknown> = {}
+    const value = createHarnessRunner({
+      agents: agents as unknown as HarnessAgentsLike,
+      cwd: 'C:/tmp/run',
+      subscribe: events().subscribe,
+      log: () => undefined,
+    })
+    agents['createSession'] = async () => ({ agent: agent() })
+    const run = await value?.start({ title: 'c', prompt: 'p' })
+    expect(run?.sessionId).toBe('session-1')
   })
 
   it('creates the agent and puts the prompt in', async () => {

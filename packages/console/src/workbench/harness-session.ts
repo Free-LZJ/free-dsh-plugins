@@ -35,7 +35,8 @@ export interface HarnessAgentLike {
 
 /** The agents service: the one entry point that builds an agent *and* its session. */
 export interface HarnessAgentsLike {
-  createSession(request: {
+  /** Added by the SessionController plugin **after** this bridge is constructed. */
+  createSession?(request: {
     readonly cwd: string
     readonly agentPreset?: string
   }): Promise<{ readonly agent: HarnessAgentLike }>
@@ -68,22 +69,32 @@ export interface HarnessSessionOptions {
 export function createHarnessRunner(options: HarnessSessionOptions): SessionRunner | undefined {
   const { agents, cwd } = options
   if (cwd === '') return undefined
-  // `agents` 这个服务本身只有 create/resume；**createSession 是别处加上去的**
-  // （实测：`SessionController` 插件构造的内部 ApiSessionAgentController）。没被
-  // 加上时早点说清楚，而不是等到派单那一步才抛一句看不懂的 TypeError。
-  if (typeof agents.createSession !== 'function') {
-    options.log(
-      'workbench: this deployment\'s agents service has no createSession, so the real executor stays off '
-      + '(it needs the sessionController plugin composed)',
-    )
-    return undefined
+  // **不要在构造时判能力**。`createSession` 是 `SessionController` 插件挂到 agents 上的，
+  // 而这个 bridge 在 `ctx.inject` 里构造——那时那个插件可能还没跑完，于是构造时看不见方法、
+  // 真正调用时却有了。邮件插件能建会话，正是因为它**调用时才取**。
+  let reportedMissing = false
+  /** The creation entry point as it exists *now*: the service object is augmented later. */
+  const creation = (): HarnessAgentsLike['createSession'] | undefined => {
+    const candidate = (agents as { createSession?: HarnessAgentsLike['createSession'] }).createSession
+    return typeof candidate === 'function' ? candidate : undefined
   }
   /** The agents this runner started, so a follow-up reaches the right one. */
   const started = new Map<string, HarnessAgentLike>()
 
   return {
     async start(request): Promise<RealRun> {
-      const { agent } = await agents.createSession({ cwd })
+      const createSession = creation()
+      if (createSession === undefined) {
+        if (!reportedMissing) {
+          reportedMissing = true
+          options.log(
+            'workbench: this deployment\'s agents service has no createSession, so a real run cannot start '
+            + '(it needs the sessionController plugin composed)',
+          )
+        }
+        throw new Error('这个部署的 agents 服务没有 createSession，无法真正开一个会话')
+      }
+      const { agent } = await createSession.call(agents, { cwd })
       const sessionId = agent.session?.id
       if (sessionId === undefined) {
         // 建了代理却没有会话 id：既不能收尾也不能投话，别让它挂在「进行中」。
