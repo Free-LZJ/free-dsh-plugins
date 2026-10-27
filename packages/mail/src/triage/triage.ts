@@ -26,7 +26,7 @@ import type { ActionContext } from './actions/context.ts'
 import type { ActionOutcome } from './actions/index.ts'
 import type { ClassifyRequest, ClassifyResult, MatchContext } from './conditions.ts'
 import type { ActionRegistry, ConditionRegistry, PendingStore, RunStore } from '@free-lzj/dsh-decision'
-import { ruleMatches, runDueActions } from '@free-lzj/dsh-decision'
+import { ruleMatches, runDueActions, undoRunById } from '@free-lzj/dsh-decision'
 import type {
   ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, PendingAction, Rule, Run,
   RunAction, RunStatus,
@@ -434,31 +434,22 @@ async function record(
  * @returns 结果与一句说明。
  */
 export async function undoRun(runId: string, ports: TriagePorts): Promise<{ ok: boolean; message: string }> {
-  const run = ports.runs.get(runId)
-  if (run === undefined) return { ok: false, message: `没有这条记录：${runId}` }
-  if (run.status === 'undone') return { ok: false, message: '这条记录已经撤销过了' }
-
-  const queued = ports.pending.list().filter(item => item.runId === runId)
-  for (const item of queued) await ports.pending.cancel(item.id)
-
-  const undos = undosByRun.get(runId) ?? []
-  for (const undo of [...undos].reverse()) {
-    try {
-      await undo()
-    } catch (error: unknown) {
-      ports.log(`[mail 分诊] 撤销 ${runId} 时出错：${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  const cancelled = queued.length
-  const reversed = undos.length
-  if (cancelled === 0 && reversed === 0) {
-    return { ok: false, message: '这条记录里的动作都撤不回来（例如已经建出的会话）' }
-  }
-  await ports.runs.patch(runId, { status: 'undone' })
-  const parts: string[] = []
-  if (cancelled > 0) parts.push(`取消 ${String(cancelled)} 个未执行的动作`)
-  if (reversed > 0) parts.push(`回滚 ${String(reversed)} 个已执行的动作`)
-  return { ok: true, message: parts.join('，') }
+  // 取消（还没发生的）与回滚（已经发生的）的区别、逆序回滚、失败只记不抛——都在内核里。
+  // 这里只把「这条记录排队的动作」翻译成「取消它们并数一数」，以及交出撤销闭包。
+  return await undoRunById(runId, {
+    runs: {
+      get: id => ports.runs.get(id),
+      // 内核只知道「状态是一个字符串」，这里转回这个包自己的状态集合。
+      patch: async (id, change) => await ports.runs.patch(id, { status: change.status as RunStatus }),
+    },
+    pendingFor: async (id) => {
+      const queued = ports.pending.list().filter(item => item.runId === id)
+      for (const item of queued) await ports.pending.cancel(item.id)
+      return queued.length
+    },
+    undosFor: id => undosByRun.get(id) ?? [],
+    log: ports.log,
+  })
 }
 
 /**
