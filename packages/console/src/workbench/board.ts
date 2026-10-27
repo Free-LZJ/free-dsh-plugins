@@ -91,6 +91,10 @@ export class WorkbenchBoard {
   private revision = 0
   /** The write chain every bump appends to, so bursts serialize instead of racing. */
   private pendingWrite: Promise<void> = Promise.resolve()
+  /** Whether a write is running right now (see `ensureSaved`). */
+  private saving = false
+  /** Whether another snapshot arrived while that write was running. */
+  private saveAgain = false
   /** Settles once the saved document was read (or found absent). */
   readonly ready: Promise<void>
 
@@ -506,6 +510,45 @@ export class WorkbenchBoard {
     }
   }
 
+  /**
+   * Persist the newest snapshot, at most one write in flight.
+   *
+   * A run emits a log line per step and every line used to serialize and rename
+   * the whole document; a burst of twenty lines meant twenty full writes. Now a
+   * bump while a write is in flight only marks the snapshot dirty, and the write
+   * that is already running picks it up when it finishes — so a burst costs one
+   * write plus one follow-up, and the file still ends on the newest state (the
+   * chain is what guarantees that, not the write count).
+   */
+  private ensureSaved(): void {
+    const home = this.options.homeDir
+    if (home === undefined) return
+    if (this.saving) {
+      this.saveAgain = true
+      return
+    }
+    this.saving = true
+    this.pendingWrite = (async () => {
+      try {
+        let wrote = false
+        do {
+          this.saveAgain = false
+          wrote = true
+          await writeWorkbench(home, {
+            version: 1,
+            cards: [...this.cards.values()],
+            sessions: this.sessions.list(),
+          })
+        } while (this.saveAgain)
+        if (!wrote) return
+      } catch (error: unknown) {
+        this.options.warn(`workbench: saving board failed: ${error instanceof Error ? error.message : String(error)}`)
+      } finally {
+        this.saving = false
+      }
+    })()
+  }
+
   /** Connectors joined with the saved configuration; unknown ids warn once and drop. */
   private connectorInfos(): WorkbenchConnectorInfo[] {
     const enabled = this.options.enabledConnectors()
@@ -540,22 +583,7 @@ export class WorkbenchBoard {
   /** Advance the revision, persist best-effort, and push the new state. */
   private bump(): void {
     this.revision += 1
-    if (this.options.homeDir !== undefined) {
-      // Serialized, not concurrent: each write captures the snapshot of its
-      // own bump, and the chain keeps the last write the newest snapshot
-      // instead of whichever rename happened to win a race.
-      const home = this.options.homeDir
-      const document = {
-        version: 1,
-        cards: [...this.cards.values()],
-        sessions: this.sessions.list(),
-      }
-      this.pendingWrite = this.pendingWrite
-        .then(() => writeWorkbench(home, document))
-        .catch((error: unknown) => {
-          this.options.warn(`workbench: saving board failed: ${error instanceof Error ? error.message : String(error)}`)
-        })
-    }
+    this.ensureSaved()
     const state = this.state()
     for (const listener of [...this.listeners]) {
       try {

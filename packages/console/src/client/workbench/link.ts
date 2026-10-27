@@ -54,13 +54,29 @@ export class WorkbenchLink {
     this.listeners.clear()
   }
 
-  /** Read the snapshot once. */
+  /**
+   * Read the snapshot once.
+   *
+   * Asks for a revision-stamped answer: an unchanged board costs a few dozen
+   * bytes and does not repaint. A hidden tab does not poll at all — the timer is
+   * for a page someone is looking at, and coming back triggers one read.
+   */
   async refresh(): Promise<void> {
     if (this.disposed) return
+    if (typeof document !== 'undefined' && document.hidden === true) return
+    const since = this.snapshot?.revision
     try {
-      const response = await fetch(WORKBENCH_STATE_PATH, { cache: 'no-store' })
+      const response = await fetch(
+        since === undefined ? WORKBENCH_STATE_PATH : `${WORKBENCH_STATE_PATH}?since=${String(since)}`,
+        { cache: 'no-store' },
+      )
       if (!response.ok) return
-      this.snapshot = await response.json() as WorkbenchState
+      const answer = await response.json() as WorkbenchState | { unchanged: true; revision: number }
+      if ('unchanged' in answer && answer.unchanged) {
+        // Nothing moved: keep the snapshot object, so no reader re-renders.
+        return
+      }
+      this.snapshot = answer as WorkbenchState
       this.publish()
     } catch {
       // Offline or restarting: the next poll covers it.

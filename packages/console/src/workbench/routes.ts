@@ -95,8 +95,27 @@ export function registerWorkbenchRoutes(ctx: Context, host: WorkbenchRouteHost):
       }, what)
     }
 
-    register(WORKBENCH_STATE_PATH, guard((_req, res) => {
-      respond(res, 200, host.board.state())
+    /**
+     * Read the board.
+     *
+     * `?since=<revision>` makes the poll cheap: an unchanged board answers
+     * `{ unchanged: true }` (a few dozen bytes) instead of the whole document —
+     * sessions and their logs included. The page polls every two seconds, so this
+     * is the difference between a trickle and a stream of full snapshots.
+     */
+    register(WORKBENCH_STATE_PATH, guard((req, res) => {
+      if (req.method !== undefined && req.method !== 'GET' && req.method !== 'HEAD') {
+        res.setHeader('allow', 'GET')
+        respond(res, 405, { error: 'method not allowed' })
+        return
+      }
+      const state = host.board.state()
+      const since = queryOf(req).get('since')
+      if (since !== null && since === String(state.revision)) {
+        respond(res, 200, { unchanged: true, revision: state.revision })
+        return
+      }
+      respond(res, 200, state)
     }, 'reading board state'), 'workbench.state-route')
 
     register(WORKBENCH_INGEST_PATH, guardMutation(async (req, res) => {
@@ -198,5 +217,14 @@ function runAction(board: WorkbenchBoard, value: unknown): ActionResult {
     }
     default:
       return { ok: false, error: `unknown action "${String(action)}"` }
+  }
+}
+
+/** Parse a request's query string without trusting the request line. */
+function queryOf(req: IncomingMessage): URLSearchParams {
+  try {
+    return new URL(req.url ?? '/', 'http://localhost').searchParams
+  } catch {
+    return new URLSearchParams()
   }
 }

@@ -152,6 +152,38 @@ describe('workbench routes', () => {
     expect((res.json as WorkbenchState).cards).toEqual([])
   })
 
+  it('answers "unchanged" when the revision asked for is current', async () => {
+    // 每两秒拉一次整份看板（含会话与日志）是纯粹的浪费：带上 revision 之后，
+    // 没变的时候只回几十字节，页面也不重绘。
+    const route = bench()
+    const first = await call(route, request({ url: WORKBENCH_STATE_PATH, headers: { 'sec-fetch-site': 'same-origin' } }))
+    const revision = (first.json as WorkbenchState).revision
+    const again = await call(route, request({
+      url: `${WORKBENCH_STATE_PATH}?since=${String(revision)}`,
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }))
+    expect(again.status).toBe(200)
+    expect(again.json).toMatchObject({ unchanged: true, revision })
+  })
+
+  it('still answers the whole board when the revision moved', async () => {
+    const route = bench()
+    const stale = await call(route, request({
+      url: `${WORKBENCH_STATE_PATH}?since=999`,
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }))
+    expect(stale.status).toBe(200)
+    expect((stale.json as WorkbenchState).cards).toEqual([])
+    expect(stale.json).not.toHaveProperty('unchanged')
+  })
+
+  it('refuses a method that is not a read', async () => {
+    const route = bench()
+    const res = await call(route, request({ url: WORKBENCH_STATE_PATH, method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } }))
+    expect(res.status).toBe(405)
+    expect(res.headers['allow']).toBe('GET')
+  })
+
   it('refuses a read from another site', async () => {
     const route = bench()
     const res = await call(route, request({ url: WORKBENCH_STATE_PATH, headers: { 'sec-fetch-site': 'cross-site' } }))

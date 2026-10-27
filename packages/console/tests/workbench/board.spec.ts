@@ -265,6 +265,23 @@ describe('connectors and persistence', () => {
     expect(warned.join('\n')).toContain('unknown connector "nope"')
   })
 
+  it('lands the newest document after a burst of writes', async () => {
+    // 写合并之后，一串日志只会产生「一次写 + 一次补写」；这里钉的是**最终落盘的是最新
+    // 那份**，而不是写了几次（次数是性能指标，正确性指标是文件内容）。
+    const directory = await home()
+    const { board } = bench({ homeDir: directory })
+    const ingested = await board.ingest({ source: 'webhook', title: '页面报错' })
+    expect(ingested.ok).toBe(true)
+    if (!ingested.ok || ingested.card.sessionId === undefined) return
+    const sessionId = ingested.card.sessionId
+    for (let index = 0; index < 20; index += 1) board.interrupt(sessionId, `第 ${String(index)} 条`)
+    await board.flush()
+
+    const reopened = bench({ homeDir: directory })
+    await reopened.board.ready
+    expect(reopened.board.state().sessions[0]?.logs.map((line) => line.text)).toContain('用户插话：第 19 条')
+  })
+
   it('reloads cards and finished sessions from the persisted document', async () => {
     const directory = await home()
     const first = bench({ homeDir: directory })
