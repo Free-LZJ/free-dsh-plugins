@@ -62,6 +62,37 @@ export interface Action<TSpec extends ActionSpecLike, TContext, TOutcome, TKind 
   run(spec: TSpec, context: TContext): Promise<TOutcome>
 }
 
+/**
+ * The projection an action's templates are filled from.
+ *
+ * An action needs *values* (a subject, a summary, a repo name), not "the event":
+ * every source words those differently, and collapsing them into one generic event
+ * shape would either lose the source-specific fields or force a migration of stored
+ * records (see `docs/requirements/feat-workbench/workbench-redesign-analysis.md`
+ * §10.5). So the connector hands over a flat map and the kernel never learns what a
+ * mail is.
+ *
+ * Keys are connector-defined; a missing key renders as an empty string rather than
+ * throwing, because a template typo must not fail an action that would otherwise
+ * work.
+ */
+export type TemplateValues = Readonly<Record<string, string>>
+
+/**
+ * Fill `{name}` placeholders from a projection.
+ *
+ * Deliberately tiny: no conditionals, no loops, no escaping rules beyond leaving an
+ * unknown `{name}` empty. Anything richer is a template language, and a template
+ * language in a decision kernel is a second product.
+ * @param template - the text to fill.
+ * @param values - the projection.
+ * @returns the filled text; unknown placeholders become empty.
+ */
+export function fillTemplate(template: string, values: TemplateValues | undefined): string {
+  if (values === undefined) return template.replace(/\{(\w+)\}/g, '')
+  return template.replace(/\{(\w+)\}/g, (_match, name: string) => values[name] ?? '')
+}
+
 /** 条件注册表：按 kind 取实现。 */
 export class ConditionRegistry<TSpec extends ConditionSpecLike, TContext, TKind extends string = string> {
   private readonly byKind = new Map<TKind, Condition<TSpec, TContext, TKind>>()

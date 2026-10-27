@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  ActionRegistry, ConditionRegistry, registerAll,
+  ActionRegistry, ConditionRegistry, fillTemplate, registerAll,
   type Action, type Condition,
 } from '../src/registry.ts'
 
@@ -85,5 +85,19 @@ describe('registerAll', () => {
     const registry = new ConditionRegistry<Spec, { readonly body: string }, 'needle' | 'always'>()
     registerAll<MiniCondition>(registry, [needle, always])
     expect(registry.kinds()).toEqual(['needle', 'always'])
+  })
+})
+describe('fillTemplate', () => {
+  it('fills the names it was given, and blanks the rest', () => {
+    // 模板里写错一个名字，不该让一个本来能跑的动作失败。
+    expect(fillTemplate('{subject} · {missing}', { subject: '限时优惠' })).toBe('限时优惠 · ')
+  })
+
+  it('leaves plain text alone', () => {
+    expect(fillTemplate('日常汇总', { subject: 'x' })).toBe('日常汇总')
+  })
+
+  it('blanks every name when there is no projection at all', () => {
+    expect(fillTemplate('{a}-{b}', undefined)).toBe('-')
   })
 })
