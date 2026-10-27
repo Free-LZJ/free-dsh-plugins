@@ -62,6 +62,21 @@ export function ConnectorsView({ t, face }: {
                 </li>
               ))}
             </ul>
+            <h3 className={CLS.viewSubheading}>{t('executorsTitle')}</h3>
+            <p className={CLS.viewHint}>{t('executorsHint')}</p>
+            <ul className={CLS.connectorList}>
+              {state.executors.map((executor) => (
+                <li key={executor.id} className={CLS.connectorItem}>
+                  <span className={CLS.connectorName}>{executor.label}</span>
+                  <span className={CLS.connectorMeta}>
+                    <span className={CLS.connectorDirection}>{executor.id}</span>
+                  </span>
+                  <span className={CLS.connectorState}>
+                    <span className={CLS.connectorOn}>{t('executorReady')}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
             <p className={CLS.viewMeta}>{t('routingVersion', { version: state.routingVersion })}</p>
           </>
         )}
