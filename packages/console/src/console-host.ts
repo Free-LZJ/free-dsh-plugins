@@ -31,9 +31,10 @@ import { PresenceGate } from './builtin-channels.ts'
 import { ChannelRegistry, type NoticeDelivery } from './channels.ts'
 import type {
   ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, NoticeTone,
-  RunningSession,
+  RunningSession, WorkbenchEvent,
 } from './protocol.ts'
 import { emptyPrefs, readPrefs, writePrefs, type ConsolePrefs } from './store.ts'
+import type { IngestResult, WorkbenchBoard } from './workbench/board.ts'
 
 /** The most notices kept for one browser session. */
 export const NOTICE_LIMIT = 50
@@ -134,6 +135,8 @@ export class ConsoleHost extends Service {
   private prefs: ConsolePrefs = emptyPrefs()
   private layout: ConsoleLayout
   private revision = 0
+  /** The board this service fronts for companion plugins; set by the plugin's mount. */
+  private board: WorkbenchBoard | undefined
   /**
    * Settles once the saved preferences were read (or found absent).
    *
@@ -376,6 +379,33 @@ export class ConsoleHost extends Service {
   /** @returns the automation log, newest first. */
   automationLog(): readonly ConsoleLogEntry[] {
     return this.logEntries
+  }
+
+  /**
+   * Attach the board this service fronts.
+   *
+   * The board is assembled by the plugin's mount, not by this class, so a
+   * companion plugin that only needs `notify()` never pays for it — and a
+   * test can drive this class without a board at all.
+   * @param board - the board.
+   */
+  attachWorkbench(board: WorkbenchBoard): void {
+    this.board = board
+  }
+
+  /**
+   * Hand one inbound work event to the board — the mail connector's entrance
+   * for a companion plugin, and the shape the webhook entrance normalizes to.
+   *
+   * A caller probes for this method rather than assuming it: a workbench
+   * without a board (or an older one) answers `ok: false`, and the caller
+   * keeps its own behavior instead of failing.
+   * @param event - the normalized inbound event.
+   * @returns the ingest result, or why there is no board to take it.
+   */
+  ingestWorkbenchEvent(event: WorkbenchEvent): Promise<IngestResult> {
+    if (this.board === undefined) return Promise.resolve({ ok: false, error: 'the workbench board is not mounted' })
+    return this.board.ingest(event)
   }
 
   /** Forget the notices of this session (the user dismissed the list). */

@@ -315,7 +315,7 @@ function readConfigCommand(value: unknown): ConfigCommand {
  * @param status - HTTP status.
  * @param body - the document.
  */
-function respond(res: ServerResponse, status: number, body: unknown): void {
+export function respond(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',

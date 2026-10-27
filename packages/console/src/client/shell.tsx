@@ -27,6 +27,7 @@ import { AttentionQueue } from './attention.tsx'
 import type { Translate } from './locales.ts'
 import type { PanelRow } from './registry.ts'
 import { CLS } from './styles.ts'
+import { WorkbenchSection, type WorkbenchFace } from './workbench/board.tsx'
 
 /** Everything the shell reads and calls, injected by the plugin's `apply`. */
 export interface ShellInjected {
@@ -72,6 +73,11 @@ export interface ShellInjected {
   readonly dismissItem: (id: string) => Promise<{ ok: boolean; message?: string }>
   /** Notices raised while this page is open, newest first. */
   readonly liveNotices: () => readonly ConsoleNoticeRecord[]
+  /**
+   * The board face, when the Host mounted a board. Optional so a workbench
+   * without one — and every existing spec face — renders the home list alone.
+   */
+  readonly workbench?: WorkbenchFace
 }
 
 /**
@@ -99,7 +105,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @returns the shell.
  */
 export function ConsoleShell(props: ConsoleShellProps): ReactNode {
-  const { t, useRows, useNotices, awaiting, running, log, layout, open, togglePin, setLayout, clearNotices, actOnItem, dismissItem, liveNotices } = props
+  const { t, useRows, useNotices, awaiting, running, log, layout, open, togglePin, setLayout, clearNotices, actOnItem, dismissItem, liveNotices, workbench } = props
   const rows = useRows((all) => all)
   const stored = useNotices((all) => all)
   const [query, setQuery] = useState('')
@@ -161,6 +167,7 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
         )}
         {/* 注意力队列排在最上面：首页要回答的是「现在需要我决定什么」，插件目录是手段。 */}
         <AttentionQueue t={t} notices={notices} running={running} log={log} actOnItem={actOnItem} dismissItem={dismissItem} />
+        {workbench !== undefined && <WorkbenchSection face={workbench} t={t} />}
         <h2 className={CLS.attentionSubheading}>{t('panelsHeading')}</h2>
         <Layout {...homeProps} />
       </div>

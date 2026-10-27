@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>工作台原型</title>
+    <style>
+      :root{
+        --bg:#f3f5f7; --surface:#ffffff; --surface-2:#eaeef2; --surface-3:#f7f9fb;
+        --ink:#17222d; --ink-2:#44586a; --muted:#71808f;
+        --line:#d8e0e8; --line-strong:#bcc9d6;
+        --accent:#0e6e6b; --accent-soft:#e2f2f0; --accent-ink:#ffffff;
+        --amber:#b45309; --amber-soft:#fdf0dd;
+        --red:#b3372c; --red-soft:#fbe9e6;
+        --green:#177245; --green-soft:#e3f3ea;
+        --blue:#2b5ea7; --blue-soft:#e5edf8;
+        --shadow:0 10px 30px rgba(23,34,45,.12);
+        --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+        --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Segoe UI",sans-serif;
+      }
+      @media (prefers-color-scheme: dark){
+        :root{
+          --bg:#0c1219; --surface:#151f2b; --surface-2:#1c2a39; --surface-3:#111a25;
+          --ink:#e7eef5; --ink-2:#b3c2d1; --muted:#8296a8;
+          --line:#27394e; --line-strong:#38506c;
+          --accent:#2fbfae; --accent-soft:#12332f; --accent-ink:#06231f;
+          --amber:#e8a04c; --amber-soft:#3a2a12;
+          --red:#ef8a7d; --red-soft:#3d1d18;
+          --green:#5cc98a; --green-soft:#14301f;
+          --blue:#7aa8e8; --blue-soft:#1a2c47;
+          --shadow:0 10px 30px rgba(0,0,0,.45);
+        }
+      }
+      *{box-sizing:border-box}
+      html,body{margin:0;padding:0}
+      body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+      button{font-family:inherit;cursor:pointer}
+      input,select,textarea{font-family:inherit}
+
+      /* ---------- top strip ---------- */
+      .topbar{max-width:1440px;margin:0 auto;padding:20px 20px 4px;display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;justify-content:space-between}
+      .topbar h1{font-size:21px;margin:0 0 2px;letter-spacing:.01em}
+      .topbar .sub{color:var(--muted);font-size:13px;margin:0}
+      .demo-tag{display:inline-block;font-size:11px;font-weight:600;color:var(--amber);background:var(--amber-soft);border:1px solid currentColor;border-radius:999px;padding:1px 8px;vertical-align:2px;margin-left:8px}
+      .stats{display:flex;gap:10px;flex-wrap:wrap}
+      .stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 14px;min-width:96px}
+      .stat b{display:block;font-size:20px;line-height:1.15;font-variant-numeric:tabular-nums}
+      .stat span{font-size:12px;color:var(--muted)}
+      .stat.hot b{color:var(--accent)}
+
+      /* ---------- layout ---------- */
+      .layout{max-width:1440px;margin:0 auto;padding:14px 20px 8px;display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}
+      @media (max-width:1080px){.layout{grid-template-columns:1fr}}
+
+      /* ---------- board ---------- */
+      .board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+      @media (max-width:760px){.board{grid-template-columns:1fr}}
+      .col{background:var(--surface-3);border:1px solid var(--line);border-radius:14px;padding:10px;min-height:220px;transition:border-color .15s,background .15s}
+      .col.dragover{border-color:var(--accent);background:var(--accent-soft)}
+      .col-head{display:flex;align-items:center;gap:8px;padding:2px 4px 10px}
+      .col-head h2{font-size:14px;margin:0}
+      .col-head .count{font-size:12px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:0 8px;color:var(--ink-2)}
+      .col-head .hint{margin-left:auto;font-size:11px;color:var(--muted)}
+      .col-dot{width:8px;height:8px;border-radius:50%;flex:none}
+      .dot-todo{background:var(--muted)} .dot-doing{background:var(--accent)} .dot-done{background:var(--green)}
+      .cards{display:flex;flex-direction:column;gap:10px;min-height:60px}
+
+      .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 12px 10px;cursor:grab;position:relative}
+      .card:active{cursor:grabbing}
+      .card.dragging{opacity:.45}
+      .card.waiting{border-color:var(--amber)}
+      .card-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+      .src{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);background:var(--surface-3)}
+      .src svg{width:12px;height:12px;flex:none}
+      .src.jira{color:var(--blue);background:var(--blue-soft);border-color:transparent}
+      .src.mail{color:var(--amber);background:var(--amber-soft);border-color:transparent}
+      .src.ding{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+      .prio{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px}
+      .prio.p0{color:var(--red);background:var(--red-soft)}
+      .prio.p1{color:var(--amber);background:var(--amber-soft)}
+      .prio.p2{color:var(--muted);background:var(--surface-2)}
+      .ext-id{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted)}
+      .card h3{font-size:14.5px;margin:0 0 4px;line-height:1.4;font-weight:650}
+      .card p.desc{margin:0 0 8px;font-size:12.5px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+      .tag{font-size:11px;padding:1px 7px;border-radius:6px;background:var(--surface-2);color:var(--ink-2)}
+      .tag.type{font-weight:600}
+      .conf{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin-bottom:8px}
+      .conf .bar{flex:1;height:5px;border-radius:99px;background:var(--surface-2);overflow:hidden}
+      .conf .fill{height:100%;border-radius:99px;background:var(--accent)}
+      .conf.low .fill{background:var(--red)} .conf.mid .fill{background:var(--amber)}
+      .conf.low{color:var(--red)}
+      .agent-row{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2);border-top:1px dashed var(--line);padding-top:8px}
+      .agent-avatar{width:20px;height:20px;border-radius:6px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-size:10px;font-weight:800;flex:none}
+      .status-pill{margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+      .status-pill.working{color:var(--accent);background:var(--accent-soft)}
+      .status-pill.waiting{color:var(--amber);background:var(--amber-soft)}
+      .status-pill.done{color:var(--green);background:var(--green-soft)}
+      .status-pill.idle{color:var(--muted);background:var(--surface-2)}
+      .progress{height:5px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin-top:8px}
+      .progress i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .6s ease}
+      .elapsed{font-family:var(--mono);font-size:11px;color:var(--muted)}
+      .card-actions{display:flex;gap:6px;margin-top:9px}
+      .btn{border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);border-radius:8px;padding:5px 11px;font-size:12.5px;font-weight:600}
+      .btn:hover{border-color:var(--accent);color:var(--accent)}
+      .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+      .btn.primary:hover{color:var(--accent-ink);filter:brightness(1.06)}
+      .btn.ghost{border-color:transparent;color:var(--muted)}
+      .btn.small{padding:3px 9px;font-size:12px}
+      .empty{border:1.5px dashed var(--line-strong);border-radius:10px;padding:18px 10px;text-align:center;color:var(--muted);font-size:12.5px}
+
+      /* ---------- session focus ---------- */
+      .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+      .panel-head{padding:13px 16px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+      .panel-head h2{font-size:15px;margin:0}
+      .panel-head .live{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--accent);font-weight:700}
+      .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
+      @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(47,191,174,.45)}70%{box-shadow:0 0 0 7px rgba(47,191,174,0)}100%{box-shadow:0 0 0 0 rgba(47,191,174,0)}}
+      @media (prefers-reduced-motion: reduce){.pulse{animation:none}}
+      .session-tabs{display:flex;gap:6px;padding:10px 12px 0;flex-wrap:wrap}
+      .session-tab{border:1px solid var(--line);background:var(--surface-3);border-radius:8px;padding:6px 10px;font-size:12.5px;text-align:left;color:var(--ink-2)}
+      .session-tab.active{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+      .session-tab b{display:block;font-size:12.5px}
+      .session-tab span{font-size:11px;color:var(--muted);font-family:var(--mono)}
+      .session-meta{display:flex;gap:14px;flex-wrap:wrap;padding:10px 16px 0;font-size:12px;color:var(--muted)}
+      .session-meta b{color:var(--ink-2);font-weight:600}
+      .logwin{margin:12px 16px 0;background:#0b1520;color:#c9d8e4;border-radius:10px;padding:12px 13px;height:264px;overflow-y:auto;font-family:var(--mono);font-size:11.8px;line-height:1.75}
+      @media (prefers-color-scheme: light){.logwin{background:#10202f}}
+      .logwin .t{color:#5f7d94}
+      .logwin .ok{color:#6fd598}.logwin .warn{color:#f2b25c}.logwin .me{color:#7fd8cf}.logwin .sys{color:#8fa9bf}
+      .session-controls{padding:12px 16px 16px;display:flex;flex-direction:column;gap:9px}
+      .inject{display:flex;gap:7px}
+      .inject input{flex:1;border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:13px;background:var(--surface);color:var(--ink);min-width:0}
+      .ctl-row{display:flex;gap:7px;flex-wrap:wrap}
+
+      /* ---------- lower sections ---------- */
+      .lower{max-width:1440px;margin:0 auto;padding:8px 20px 30px;display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+      @media (max-width:1080px){.lower{grid-template-columns:1fr}}
+      .panel-body{padding:14px 16px 16px}
+      .panel-head .sub{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
+      .conn{display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid var(--line)}
+      .conn:last-child{border-bottom:none}
+      .conn-ic{width:34px;height:34px;border-radius:9px;background:var(--surface-2);display:grid;place-items:center;flex:none;color:var(--ink-2)}
+      .conn-ic svg{width:17px;height:17px}
+      .conn b{font-size:14px;display:block}
+      .conn small{color:var(--muted);font-size:12px}
+      .io-badges{display:flex;gap:4px;margin-left:auto}
+      .io{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px}
+      .io.in{color:var(--blue);background:var(--blue-soft)}
+      .io.out{color:var(--green);background:var(--green-soft)}
+      .conn-state{font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:5px;min-width:64px;justify-content:flex-end}
+      .conn-state.on{color:var(--green)} .conn-state.off{color:var(--muted)}
+      .conn-state i{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+      .switch{position:relative;width:38px;height:22px;flex:none}
+      .switch input{opacity:0;width:100%;height:100%;position:absolute;margin:0;cursor:pointer}
+      .switch .track{position:absolute;inset:0;background:var(--surface-2);border:1px solid var(--line-strong);border-radius:99px;transition:background .15s;pointer-events:none}
+      .switch .track::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--surface);border:1px solid var(--line-strong);transition:left .15s}
+      .switch input:checked + .track{background:var(--accent);border-color:var(--accent)}
+      .switch input:checked + .track::after{left:18px}
+      .switch input:focus-visible + .track{outline:2px solid var(--accent);outline-offset:2px}
+
+      .rule-group{margin-bottom:14px}
+      .rule-group h3{font-size:12px;letter-spacing:.06em;color:var(--muted);margin:0 0 7px;text-transform:uppercase}
+      .hard-rules{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+      .hard-rules li{font-size:12px;background:var(--surface-3);border:1px solid var(--line);border-radius:7px;padding:4px 9px;color:var(--ink-2)}
+      table.route{width:100%;border-collapse:collapse;font-size:13px}
+      table.route th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:5px 8px;border-bottom:1px solid var(--line)}
+      table.route td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+      table.route tr:last-child td{border-bottom:none}
+      table.route td:first-child{font-weight:650;white-space:nowrap}
+      .route-wrap{overflow-x:auto}
+      @media (max-width:560px){
+        table.route thead{display:none}
+        table.route td{display:block;border-bottom:none;padding:2px 8px}
+        table.route tr{display:block;padding:7px 0;border-bottom:1px solid var(--line)}
+        table.route tr:last-child{border-bottom:none}
+      }
+      .classifier-note{font-size:12.5px;color:var(--ink-2);background:var(--accent-soft);border-radius:9px;padding:9px 12px;margin-top:12px}
+      .classifier-note code{font-family:var(--mono);font-size:11.5px}
+
+      .sim-form{display:grid;grid-template-columns:110px 1fr;gap:8px;margin-bottom:10px}
+      .sim-form select,.sim-form input{border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;font-size:13.5px;background:var(--surface);color:var(--ink);width:100%;min-width:0}
+      .sim-form textarea{grid-column:1/-1;border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;font-size:13.5px;background:var(--surface);color:var(--ink);resize:vertical;min-height:56px}
+      .sim-result{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:12px 13px;background:var(--surface-3);display:none}
+      .sim-result.show{display:block}
+      .sim-result h4{margin:0 0 8px;font-size:13.5px}
+      .kv{display:grid;grid-template-columns:76px 1fr;gap:3px 10px;font-size:12.5px}
+      .kv dt{color:var(--muted)} .kv dd{margin:0;color:var(--ink-2)}
+      .thinking{display:none;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);margin-top:10px}
+      .thinking.show{display:flex}
+      .spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--accent);animation:spin .7s linear infinite;flex:none}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      @media (prefers-reduced-motion: reduce){.spinner{animation-duration:2s}}
+
+      /* ---------- drawer ---------- */
+      .overlay{position:fixed;inset:0;background:rgba(10,18,26,.45);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}
+      .overlay.open{opacity:1;pointer-events:auto}
+      .drawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,94vw);background:var(--surface);z-index:41;transform:translateX(102%);visibility:hidden;transition:transform .25s ease,visibility 0s linear .25s;box-shadow:var(--shadow);overflow-y:auto;padding:20px}
+      .drawer.open{transform:none;visibility:visible;transition:transform .25s ease}
+      .drawer h2{font-size:17px;margin:0 34px 4px 0;line-height:1.4}
+      .drawer .close{position:absolute;top:14px;right:14px;width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:15px;color:var(--ink-2)}
+      .drawer .meta-line{color:var(--muted);font-size:12.5px;margin-bottom:12px}
+      .drawer .body-text{font-size:13.5px;color:var(--ink-2);background:var(--surface-3);border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-bottom:16px;white-space:pre-wrap}
+      .drawer h3.sec{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:18px 0 9px}
+      .timeline{list-style:none;margin:0;padding:0;position:relative}
+      .timeline::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:2px;background:var(--line)}
+      .timeline li{padding:0 0 13px 22px;position:relative;font-size:13px}
+      .timeline li::before{content:"";position:absolute;left:0;top:5px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2.5px solid var(--line-strong)}
+      .timeline li.done::before{border-color:var(--accent);background:var(--accent)}
+      .timeline li.now::before{border-color:var(--amber);background:var(--amber)}
+      .timeline b{display:block;font-size:13px}
+      .timeline span{color:var(--muted);font-size:12px}
+      .drawer .kv{margin-top:2px}
+
+      .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,80px);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;font-size:13.5px;font-weight:600;z-index:60;transition:transform .3s ease;box-shadow:var(--shadow);max-width:92vw;text-align:center}
+      .toast.show{transform:translate(-50%,0)}
+      footer{max-width:1440px;margin:0 auto;padding:0 20px 26px;color:var(--muted);font-size:12px}
+    </style>
+  </head>
+  <body>
+
+    <div class="topbar">
+      <div>
+        <h1>Agent 工作台<span class="demo-tag">原型 · 演示数据</span></h1>
+        <p class="sub">连接器进事件 → 大模型分类 → 路由派单 → agent 处理 → 出口回写。拖动卡片到「处理中」即可手动派单。</p>
+      </div>
+      <div class="stats" role="group" aria-label="看板概览">
+        <div class="stat"><b id="stat-todo">0</b><span>待办</span></div>
+        <div class="stat hot"><b id="stat-doing">0</b><span>处理中</span></div>
+        <div class="stat"><b id="stat-done">0</b><span>今日已处理</span></div>
+        <div class="stat hot"><b id="stat-sessions">0</b><span>运行中会话</span></div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- ============ BOARD ============ -->
+      <div class="board" id="board">
+        <section class="col" data-col="todo" aria-label="待办">
+          <div class="col-head"><span class="col-dot dot-todo"></span><h2>待办</h2><span class="count" data-count="todo">0</span><span class="hint">含低置信度兜底</span></div>
+          <div class="cards" data-cards="todo"></div>
+        </section>
+        <section class="col" data-col="doing" aria-label="处理中">
+          <div class="col-head"><span class="col-dot dot-doing"></span><h2>Agent 处理中</h2><span class="count" data-count="doing">0</span><span class="hint">拖入即启动</span></div>
+          <div class="cards" data-cards="doing"></div>
+        </section>
+        <section class="col" data-col="done" aria-label="已处理">
+          <div class="col-head"><span class="col-dot dot-done"></span><h2>已处理</h2><span class="count" data-count="done">0</span><span class="hint">已回写出口</span></div>
+          <div class="cards" data-cards="done"></div>
+        </section>
+      </div>
+
+      <!-- ============ SESSION FOCUS ============ -->
+      <aside class="panel" aria-label="DSH 会话聚焦视图">
+        <div class="panel-head">
+          <h2>DSH 会话聚焦</h2>
+          <span class="live"><span class="pulse"></span>LIVE</span>
+        </div>
+        <div class="session-tabs" id="session-tabs"></div>
+        <div class="session-meta" id="session-meta"></div>
+        <div class="logwin" id="logwin" aria-live="polite"></div>
+        <div class="session-controls">
+          <div class="inject">
+            <input id="inject-input" type="text" placeholder="给正在运行的 agent 插一句话…" aria-label="向会话发送指令" />
+            <button class="btn primary" id="inject-btn">发送</button>
+          </div>
+          <div class="ctl-row">
+            <button class="btn small" id="pause-btn">暂停会话</button>
+            <button class="btn small" id="focus-card-btn">查看对应卡片</button>
+            <button class="btn small ghost" id="end-btn">结束会话</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="lower">
+      <!-- ============ CONNECTORS ============ -->
+      <section class="panel" aria-label="连接器">
+        <div class="panel-head"><h2>连接器</h2><span class="sub">入口收事件 · 出口发结果</span></div>
+        <div class="panel-body" id="connectors"></div>
+      </section>
+
+      <!-- ============ RULES + SIMULATOR ============ -->
+      <section class="panel" aria-label="规则与事件模拟">
+        <div class="panel-head"><h2>规则</h2><span class="sub">确定性外壳 + 大模型判断</span></div>
+        <div class="panel-body">
+          <div class="rule-group">
+            <h3>硬规则（写死，几乎不改）</h3>
+            <ul class="hard-rules">
+              <li>来源白名单</li><li>去重键防重复建卡</li><li>单连接器限流</li>
+              <li>危险动作必须审批</li><li>每日 token 预算上限</li>
+            </ul>
+          </div>
+          <div class="rule-group">
+            <h3>路由表（数据文件，改完热加载）</h3>
+            <div class="route-wrap">
+              <table class="route">
+                <thead><tr><th>分类结果</th><th>动作</th><th>执行器</th><th>出口</th></tr></thead>
+                <tbody>
+                  <tr><td>Bug 单</td><td>定位修复 + 跑回归测试</td><td>DSH / Codex（可选）</td><td>回写 Jira 评论 + 钉钉通知</td></tr>
+                  <tr><td>需求单</td><td>生成方案草稿，挂起等评审</td><td>DSH</td><td>回写 Jira</td></tr>
+                  <tr><td>咨询类</td><td>只起草回复，不派活</td><td>—</td><td>原渠道回复（需确认）</td></tr>
+                  <tr><td>故障诊断</td><td>只读排查环境，不改代码</td><td>DSH / Codex（可选）</td><td>诊断结论回原渠道</td></tr>
+                  <tr><td>置信度 &lt; 60%</td><td>不自动派单</td><td>—</td><td>落入「待办」人工分拣</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="classifier-note">分类由大模型完成：输出类型 / 项目 / 优先级 / 建议执行器 / 置信度 / 理由。改规则 = 改提示词 + 换示例，不是改条件树。当前分类器 <code>classifier v0.3</code>，每张卡都记录派单所用的版本，可追溯。</p>
+          </div>
+          <div class="rule-group">
+            <h3>事件模拟器</h3>
+            <form class="sim-form" id="sim-form">
+              <select id="sim-source" aria-label="事件来源">
+                <option value="jira">Jira</option>
+                <option value="mail">邮件</option>
+                <option value="ding">钉钉</option>
+                <option value="webhook">Webhook</option>
+              </select>
+              <input id="sim-title" type="text" placeholder="事件标题，如：登录页点击无响应" required />
+              <textarea id="sim-body" placeholder="事件内容（喂给分类器判断）…">用户反馈生产环境登录按钮点击后无任何响应，控制台报 401，疑似 token 刷新逻辑失效，影响全部用户登录。</textarea>
+            </form>
+            <button class="btn primary" id="sim-run" type="button">投递事件并分类</button>
+            <div class="thinking" id="sim-thinking"><span class="spinner"></span>分类器判断中…</div>
+            <div class="sim-result" id="sim-result"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer>原型说明：本页所有卡片、会话日志与连接器状态均为演示数据，用于验证信息架构与交互；未连接任何真实系统。</footer>
+
+    <!-- ============ DRAWER ============ -->
+    <div class="overlay" id="overlay"></div>
+    <aside class="drawer" id="drawer" aria-label="卡片详情">
+      <div id="drawer-content"></div>
+    </aside>
+    <div class="toast" id="toast" role="status"></div>
+
+    <script>
+    (function(){
+      "use strict";
+
+      /* ---------------- demo data ---------------- */
+      var SRC = {
+        jira:{label:"Jira", cls:"jira", icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3l7 9-7 9-7-9z"/></svg>'},
+        mail:{label:"邮件", cls:"mail", icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>'},
+        ding:{label:"钉钉", cls:"ding", icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 0-3.5 6.7L21 20z"/></svg>'},
+        webhook:{label:"Webhook", cls:"", icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7L12.5 19"/></svg>'}
+      };
+      var AGENTS = { dsh:{name:"DSH", mark:"DS"}, codex:{name:"Codex", mark:"CX"}, none:{name:"未派单", mark:"—"} };
+
+      var cards = [
+        { id:"c1", col:"todo", source:"jira", ext:"EXEPD-2314", title:"AI 陪练评分偶发为 0 分",
+          desc:"学员完成陪练后评分偶发返回 0，刷新后恢复。疑似评分接口超时未重试，近三天出现 6 次。",
+          type:"Bug", prio:"P1", conf:38, confWhy:"标题含「偶发」，描述缺少复现步骤与日志，分类器无法确认是评分服务还是前端问题。",
+          agent:"none", suggested:"dsh", status:"idle", progress:0, elapsed:0,
+          ruleVer:"classifier v0.3", sessionId:null,
+          timeline:[["事件进入","Jira webhook · 今天 08:12","done"],["大模型分类","Bug / 置信度 38% — 低于阈值，不自动派单","now"],["落入待办","等人工确认类型后拖入处理中，或点「派给 DSH」","now"]] },
+        { id:"c2", col:"todo", source:"mail", ext:"邮件 · 产品组", title:"希望陪练报告支持导出 PDF",
+          desc:"客户成功转来邮件：三家客户希望陪练报告能导出 PDF 发给学员，目前只能截图。",
+          type:"需求", prio:"P2", conf:91, confWhy:"诉求明确，属于功能需求；按路由表应生成方案草稿后挂起等评审。",
+          agent:"none", suggested:"dsh", status:"idle", progress:0, elapsed:0,
+          ruleVer:"classifier v0.3", sessionId:null,
+          timeline:[["事件进入","邮件连接器（IMAP）· 今天 07:47","done"],["大模型分类","需求 / 置信度 91%","done"],["待派单","路由表：需求单 → DSH 生成方案草稿","now"]] },
+        { id:"c3", col:"doing", source:"jira", ext:"EXEPD-2298", title:"EPAAS 表单提交后数据丢失",
+          desc:"低代码表单在弱网下提交，提示成功但数据未落库。已定位到前端重试时请求体被清空。",
+          type:"Bug", prio:"P0", conf:96, confWhy:"有明确复现路径与错误日志，分类确信。",
+          agent:"dsh", suggested:"dsh", status:"working", progress:62, elapsed:1594, worktree:true,
+          ruleVer:"classifier v0.3", sessionId:"s1",
+          timeline:[["事件进入","Jira webhook · 今天 08:03","done"],["大模型分类","Bug / 置信度 96%","done"],["路由派单","DSH · 独立 worktree 隔离修改","done"],["执行中","已定位根因，正在写修复与回归测试","now"]] },
+        { id:"c4", col:"doing", source:"ding", ext:"钉钉 · 测试组", title:"帮忙看下预发环境为什么连不上",
+          desc:"测试组在钉钉群里反馈预发环境 502，@ 了工作台。分类为故障诊断：只做只读排查、不改代码，结论回群里。",
+          type:"故障诊断", prio:"P2", conf:74, confWhy:"网关返回 502 且无代码缺陷线索，更像环境故障；按路由表走只读诊断，不进代码修复流程。",
+          agent:"codex", suggested:"codex", status:"waiting", progress:30, elapsed:392, worktree:false,
+          ruleVer:"classifier v0.3", sessionId:"s2",
+          timeline:[["事件进入","钉钉消息 · 今天 08:24","done"],["大模型分类","故障诊断 / 置信度 74%","done"],["路由派单","Codex 只读诊断（不改代码、不建 worktree）","done"],["等待输入","agent 提问：预发是全挂还是个别服务？","now"]] },
+        { id:"c5", col:"done", source:"jira", ext:"EXEPD-2271", title:"陪练题库导入时编码乱码",
+          desc:"CSV 导入题库时 GBK 编码文件出现乱码。已修复编码探测逻辑并补了测试。",
+          type:"Bug", prio:"P1", conf:94, confWhy:"标题与日志指向明确的编码问题。",
+          agent:"codex", suggested:"codex", status:"done", progress:100, elapsed:1680,
+          ruleVer:"classifier v0.2", sessionId:null,
+          timeline:[["事件进入","Jira webhook · 昨天 16:20","done"],["大模型分类","Bug / 置信度 94%","done"],["路由派单","Codex","done"],["执行完成","修复编码探测 + 3 个回归测试通过","done"],["出口回写","Jira 评论已发 · 钉钉已通知发起人","done"]] },
+        { id:"c6", col:"done", source:"mail", ext:"邮件 · 学员反馈", title:"咨询：陪练次数如何续费",
+          desc:"学员邮件咨询续费方式。分类为咨询类，未派 agent，按模板起草回复，人工确认后发出。",
+          type:"咨询", prio:"P2", conf:97, confWhy:"内容为明确的价格咨询。",
+          agent:"none", suggested:"none", status:"done", progress:100, elapsed:240,
+          ruleVer:"classifier v0.3", sessionId:null,
+          timeline:[["事件进入","邮件连接器 · 昨天 11:05","done"],["大模型分类","咨询 / 置信度 97%","done"],["起草回复","按咨询模板生成，未自动发送","done"],["出口回写","人工确认后已回复邮件","done"]] }
+      ];
+
+      var sessions = {
+        s1:{ id:"s1", cardId:"c3", agent:"dsh", label:"DSH · EXEPD-2298", state:"running", started:"08:05",
+             log:[
+               ["08:05","sys","会话启动 · worktree wt/exepd-2298 已创建"],
+               ["08:06","","读取工单与近 7 天相关提交记录…"],
+               ["08:11","","定位到 FormSubmit.ts：弱网重试时 body 被二次序列化清空"],
+               ["08:19","ok","已写出最小复现用例，复现成功"],
+               ["08:24","","正在修改重试逻辑：缓存原始 payload 并加幂等键"],
+               ["08:31","ok","修复完成，开始跑回归测试（34 个用例）"]
+             ],
+             pool:[
+               ["","回归测试进行中… 21/34 通过"],
+               ["","检查相邻模块是否共用同一重试封装"],
+               ["ok","回归测试 34/34 全部通过"],
+               ["","整理变更说明，准备回写 Jira 评论草稿"],
+               ["warn","发现 docs 里有一处旧重试说明需要同步更新，已记录"]
+             ], poolIdx:0 },
+        s2:{ id:"s2", cardId:"c4", agent:"codex", label:"Codex · 预发诊断", state:"waiting", started:"08:25",
+             log:[
+               ["08:25","sys","会话启动 · 只读诊断模式（不改代码）"],
+               ["08:26","","ping 预发网关：502，源站无响应"],
+               ["08:28","","查看近 1 小时部署记录：08:12 有一次配置变更"],
+               ["08:30","warn","需要确认：预发是全部服务 502，还是只有陪练服务？已在钉钉群提问，等待回复"]
+             ],
+             pool:[
+               ["","仍在等待钉钉群回复，期间轮询网关状态…"],
+               ["","网关状态无变化，依旧 502"]
+             ], poolIdx:0 }
+      };
+      var activeSession = "s1";
+
+      var connectors = [
+        { id:"mail", name:"邮件（QQ 邮箱）", desc:"IMAP 收件触发 · SMTP 回信", inOut:["in","out"], on:true,
+          icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>' },
+        { id:"jira", name:"Jira", desc:"Webhook 收工单 · REST 回写评论与状态", inOut:["in","out"], on:true,
+          icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 9-7 9-7-9z"/></svg>' },
+        { id:"ding", name:"钉钉消息", desc:"群消息 @ 触发 · 机器人发通知", inOut:["in","out"], on:true,
+          icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 0-3.5 6.7L21 20z"/></svg>' },
+        { id:"webhook", name:"通用 Webhook", desc:"任意系统 POST 进来 · 结果回调任意 URL", inOut:["in","out"], on:false,
+          icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7L12.5 19"/></svg>' },
+        { id:"muse", name:"Muse 连接器", desc:"Gmail / GitHub / Notion 等现成连接器复用", inOut:["in","out"], on:false,
+          icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>' }
+      ];
+
+      /* ---------------- helpers ---------------- */
+      function $(s, r){ return (r||document).querySelector(s); }
+      function $$(s, r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
+      function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+      function fmtElapsed(sec){ var m=Math.floor(sec/60), s=sec%60; return (m<10?"0":"")+m+":"+(s<10?"0":"")+s; }
+      function nowTime(){ var d=new Date(); return (d.getHours()<10?"0":"")+d.getHours()+":"+(d.getMinutes()<10?"0":"")+d.getMinutes(); }
+      function findCard(id){ for (var i=0;i<cards.length;i++) if (cards[i].id===id) return cards[i]; return null; }
+      var toastTimer=null;
+      function toast(msg){ var t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer=setTimeout(function(){ t.classList.remove("show"); }, 2600); }
+
+      /* ---------------- board render ---------------- */
+      function confCls(c){ return c<60?"low":(c<85?"mid":""); }
+      function statusInfo(card){
+        if (card.col==="done") return ["done","已完成"];
+        if (card.col==="doing") return card.status==="waiting" ? ["waiting","等待输入"] : ["working","工作中"];
+        return ["idle","待派单"];
+      }
+      function cardHTML(card){
+        var src=SRC[card.source], st=statusInfo(card);
+        var h='<article class="card'+(card.status==="waiting"&&card.col==="doing"?" waiting":"")+'" draggable="true" data-id="'+card.id+'" tabindex="0" role="button" aria-label="'+esc(card.title)+'">';
+        h+='<div class="card-top"><span class="src '+src.cls+'">'+src.icon+esc(src.label)+'</span>'
+          +'<span class="prio '+card.prio.toLowerCase()+'">'+card.prio+'</span>'
+          +'<span class="ext-id">'+esc(card.ext)+'</span></div>';
+        h+='<h3>'+esc(card.title)+'</h3><p class="desc">'+esc(card.desc)+'</p>';
+        h+='<div class="tags"><span class="tag type">'+esc(card.type)+'</span><span class="tag">'+esc(card.ruleVer)+'</span>'
+          +(card.worktree?'<span class="tag">worktree 隔离</span>':'')+'</div>';
+        h+='<div class="conf '+confCls(card.conf)+'"><span>分类置信度</span><span class="bar"><span class="fill" style="width:'+card.conf+'%"></span></span><b>'+card.conf+'%</b></div>';
+        h+='<div class="agent-row"><span class="agent-avatar">'+AGENTS[card.agent].mark+'</span><span>'
+          +(card.col==="todo" ? '建议派给 '+AGENTS[card.suggested].name : AGENTS[card.agent].name)
+          +'</span>'+(card.col==="doing"?'<span class="elapsed" data-elapsed="'+card.id+'">'+fmtElapsed(card.elapsed)+'</span>':'')
+          +'<span class="status-pill '+st[0]+'">'+st[1]+'</span></div>';
+        if (card.col==="doing") h+='<div class="progress"><i style="width:'+card.progress+'%"></i></div>';
+        h+='<div class="card-actions">';
+        if (card.col==="todo") h+='<button class="btn primary small" data-act="assign" data-id="'+card.id+'">派给 '+AGENTS[card.suggested].name+'</button>';
+        if (card.col==="doing" && card.status==="waiting") h+='<button class="btn primary small" data-act="focus" data-id="'+card.id+'">去会话里回复</button>';
+        if (card.col==="doing" && card.status==="working") h+='<button class="btn small" data-act="focus" data-id="'+card.id+'">看会话</button>';
+        if (card.col!=="done") h+='<button class="btn ghost small" data-act="move" data-id="'+card.id+'">'+(card.col==="todo"?"移到处理中 →":"标记完成 ✓")+'</button>';
+        h+='</div></article>';
+        return h;
+      }
+      function renderBoard(){
+        ["todo","doing","done"].forEach(function(col){
+          var wrap=$('[data-cards="'+col+'"]');
+          var list=cards.filter(function(c){ return c.col===col; });
+          wrap.innerHTML = list.length ? list.map(cardHTML).join("") : '<div class="empty">这一列暂时没有卡片</div>';
+          $('[data-count="'+col+'"]').textContent=list.length;
+        });
+        $("#stat-todo").textContent=cards.filter(function(c){return c.col==="todo";}).length;
+        $("#stat-doing").textContent=cards.filter(function(c){return c.col==="doing";}).length;
+        $("#stat-done").textContent=cards.filter(function(c){return c.col==="done";}).length;
+        $("#stat-sessions").textContent=Object.keys(sessions).filter(function(k){return sessions[k].state!=="ended";}).length;
+        bindCards();
+      }
+      function bindCards(){
+        $$(".card").forEach(function(el){
+          el.addEventListener("dragstart", function(e){ el.classList.add("dragging"); e.dataTransfer.setData("text/plain", el.dataset.id); e.dataTransfer.effectAllowed="move"; });
+          el.addEventListener("dragend", function(){ el.classList.remove("dragging"); $$(".col").forEach(function(c){c.classList.remove("dragover");}); });
+          el.addEventListener("click", function(e){
+            if (e.target.closest("[data-act]")) return;
+            openDrawer(el.dataset.id);
+          });
+          el.addEventListener("keydown", function(e){ if (e.key==="Enter") openDrawer(el.dataset.id); });
+        });
+        $$("[data-act]").forEach(function(btn){
+          btn.addEventListener("click", function(e){
+            e.stopPropagation();
+            var card=findCard(btn.dataset.id); if(!card) return;
+            if (btn.dataset.act==="assign" || btn.dataset.act==="move") moveCard(card, card.col==="todo"?"doing":"done");
+            if (btn.dataset.act==="focus" && card.sessionId){ activeSession=card.sessionId; renderSession(); $("#inject-input").focus(); }
+          });
+        });
+      }
+      $$(".col").forEach(function(col){
+        col.addEventListener("dragover", function(e){ e.preventDefault(); col.classList.add("dragover"); });
+        col.addEventListener("dragleave", function(){ col.classList.remove("dragover"); });
+        col.addEventListener("drop", function(e){
+          e.preventDefault(); col.classList.remove("dragover");
+          var card=findCard(e.dataTransfer.getData("text/plain"));
+          if (card) moveCard(card, col.dataset.col);
+        });
+      });
+
+      function moveCard(card, target){
+        if (card.col===target) return;
+        if (target==="doing"){
+          card.col="doing"; card.status="working"; card.progress=Math.max(card.progress,4); card.elapsed=0;
+          card.worktree = (card.type==="Bug" || card.type==="需求");
+          if (card.agent==="none"){ card.agent = card.suggested!=="none" ? card.suggested : "dsh"; }
+          var sid="s"+Date.now();
+          sessions[sid]={ id:sid, cardId:card.id, agent:card.agent, label:AGENTS[card.agent].name+" · "+card.ext, state:"running", started:nowTime(),
+            log:[[nowTime(),"sys","会话启动 · 由看板派单拉起，独立 worktree 已创建"],[nowTime(),"","读取事件内容与分类结果（"+card.type+" / 置信度 "+card.conf+"%）…"],[nowTime(),"","开始处理："+card.title]],
+            pool:[["","正在分析相关代码与历史提交…"],["","已初步定位问题范围，继续深入排查"],["ok","阶段性结论已记录到卡片时间线"]], poolIdx:0 };
+          card.sessionId=sid; activeSession=sid;
+          card.timeline.push(["手动派单","拖卡/按钮启动 "+AGENTS[card.agent].name+"（规则自动派单之外的手动入口）","now"]);
+          toast("已派给 "+AGENTS[card.agent].name+"，会话启动");
+        } else if (target==="done"){
+          card.col="done"; card.status="done"; card.progress=100;
+          if (card.sessionId && sessions[card.sessionId]) sessions[card.sessionId].state="ended";
+          card.sessionId=null;
+          card.timeline.push(["执行完成","结果已回写出口（演示）","done"]);
+          toast("卡片已完成，出口已回写");
+        } else if (target==="todo"){
+          card.col="todo"; card.status="idle";
+          if (card.sessionId && sessions[card.sessionId]) sessions[card.sessionId].state="ended";
+          card.sessionId=null; card.agent="none";
+          toast("卡片已退回待办");
+        }
+        renderBoard(); renderSessionTabs();
+      }
+
+      /* ---------------- session focus ---------------- */
+      function renderSessionTabs(){
+        var wrap=$("#session-tabs");
+        var keys=Object.keys(sessions).filter(function(k){ return sessions[k].state!=="ended"; });
+        if (!keys.length){ wrap.innerHTML='<span style="font-size:12.5px;color:var(--muted)">暂无运行中的会话</span>'; $("#session-meta").innerHTML=""; $("#logwin").innerHTML=""; return; }
+        if (!sessions[activeSession] || sessions[activeSession].state==="ended") activeSession=keys[0];
+        wrap.innerHTML=keys.map(function(k){
+          var s=sessions[k];
+          return '<button class="session-tab'+(k===activeSession?" active":"")+'" data-session="'+k+'"><b>'+esc(s.label)+'</b><span>'+(s.state==="paused"?"已暂停":s.state==="waiting"?"等待输入":"运行中")+" · "+s.started+" 启动</span></button>";
+        }).join("");
+        $$("[data-session]").forEach(function(b){ b.addEventListener("click", function(){ activeSession=b.dataset.session; renderSession(); }); });
+        renderSession();
+      }
+      function renderSession(){
+        var s=sessions[activeSession]; if(!s) { renderSessionTabs(); return; }
+        var card=findCard(s.cardId);
+        $("#session-meta").innerHTML='<span>执行器 <b>'+AGENTS[s.agent].name+'</b></span><span>关联卡片 <b>'+esc(card?card.ext:"—")+'</b></span><span>状态 <b>'+(s.state==="paused"?"已暂停":s.state==="waiting"?"等待输入":"运行中")+'</b></span>'+(card?'<span>已运行 <b data-elapsed="'+card.id+'">'+fmtElapsed(card.elapsed)+'</b></span>':"");
+        $("#pause-btn").textContent = s.state==="paused" ? "继续会话" : "暂停会话";
+        var lw=$("#logwin");
+        lw.innerHTML=s.log.map(function(line){ return '<div><span class="t">'+esc(line[0])+'</span> <span class="'+esc(line[1])+'">'+esc(line[2])+'</span></div>'; }).join("");
+        lw.scrollTop=lw.scrollHeight;
+        renderSessionTabsLight();
+      }
+      function renderSessionTabsLight(){
+        $$("[data-session]").forEach(function(b){
+          var s=sessions[b.dataset.session]; if(!s) return;
+          b.classList.toggle("active", b.dataset.session===activeSession);
+          b.querySelector("span").textContent=(s.state==="paused"?"已暂停":s.state==="waiting"?"等待输入":"运行中")+" · "+s.started+" 启动";
+        });
+      }
+      function pushLog(sid, cls, text){
+        var s=sessions[sid]; if(!s) return;
+        s.log.push([nowTime(), cls, text]);
+        if (sid===activeSession) renderSession();
+      }
+      $("#pause-btn").addEventListener("click", function(){
+        var s=sessions[activeSession]; if(!s) return;
+        s.state = s.state==="paused" ? "running" : "paused";
+        pushLog(activeSession,"sys", s.state==="paused" ? "会话已暂停（演示）" : "会话继续运行");
+        renderSession();
+      });
+      $("#end-btn").addEventListener("click", function(){
+        var s=sessions[activeSession]; if(!s) return;
+        s.state="ended";
+        var card=findCard(s.cardId);
+        if (card && card.col==="doing"){ card.status="waiting"; }
+        toast("会话已结束，卡片保留在处理中等待后续处理");
+        renderBoard(); renderSessionTabs();
+      });
+      $("#focus-card-btn").addEventListener("click", function(){
+        var s=sessions[activeSession]; if(s) openDrawer(s.cardId);
+      });
+      function inject(){
+        var inp=$("#inject-input"), v=inp.value.trim(); if(!v) return;
+        var s=sessions[activeSession]; if(!s) return;
+        pushLog(activeSession,"me","你插话："+v);
+        if (s.state==="waiting"){ s.state="running"; var c=findCard(s.cardId); if(c) c.status="working"; }
+        if (s.state==="paused"){ s.state="running"; }
+        inp.value="";
+        setTimeout(function(){ pushLog(activeSession,"","收到，已按新指令调整处理方向。"); renderBoard(); }, 700);
+        renderSession();
+      }
+      $("#inject-btn").addEventListener("click", inject);
+      $("#inject-input").addEventListener("keydown", function(e){ if(e.key==="Enter") inject(); });
+
+      /* ticking: elapsed + progress + session log stream */
+      setInterval(function(){
+        cards.forEach(function(c){
+          if (c.col==="doing" && c.status==="working"){
+            c.elapsed+=2;
+            var s=c.sessionId?sessions[c.sessionId]:null;
+            if (s && s.state==="running" && c.progress<96) c.progress=Math.min(96, c.progress+1);
+          }
+        });
+        $$("[data-elapsed]").forEach(function(el){ var c=findCard(el.dataset.elapsed); if(c) el.textContent=fmtElapsed(c.elapsed); });
+        Object.keys(sessions).forEach(function(k){
+          var s=sessions[k];
+          if (s.state==="running" && s.pool.length){
+            var line=s.pool[s.poolIdx % s.pool.length]; s.poolIdx++;
+            pushLog(k, line[0], line[1]);
+          }
+        });
+        /* refresh progress bars without full re-render */
+        $$(".card").forEach(function(el){
+          var c=findCard(el.dataset.id); if(!c) return;
+          var bar=el.querySelector(".progress i"); if(bar) bar.style.width=c.progress+"%";
+        });
+      }, 4000);
+
+      /* ---------------- connectors ---------------- */
+      function renderConnectors(){
+        $("#connectors").innerHTML=connectors.map(function(c){
+          return '<div class="conn"><span class="conn-ic">'+c.icon+'</span><div><b>'+esc(c.name)+'</b><small>'+esc(c.desc)+'</small></div>'
+            +'<span class="io-badges">'+c.inOut.map(function(d){ return '<span class="io '+d+'">'+(d==="in"?"入口":"出口")+'</span>'; }).join("")+'</span>'
+            +'<span class="conn-state '+(c.on?"on":"off")+'"><i></i>'+(c.on?"已连接":"未启用")+'</span>'
+            +'<label class="switch"><input type="checkbox" data-conn="'+c.id+'"'+(c.on?" checked":"")+' aria-label="启用 '+esc(c.name)+'"><span class="track"></span></label></div>';
+        }).join("");
+        $$("[data-conn]").forEach(function(sw){
+          sw.addEventListener("change", function(){
+            var c=connectors.filter(function(x){return x.id===sw.dataset.conn;})[0];
+            c.on=sw.checked; renderConnectors();
+            toast(c.name+(c.on?" 已启用（演示）":" 已停用（演示）"));
+          });
+        });
+      }
+
+      /* ---------------- drawer ---------------- */
+      function openDrawer(id){
+        var card=findCard(id); if(!card) return;
+        var src=SRC[card.source], st=statusInfo(card);
+        var h='<button class="close" id="drawer-close" aria-label="关闭">✕</button>';
+        h+='<div class="card-top"><span class="src '+src.cls+'">'+src.icon+esc(src.label)+'</span><span class="prio '+card.prio.toLowerCase()+'">'+card.prio+'</span><span class="ext-id">'+esc(card.ext)+'</span></div>';
+        h+='<h2>'+esc(card.title)+'</h2>';
+        h+='<p class="meta-line">状态：'+st[1]+' · 执行器：'+(card.col==="todo"?"建议 "+AGENTS[card.suggested].name:AGENTS[card.agent].name)+' · 派单规则版本：'+esc(card.ruleVer)+'</p>';
+        h+='<div class="body-text">'+esc(card.desc)+'</div>';
+        h+='<h3 class="sec">分类结果</h3><dl class="kv"><dt>类型</dt><dd>'+esc(card.type)+'</dd><dt>置信度</dt><dd>'+card.conf+'%'+(card.conf<60?"（低于 60% 阈值，不自动派单）":"")+'</dd><dt>判断依据</dt><dd>'+esc(card.confWhy)+'</dd></dl>';
+        h+='<h3 class="sec">流转时间线</h3><ul class="timeline">'+card.timeline.map(function(t){ return '<li class="'+t[2]+'"><b>'+esc(t[0])+'</b><span>'+esc(t[1])+'</span></li>'; }).join("")+'</ul>';
+        if (card.col==="todo") h+='<div class="card-actions"><button class="btn primary" id="drawer-assign">派给 '+AGENTS[card.suggested].name+' 并启动会话</button></div>';
+        if (card.col==="doing") h+='<div class="card-actions"><button class="btn primary" id="drawer-done">标记完成并回写出口</button><button class="btn" id="drawer-back">退回待办</button></div>';
+        $("#drawer-content").innerHTML=h;
+        $("#drawer-close").addEventListener("click", closeDrawer);
+        $("#drawer").classList.add("open"); $("#overlay").classList.add("open");
+        var a=$("#drawer-assign"); if(a) a.addEventListener("click", function(){ moveCard(card,"doing"); closeDrawer(); });
+        var d=$("#drawer-done"); if(d) d.addEventListener("click", function(){ moveCard(card,"done"); closeDrawer(); });
+        var b=$("#drawer-back"); if(b) b.addEventListener("click", function(){ moveCard(card,"todo"); closeDrawer(); });
+      }
+      function closeDrawer(){ $("#drawer").classList.remove("open"); $("#overlay").classList.remove("open"); }
+      $("#overlay").addEventListener("click", closeDrawer);
+      document.addEventListener("keydown", function(e){ if(e.key==="Escape") closeDrawer(); });
+
+      /* ---------------- simulator ---------------- */
+      var simCount=0;
+      $("#sim-run").addEventListener("click", function(){
+        var source=$("#sim-source").value;
+        var title=$("#sim-title").value.trim();
+        var body=$("#sim-body").value;
+        if (!title){ toast("先给事件起个标题"); $("#sim-title").focus(); return; }
+        var res=$("#sim-result"); res.classList.remove("show");
+        $("#sim-thinking").classList.add("show");
+        $("#sim-run").disabled=true;
+        setTimeout(function(){
+          $("#sim-thinking").classList.remove("show");
+          $("#sim-run").disabled=false;
+          /* keyword-based stand-in for the LLM classifier (demo only) */
+          var text=title+" "+body, type="咨询", conf=72, agent="none", action="只起草回复，不派活", why="未命中明确缺陷特征，按咨询处理。";
+          if (/401|报错|崩溃|无响应|丢失|乱码|失败|异常|bug/i.test(text)){ type="Bug"; conf=93; agent="dsh"; action="定位修复 + 跑回归测试"; why="内容含明确故障现象与错误线索，符合 Bug 特征。"; }
+          else if (/导出|希望|需求|支持|增加|优化/.test(text)){ type="需求"; conf=88; agent="dsh"; action="生成方案草稿，挂起等评审"; why="诉求为功能新增，符合需求特征。"; }
+          if (/偶发|可能|好像|不确定/.test(text) && type==="Bug"){ conf=45; why="描述含不确定表述且缺复现步骤，置信度下调。"; }
+          var route = conf<60 ? "置信度低于 60% → 不自动派单，落入待办人工分拣" : ("按路由表自动派给 "+AGENTS[agent].name+"：" + action);
+          simCount++;
+          var id="sim"+Date.now();
+          var card={ id:id, col: conf<60?"todo":"doing", source:source, ext: source==="jira"?"EXEPD-"+(2400+simCount):SRC[source].label+" · 模拟",
+            title:title, desc:body||title, type:type, prio: type==="Bug"?"P1":"P2", conf:conf, confWhy:why,
+            agent: conf<60?"none":agent, suggested: agent==="none"?"dsh":agent,
+            status: conf<60?"idle":"working", progress: conf<60?0:6, elapsed:0, ruleVer:"classifier v0.3", sessionId:null,
+            timeline:[["事件进入",SRC[source].label+" 连接器 · 刚刚（模拟投递）","done"],["大模型分类",type+" / 置信度 "+conf+"%","done"],[conf<60?"落入待办":"路由派单", route,"now"]] };
+          cards.unshift(card);
+          if (card.col==="doing"){
+            var sid="ss"+Date.now();
+            sessions[sid]={ id:sid, cardId:id, agent:agent, label:AGENTS[agent].name+" · "+card.ext, state:"running", started:nowTime(),
+              log:[[nowTime(),"sys","会话启动 · 事件经分类后自动派单"],[nowTime(),"","开始处理："+title]], pool:[["","正在分析事件内容与相关模块…"],["ok","已记录阶段性进展"]], poolIdx:0 };
+            card.sessionId=sid; activeSession=sid;
+          }
+          res.innerHTML='<h4>分类完成</h4><dl class="kv"><dt>类型</dt><dd>'+type+'</dd><dt>置信度</dt><dd>'+conf+'%</dd><dt>依据</dt><dd>'+esc(why)+'</dd><dt>路由结果</dt><dd>'+esc(route)+'</dd></dl>'
+            +'<p style="font-size:12.5px;color:var(--muted);margin:10px 0 0">已生成卡片并放入看板'+(card.col==="todo"?"「待办」列":"「处理中」列")+'，可点开查看时间线。</p>';
+          res.classList.add("show");
+          renderBoard(); renderSessionTabs();
+          toast(conf<60 ? "置信度低，卡片已落入待办" : "已自动派单，卡片进入处理中");
+        }, 1100);
+      });
+
+      /* ---------------- init ---------------- */
+      renderBoard();
+      renderSessionTabs();
+      renderConnectors();
+    })();
+    </script>
+  </body>
+</html>
