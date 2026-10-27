@@ -73,6 +73,7 @@ export const CLS = {
   attentionBody: 'dshc-attention-body',
   attentionMeta: 'dshc-attention-meta',
   attentionActions: 'dshc-attention-actions',
+  emptyLine: 'dshc-empty-line',
   running: 'dshc-running',
   runningLabel: 'dshc-running-label',
   runningList: 'dshc-running-list',
@@ -171,21 +172,21 @@ const CSS = `
 .${CLS.nav} .${CLS.navItem}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .${CLS.nav} .${CLS.navItemActive},.${CLS.nav} .${CLS.navItemActive}:hover:not(:disabled){color:var(--dsw-alias-state-business-primary)}
 .${CLS.nav} .${CLS.navItemActive}::after{content:'';position:absolute;right:0;left:0;bottom:-1px;height:2px;background:var(--dsw-alias-state-business-primary)}
-.${CLS.body}{flex:1;min-height:0;overflow-y:auto;padding:16px 28px 32px;background:var(--dsw-alias-bg-layer-1)}
+.${CLS.body}{display:flex;flex:1;flex-direction:column;gap:16px;min-height:0;overflow-y:auto;padding:16px 28px 32px 20px;background:var(--dsw-alias-bg-layer-1)}
 .${CLS.view}{display:flex;flex-direction:column;gap:10px}
 .${CLS.viewHead}{display:flex;flex-direction:column;gap:2px}
 .${CLS.viewHeading}{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.viewHint}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
-.${CLS.viewEmpty}{margin:0;padding:32px 0;text-align:center;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.viewEmpty}{margin:0;padding:20px 0;text-align:center;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.viewMeta}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.viewSubheading}{display:flex;align-items:center;gap:6px;margin:8px 0 0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.viewBadge}{font-size:11px;line-height:16px;font-weight:400;color:var(--dsw-alias-label-tertiary)}
 .${CLS.appsTools}{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-/* The board: a status strip, then three columns of cards. Three materials, no
-   colour tricks — page layer 1, column layer 2, card on the settings material. */
-.${CLS.board}{display:flex;flex-direction:column;gap:10px}
-.${CLS.statusBar}{display:flex;flex-wrap:wrap;gap:8px}
-.${CLS.stat}{display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-settings-card-fill);box-shadow:inset 0 0 0 0.5px var(--dsw-alias-settings-card-stroke)}
+/* The board: a summary strip, then three columns of cards. The strip is a line of
+   figures, not four controls — it carries no fill so it reads as a summary. */
+.${CLS.board}{display:flex;flex-direction:column;gap:12px}
+.${CLS.statusBar}{display:flex;flex-wrap:wrap;align-items:center;gap:4px 24px}
+.${CLS.stat}{display:flex;align-items:center;gap:6px}
 .${CLS.statValue}{font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.statLabel}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardHint}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
@@ -214,11 +215,10 @@ const CSS = `
 .${CLS.cardAvatar}{display:inline-flex;flex:none;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-bg-layer-3);font-size:11px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-secondary)}
 .${CLS.cardExecutor}{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .${CLS.cardWhen}{margin-left:auto;flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
-/* Hover and keyboard focus both reveal the action bar; pointer-events keeps an
-   unrevealed bar from catching a click, while the rows stay in the tab order. */
-.${CLS.cardBar}{display:flex;flex-wrap:wrap;gap:6px;opacity:0;pointer-events:none;transition:opacity 120ms ease}
-.${CLS.boardCard}:hover .${CLS.cardBar},.${CLS.boardCard}:focus-within .${CLS.cardBar}{opacity:1;pointer-events:auto}
-@media (prefers-reduced-motion: reduce){.${CLS.cardBar}{transition:none}}
+/* The action bar is always laid out and always visible: hiding it left a blank
+   strip the height of a button inside every card, and "there is something you can
+   do here" is worth more than the quiet. Keyboard focus still lights the card up. */
+.${CLS.cardBar}{display:flex;flex-wrap:wrap;gap:6px}
 .${CLS.detailHeading}{margin:12px 0 4px;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.detailList}{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:0}
 .${CLS.detailList} dt{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
@@ -276,6 +276,7 @@ const CSS = `
 .${CLS.noticeTitle}{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.noticeActions}{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
 .${CLS.openError}{margin:0 0 8px;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary)}
+.${CLS.emptyLine}{margin:0;padding:2px 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.attention}{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);box-shadow:inset 0 0 0 0.5px var(--dsw-alias-settings-card-stroke)}
 .${CLS.attentionHead}{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .${CLS.attentionHeading}{margin:0;font-size:14px;line-height:22px}

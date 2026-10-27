@@ -119,7 +119,6 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
         <Stat label={t('boardStatDone')} value={counts.doneToday} dot="done" />
         <Stat label={t('boardStatFailed')} value={counts.failed} dot={counts.failed > 0 ? 'error' : 'idle'} />
       </div>
-      <p className={CLS.boardHint}>{t('boardHint')}</p>
       {failure === '' ? null : <p className={CLS.boardFailure} role="status">{failure}</p>}
       <div className={CLS.boardColumns}>
         {COLUMNS.map((column) => {
@@ -178,6 +177,8 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
           )
         })}
       </div>
+      {/* 这条注脚说的是数据从哪来、哪里还不真，属于脚注而不是抬头，排在列下面。 */}
+      <p className={CLS.boardHint}>{t('boardHint')}</p>
       {openCard !== undefined && (
         <CardDetail
           card={openCard}

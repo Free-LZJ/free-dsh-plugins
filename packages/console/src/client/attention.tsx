@@ -100,7 +100,7 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
         </div>
       )}
       {waiting.length === 0
-        ? <p className={CLS.empty}>{props.t('attentionEmpty')}</p>
+        ? <p className={CLS.emptyLine}>{props.t('attentionEmpty')}</p>
         : <ul className={CLS.attentionList}>{waiting.map(notice => waitingRow(props, notice))}</ul>}
       {settled.length > 0 && (
         <>

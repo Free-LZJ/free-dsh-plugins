@@ -42,7 +42,7 @@ export function FocusPage(props: {
         {t('focusCurrent', { count: sessions.length })}
       </h3>
       {sessions.length === 0
-        ? <p className={CLS.viewEmpty}>{t('focusEmpty')}</p>
+        ? <p className={CLS.emptyLine}>{t('focusEmpty')}</p>
         : (
           <ul className={CLS.focusList}>
             {sessions.map((session) => (
