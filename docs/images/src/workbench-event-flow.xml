@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="draw.io">
+  <diagram name="DSH 工作台 — 事件处理流程" id="workbench-event-flow">
+    <mxGraphModel dx="1200" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="1360" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="spacer" value="" style="fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="880" height="1340" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="DSH 工作台 — 一个事件从进来到完成" style="text;html=1;align=center;fontSize=15;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="210" y="16" width="480" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="n_start" value="开始" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="380" y="50" width="80" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_event" value="连接器收到事件&#xa;mail / webhook / jira / 钉钉" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="115" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_dedupe" value="去重键已存在？" style="rhombus;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="310" y="200" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_dup" value="丢弃（已建过卡）" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="640" y="218" width="160" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_triage" value="决策&#xa;条件匹配 + 分类（可调模型）" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="320" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_conf" value="置信度 ≥ 阈值？&#xa;（默认 0.6）" style="rhombus;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="310" y="410" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_todo" value="落「待办」列&#xa;低置信不自动派单" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="620" y="415" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_manual" value="人工拖卡 / 点派单" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="620" y="500" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_action" value="规则动作 = session？" style="rhombus;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="310" y="530" width="220" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_other" value="非会话动作&#xa;http / mcp / script / notify" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="620" y="600" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_end_other" value="完成（不建卡）" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="660" y="690" width="120" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_spawn" value="执行器起会话&#xa;卡片进「进行中」" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="670" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_run" value="会话运行中&#xa;（可能停下来等你回答）" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="760" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_wait" value="聚焦页提示&#xa;「等你回答」" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="620" y="770" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_done" value="会话结束" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="870" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_card" value="卡片进「已处理」&#xa;标记：待确认回写" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="960" width="200" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_confirm" value="人工确认回写？" style="rhombus;shadow=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="310" y="1060" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_no" value="不回写 · 只归档" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="620" y="1075" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_write" value="出口动作回写源系统&#xa;（评论 / 状态 / 回信）" style="rounded=1;shadow=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="1180" width="200" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_end_no" value="结束（未回写）" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="660" y="1160" width="120" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="n_end" value="完成" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="1270" width="140" height="44" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_start" target="n_event" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_event" target="n_dedupe" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="n_dedupe" target="n_dup" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_dedupe" target="n_triage" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_triage" target="n_conf" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" value="否 · 低置信" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d6b656;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="n_conf" target="n_todo" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_conf" target="n_action" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_todo" target="n_manual" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e9" value="派单" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;dashed=1;endArrow=classic;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" source="n_manual" target="n_spawn" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="560" y="525"/>
+              <mxPoint x="560" y="700"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="n_action" target="n_other" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_action" target="n_spawn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_other" target="n_end_other" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_spawn" target="n_run" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e14" value="等你回答 ↔ 回答后继续" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;fontColor=#666;fontSize=11;dashed=1;endArrow=classic;startArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="n_run" target="n_wait" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_run" target="n_done" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_done" target="n_card" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_card" target="n_confirm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="n_confirm" target="n_no" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e19" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;fontSize=11;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_confirm" target="n_write" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_no" target="n_end_no" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e21" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;endArrow=classic;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="n_write" target="n_end" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
