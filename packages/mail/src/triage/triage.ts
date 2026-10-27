@@ -26,7 +26,7 @@ import type { ActionContext } from './actions/context.ts'
 import type { ActionOutcome } from './actions/index.ts'
 import type { ClassifyRequest, ClassifyResult, MatchContext } from './conditions.ts'
 import type { ActionRegistry, ConditionRegistry, PendingStore, RunStore } from '@free-lzj/dsh-decision'
-import { ruleMatches } from '@free-lzj/dsh-decision'
+import { ruleMatches, runDueActions } from '@free-lzj/dsh-decision'
 import type {
   ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, PendingAction, Rule, Run,
   RunAction, RunStatus,
@@ -475,49 +475,34 @@ export async function undoRun(runId: string, ports: TriagePorts): Promise<{ ok: 
  * @returns 执行了几条。
  */
 export async function runDue(ports: TriagePorts, now: Date = ports.now?.() ?? new Date()): Promise<number> {
-  const due = await ports.pending.takeDue(now)
-  let executed = 0
-  for (const item of due) {
-    const action = ports.actions.get(item.action.kind)
-    const run = ports.runs.get(item.runId)
-    const context = ports.replayContext({
-      summary: item.summary,
-      accountId: item.message.accountId,
-      // 账号名字要在排队时记下来：message 里只有 id，用它当名字会让延迟执行的通知
-      // 显示成一串 id。旧记录没有这个字段时退回 id，而不是空字符串。
-      accountName: item.accountName ?? item.message.accountId,
-      ruleId: item.ruleId,
-    })
-    let ok: boolean
-    let detail: string
-    if (action === undefined) {
-      ok = false
-      detail = `本部署没有实现动作 ${item.action.kind}`
-    } else {
-      try {
-        const outcome = await action.run(item.action, context)
-        ok = outcome.ok
-        detail = outcome.detail
-        if (outcome.undo !== undefined) {
-          const existing = undosByRun.get(item.runId) ?? []
-          undosByRun.set(item.runId, [...existing, outcome.undo])
-        }
-      } catch (error: unknown) {
-        ok = false
-        detail = `执行失败：${error instanceof Error ? error.message : String(error)}`
-      }
-    }
-    executed += 1
-    if (run === undefined) continue
-    // 回填那一条记录里对应的动作，而不是新写一条：记录对应「一封邮件被怎么处理了」，
-    // 延迟执行只是同一件事晚了几十秒。
-    const actions = [...run.actions]
-    const previous = actions[item.actionIndex]
-    if (previous !== undefined) actions[item.actionIndex] = { ...previous, ok, detail }
-    await ports.runs.patch(item.runId, {
-      status: run.status === 'undone' ? 'undone' : ok ? run.status : 'partial',
-      actions,
-    })
-  }
-  return executed
+  // 骨架在内核（逐个执行、单独记结果、回填记录、登记撤销闭包），这里只提供邮件这一侧的
+  // 上下文与撤销登记。
+  return await runDueActions(
+    {
+      pending: ports.pending,
+      runs: {
+        get: runId => ports.runs.get(runId),
+        // 内核只知道「状态 + 动作列表」；把动作列表交给这个包自己的 RunAction 存储。
+        patch: async (runId, change) => await ports.runs.patch(runId, {
+          status: change.status as RunStatus,
+          actions: change.actions as readonly RunAction[],
+        }),
+      },
+      actions: ports.actions,
+      contextFor: item => ports.replayContext({
+        summary: item.summary,
+        accountId: item.message.accountId,
+        // 账号名字要在排队时记下来：`message` 里只有 id，用它当名字会让延迟执行的通知
+        // 显示成一串 id。旧记录没有这个字段时退回 id，而不是空字符串。
+        accountName: item.accountName ?? item.message.accountId,
+        ruleId: item.ruleId,
+      }),
+      recordUndo: (runId, undo) => {
+        const existing = undosByRun.get(runId) ?? []
+        undosByRun.set(runId, [...existing, undo])
+      },
+      log: ports.log,
+    },
+    now,
+  )
 }
