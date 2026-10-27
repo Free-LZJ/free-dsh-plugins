@@ -278,6 +278,14 @@ describe('manual dispatch and session control', () => {
 })
 
 describe('connectors and persistence', () => {
+  it('lists the executors this deployment actually registered', async () => {
+    // 页面要能区分「还没接」和「接了但坏了」：路由表指着一个不存在的执行器，
+    // 用户看得到名单才知道那是配置问题而不是点坏了。
+    const { board } = bench()
+    expect(board.state().executors.map((executor) => executor.id).sort()).toEqual(['codex', 'dsh'])
+    expect(board.state().executors.find((executor) => executor.id === 'dsh')?.label).toBe('DSH（模拟）')
+  })
+
   it('lists connectors joined with the configuration, dropping unknown ids with a warning', () => {
     const { board, warned } = bench({ enabled: ['mail', 'nope'] })
     const connectors = board.state().connectors

@@ -159,22 +159,39 @@ export function apply(ctx: Context, config: Config): void {
   const executors = new ExecutorRegistry()
   executors.register(new SimulatedExecutor('dsh', 'DSH（模拟）'))
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
-  // 真实会话执行器：只有宿主给了会话服务、且配了工作目录时才注册。没注册时路由
-  // 表指着它只会得到「执行器未注册」的 hold，而不是一个假装在跑的实现。
-  const sessionController = ctx.get('sessionController') as SessionControllerLike | undefined
-  const workspaces = ctx.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
-  const harnessRunner = sessionController === undefined
-    ? undefined
-    : createHarnessRunner({
-      controller: sessionController,
+  // 真实会话执行器：等会话服务真的就位之后才注册。
+  //
+  // 不能在这里直接 `ctx.get('sessionController')`：服务的挂载顺序不由本插件决定，
+  // 早读一次只会拿到 undefined。`inject` 会等它出现（服务重启后还会再触发）。
+  //
+  // **实测结论（harness 0.2.x，2026-10）**：宿主里有 `sessions` 与 `agents`，**没有**
+  // `sessionController` / `workspaceRegistry`，这两个名字因此永远等不到——真实执行器
+  // 也就永远不会注册（比注册一个假装能跑的实现好，但仍是待修的）。它们的 API 在服务
+  // 原型上（`Object.keys` 只能看到 store/projections 这类字段），要等 P2 把真正的
+  // 建会话入口摸清再改这里；这个包和 mail 的会话端口都受同一问题影响。
+  let realRegistered = false
+  ctx.inject(['sessionController'], (inner) => {
+    if (realRegistered) return
+    const controller = inner.get('sessionController') as SessionControllerLike | undefined
+    if (controller === undefined) return
+    const workspaces = inner.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
+    const runner = createHarnessRunner({
+      controller,
       ...(workspaces === undefined ? {} : { workspaces }),
       cwd: config.workbenchWorkspace,
-      subscribe: (listener) => ctx.on('session/event', listener),
+      subscribe: (listener) => inner.on('session/event', listener),
       log: (line) => {
-        ctx.logger.warn(line)
+        inner.logger.warn(line)
       },
     })
-  if (harnessRunner !== undefined) executors.register(new RealSessionExecutor(harnessRunner))
+    if (runner === undefined) {
+      inner.logger.info(`console: real executor off (workspace: ${config.workbenchWorkspace === '' ? '<empty>' : config.workbenchWorkspace})`)
+      return
+    }
+    executors.register(new RealSessionExecutor(runner))
+    realRegistered = true
+    inner.logger.info(`console: real executor on (workspace: ${config.workbenchWorkspace})`)
+  })
   const connectors = new ConnectorRegistry()
   for (const connector of builtinConnectors()) connectors.register(connector)
   const routing = new RoutingTableStore(join(home, STATE_DIR, 'routing.json'), defaultRoutingTable(), (line) => {

@@ -102,6 +102,7 @@ function board(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
       },
     ],
     connectors: [],
+    executors: [{ id: 'dsh', label: 'DSH（模拟）' }],
     routingVersion: 'workbench-routes-v1',
     revision: 1,
     ...overrides,

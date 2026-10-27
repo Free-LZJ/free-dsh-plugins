@@ -425,6 +425,7 @@ export class WorkbenchBoard {
       cards: [...this.cards.values()].sort((a, b) => a.createdAt - b.createdAt),
       sessions: this.sessions.list(),
       connectors: this.connectorInfos(),
+      executors: this.options.executors.list().map((executor) => ({ id: executor.id, label: executor.label })),
       routingVersion: this.routingVersion,
       revision: this.revision,
     }

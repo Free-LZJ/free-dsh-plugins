@@ -17,7 +17,7 @@ import type { WorkbenchState } from '../../src/protocol.ts'
 
 /** A minimal board payload. */
 function state(revision: number): WorkbenchState {
-  return { cards: [], sessions: [], connectors: [], routingVersion: 'v1', revision }
+  return { cards: [], sessions: [], connectors: [], executors: [], routingVersion: 'v1', revision }
 }
 
 /** Replace `fetch` with one that answers the given bodies in order, recording the URLs. */

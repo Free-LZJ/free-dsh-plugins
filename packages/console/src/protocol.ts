@@ -351,11 +351,27 @@ export interface WorkbenchConnectorInfo {
   readonly note?: string
 }
 
+/** One executor, as the board lists it. */
+export interface WorkbenchExecutorInfo {
+  /** Stable id the routing table names. */
+  readonly id: string
+  /** Display label. */
+  readonly label: string
+}
+
 /** Everything the browser cannot derive about the board. */
 export interface WorkbenchState {
   readonly cards: readonly WorkbenchCard[]
   readonly sessions: readonly WorkbenchSession[]
   readonly connectors: readonly WorkbenchConnectorInfo[]
+  /**
+   * Executors this deployment actually has.
+   *
+   * The page needs this to tell "not wired yet" from "wired but broken": a
+   * routing table naming an executor that is absent is a configuration answer the
+   * user can act on, whereas a silent no-op just looks like a dead button.
+   */
+  readonly executors: readonly WorkbenchExecutorInfo[]
   /** Version of the routing table the current decisions were made with. */
   readonly routingVersion: string
   readonly revision: number
