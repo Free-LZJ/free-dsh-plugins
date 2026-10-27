@@ -1,16 +1,19 @@
 /**
- * 推一条工作台通知。
+ * 推一条工作台通知 —— 现在只是**内核实现的邮件适配**。
  *
- * 这是 `suggest` 三态唯一的出口：动作不执行，只告诉人「我建议这么处理」。所以标题
- * 支持占位符（`{subject}`、`{from}`、`{rule}`），让那一条通知自己说清是哪封邮件、
- * 哪条规则建议的——一条写着「有新邮件」的通知等于没通知。
+ * 渲染、兜底、错误处理都在 `@free-lzj/dsh-decision` 的 `runNotify` 里：那一版只认模板值与
+ * 一个投递端口，不认识邮件。这里保留三件事：
+ *
+ * 1. 邮件模板里常用的键（`{subject}` / `{from}` / `{rule}` / `{date}` / `{account}`）由
+ *    `ActionContext.templateValues` 提供，映射不在这份文件里；
+ * 2. **默认标题用全角冒号**（`{rule}：{subject}`），因为它是中文界面上的句子；
+ * 3. `ActionOutcome` 的形状转换。
  *
  * @module @free-lzj/dsh-mail/triage/actions/notify
  */
 
-import { fillTemplate } from '../repo.ts'
+import { renderNotifyTitle, runNotify } from '@free-lzj/dsh-decision'
 import type { Action, ActionContext, ActionOutcome } from './context.ts'
-import { failure } from './context.ts'
 
 /** 缺省标题：说清是哪条规则、对哪封邮件。 */
 const DEFAULT_TITLE = '{rule}：{subject}'
@@ -22,51 +25,27 @@ const DEFAULT_TITLE = '{rule}：{subject}'
  * @returns 一行标题。
  */
 export function renderTitle(spec: { readonly title?: string }, context: ActionContext): string {
-  const { summary, rule } = context.task
-  const filled = fillTemplate(spec.title ?? DEFAULT_TITLE, {
-    subject: summary.subject,
-    from: summary.from.name ?? summary.from.address,
-    rule: rule.name,
-    date: summary.date,
-    account: context.task.accountName,
-  }).trim()
-  return filled === '' ? `邮件：${summary.subject}` : filled
+  return renderNotifyTitle(
+    { title: spec.title ?? DEFAULT_TITLE },
+    { templateValues: context.templateValues, source: 'mail', log: context.log },
+  )
 }
 
-/** 通知动作；不需要撤销（它没有改变任何东西）。 */
+/** 通知动作；不改变外部世界，所以不进撤销窗口。 */
 export const notifyAction: Action = {
   kind: 'notify',
   sideEffect: false,
   async run(spec, context): Promise<ActionOutcome> {
-    const workbench = context.console
-    const title = renderTitle(spec, context)
-    if (workbench === undefined) {
-      // 没装工作台是正常部署，不是错误：记一行日志，动作算成立。
-      context.log(`[mail 分诊] 未安装工作台，通知未送出：${title}`)
-      return { ok: true, detail: `未安装工作台，通知未送出：${title}` }
-    }
-    try {
-      // 纯通知走 `notify`；工作台若只提供条目接口（或 `notify` 被省略），退回 `raise`。
-      if (workbench.notify !== undefined) {
-        await workbench.notify({
-          title,
-          body: `${context.task.summary.from.address} · ${context.task.rule.name}`,
-          tone: spec.tone ?? 'info',
-          source: 'mail',
-        })
-      } else if (workbench.raise !== undefined) {
-        await workbench.raise({
-          title,
-          body: `${context.task.summary.from.address} · ${context.task.rule.name}`,
-          tone: spec.tone ?? 'info',
-          source: 'mail',
-          kind: 'mail',
-          actions: [],
-        })
-      }
-    } catch (error: unknown) {
-      return failure(`推送通知失败：${error instanceof Error ? error.message : String(error)}`)
-    }
-    return { ok: true, detail: `已通知：${title}` }
+    const outcome = await runNotify(
+      { ...spec, title: spec.title ?? DEFAULT_TITLE },
+      {
+        templateValues: context.templateValues,
+        ...(context.console === undefined ? {} : { console: context.console }),
+        source: 'mail',
+        log: context.log,
+      },
+    )
+    // 内核的回答是 {ok:false, message}，这一侧的习惯是 {ok:false, detail}——转换放在这里。
+    return outcome.ok ? { ok: true, detail: outcome.detail } : { ok: false, detail: outcome.message }
   },
 }
