@@ -90,6 +90,8 @@ export interface TriageRules {
   readonly source: 'file' | 'default'
   readonly path: string
   readonly dropped: readonly string[]
+  /** The file's own text, so the page can show what is really on disk. */
+  readonly raw?: string
 }
 
 /** One write's answer. */
@@ -295,8 +297,38 @@ function TriageBody({ t, data, triage, act }: {
 }): ReactNode {
   const { rules, runs } = data
   const now = Date.now()
+  /** The last copy's outcome: the confirmation, or the instruction itself. */
+  const [notice, setNotice] = useState('')
+
+  /**
+   * Copy a fix instruction for one rule.
+   *
+   * The page can toggle a rule and flip an action's mode, but it cannot author a
+   * condition — that edit belongs in the YAML, done by whoever (or whatever) can
+   * write files. So the button hands over the rule's current definition as JSON
+   * plus where it lives, which is enough for an agent to patch the file. When the
+   * clipboard is unavailable the instruction is shown instead: a silent no-op is
+   * the worst outcome here (the mail panel learned this the hard way).
+   * @param rule - the rule to describe.
+   */
+  const copyFix = (rule: TriageRule): void => {
+    const definition = JSON.stringify({ id: rule.id, when: rule.when, then: rule.then }, null, 2)
+    const instruction = t('ruleFixPrompt', { path: rules.path, id: rule.id, definition })
+    void (async () => {
+      try {
+        // `navigator.clipboard` is absent outside a secure context, so even the
+        // property access belongs inside the try.
+        await navigator.clipboard.writeText(instruction)
+        setNotice(t('ruleCopyDone'))
+      } catch {
+        setNotice(`${t('ruleCopyFallback')}\n${instruction}`)
+      }
+    })()
+  }
   return (
     <>
+      {/* 复制回执放在顶部：按钮在每条规则上，回执跟在列表后面就等于没有。 */}
+      {notice === '' ? null : <p className={CLS.ruleNotice} role="status">{notice}</p>}
       <p className={CLS.viewMeta}>
         {t('rulesSource', { source: rules.source === 'file' ? t('rulesSourceFile') : t('rulesSourceDefault') })}
         {' · '}
@@ -348,6 +380,7 @@ function TriageBody({ t, data, triage, act }: {
                     >
                       {rule.enabled ? t('ruleDisable') : t('ruleEnable')}
                     </Button>
+                    <Button size="sm" onClick={() => { copyFix(rule) }}>{t('ruleCopyFix')}</Button>
                   </span>
                 </div>
                 <div className={CLS.ruleWhen}>
@@ -378,6 +411,15 @@ function TriageBody({ t, data, triage, act }: {
               </li>
             ))}
           </ul>
+        )}
+
+      {rules.raw === undefined
+        ? null
+        : (
+          <details className={CLS.ruleRawBlock}>
+            <summary className={CLS.ruleRawTitle}>{t('ruleRawTitle')}</summary>
+            <pre className={CLS.ruleRaw}>{rules.raw}</pre>
+          </details>
         )}
 
       <h3 className={CLS.viewSubheading}>{t('rulesRuns', { count: runs.length })}</h3>

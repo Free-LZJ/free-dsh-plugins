@@ -234,6 +234,61 @@ describe('the rules view on screen', () => {
   })
 })
 
+describe('changing a rule', () => {
+  /** Install a clipboard whose write either works or is refused. */
+  function stubClipboard(kind: 'ok' | 'missing'): { written: string[] } {
+    const written: string[] = []
+    if (kind === 'ok') {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async (text: string) => { written.push(text) } },
+      })
+    } else {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    }
+    return { written }
+  }
+
+  it('hands the agent one rule\u2019s current definition', async () => {
+    const clipboard = stubClipboard('ok')
+    const { source } = engine()
+    await draw(source)
+    fireEvent.click(within(ruleOf('GitHub 通知')).getByRole('button', { name: t('ruleCopyFix') }))
+    await waitFor(() => { expect(clipboard.written.length).toBe(1) })
+    const instruction = clipboard.written[0] as string
+    // 指令要能独立读懂：改哪个文件、哪条规则、它现在长什么样。
+    expect(instruction).toContain('C:/dsh/mail/triage/rules.yml')
+    expect(instruction).toContain('github')
+    expect(instruction).toContain('"when"')
+    expect(await screen.findByText(t('ruleCopyDone'))).toBeTruthy()
+  })
+
+  it('shows the instruction when there is no clipboard', async () => {
+    // 非安全上下文里 clipboard 是 undefined：静默失败比没有按钮更糟，所以退化成显示原文。
+    stubClipboard('missing')
+    const { source } = engine()
+    await draw(source)
+    fireEvent.click(within(ruleOf('GitHub 通知')).getByRole('button', { name: t('ruleCopyFix') }))
+    const fallback = await screen.findByText(new RegExp(t('ruleCopyFallback')))
+    expect(fallback.textContent).toContain('"when"')
+  })
+
+  it('shows the file itself when the engine hands it over', async () => {
+    const { source } = engine({
+      rules: async () => ({
+        rules: RULES,
+        source: 'file' as const,
+        path: 'C:/dsh/mail/triage/rules.yml',
+        dropped: [],
+        raw: 'rules:\n  - id: github\n',
+      }),
+    })
+    await draw(source)
+    expect(await screen.findByText(t('ruleRawTitle'))).toBeTruthy()
+    expect(screen.getByText(/id: github/)).toBeTruthy()
+  })
+})
+
 describe('condition values', () => {
   it('reads the rule file vocabulary without inventing words', () => {
     expect(conditionValue({ kind: 'subject', any: ['a', 'b'] })).toBe('a · b')
