@@ -1,30 +1,28 @@
 /**
- * 默认值，以及不可信输入变成可信形状的唯一入口。
+ * 邮件这一侧的词表：哪些条件、哪些动作存在，每个字段怎么收窄，以及三态的默认值。
  *
- * 规则文件的作者可能是人，也可能是 agent，所以每个字段都当作 `unknown` 看待，
- * 直到经过这里：一个 `mode: auto` 写成 `mode: yes` 的动作、一个 `priority` 写成
- * 字符串的规则、一条把 `when` 写成对象而不是数组的规则——结果要么是合法值，要么
- * 是一条被丢弃的条目与一句日志。
+ * 「结构」那部分（顶层是不是数组、name 有没有、id 重不重复、priority 是不是整数）
+ * 在 `@free-lzj/dsh-decision` 的 `config.ts` 里；这里只回答内核不知道的事：
+ * **一封邮件的 `from` 条件该带什么字段、`move` 动作必须有文件夹**。
  *
- * **丢弃而不整体失败**是刻意的：一份 20 条的规则文件里有一条写歪，用户要的是
- * 另外 19 条继续工作，而不是整个分诊停摆。整体失败只留给 YAML 本身解析不了
- * （那时连「另外 19 条」都读不出来），见 `src/rules.ts`。
+ * **丢弃而不整体失败**是刻意的：一份 20 条的文件里有一条写歪，用户要的是另外 19 条
+ * 继续工作，而不是整个分诊停摆。
  *
  * @module @free-lzj/dsh-mail/triage/config
  */
 
 import {
-  DEFAULT_RUN_HISTORY_LIMIT,
-  DEFAULT_RUN_RETENTION_DAYS,
-  DEFAULT_UNDO_WINDOW_SECONDS,
-  type ActionKind,
-  type ActionMode,
-  type ActionSpec,
-  type ConditionKind,
-  type ConditionSpec,
-  type Config,
-  type Rule,
+  DEFAULT_DECISION_CONFIG, DEFAULT_RUN_HISTORY_LIMIT, DEFAULT_RUN_RETENTION_DAYS, DEFAULT_UNDO_WINDOW_SECONDS,
+  MAX_INSTRUCTIONS_LENGTH, MAX_MATCH_LENGTH, MAX_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_TITLE_LENGTH,
+  MAX_UNDO_WINDOW_SECONDS, clamped, integer, named, normalizeDecisionConfig, normalizeRules as normalizeRuleList,
+  stringList, type RuleVocabulary,
+} from '@free-lzj/dsh-decision'
+import { isRecord, text } from '@free-lzj/dsh-decision'
+import type {
+  ActionKind, ActionMode, ActionSpec, ConditionKind, ConditionSpec, Config, Rule,
 } from './types.ts'
+
+export { isRecord, text }
 
 /** 条件种类名；写歪的 kind 会被丢弃。 */
 const CONDITION_KINDS = new Set<string>([
@@ -62,67 +60,13 @@ const DEFAULT_MODE: Readonly<Record<ActionKind, ActionMode>> = {
   http: 'suggest',
 }
 
-/** 各字段的长度上限：这些都是一行字或一段约束，不是正文。 */
-const MAX_NAME_LENGTH = 120
-const MAX_MATCH_LENGTH = 400
-const MAX_PATTERN_LENGTH = 1000
-const MAX_INSTRUCTIONS_LENGTH = 4000
-const MAX_TITLE_LENGTH = 200
-
-/** 三个数字的合法区间。 */
-const MAX_UNDO_WINDOW_SECONDS = 24 * 60 * 60
-const MAX_RUN_HISTORY_LIMIT = 100_000
-const MAX_RUN_RETENTION_DAYS = 3650
-
-/** Whether a value is a JSON object rather than an array, `null` or a primitive. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/** A non-empty, trimmed string, or undefined for anything else. */
-export function text(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed.length === 0 ? undefined : trimmed
-}
-
-/** A non-empty trimmed string cut to `limit`, or undefined. */
-function clamped(value: unknown, limit: number): string | undefined {
-  const kept = text(value)
-  return kept === undefined ? undefined : kept.slice(0, limit)
-}
-
-/** A member of a fixed set of names, or undefined. */
-function named<T extends string>(value: unknown, allowed: ReadonlySet<string>): T | undefined {
-  return typeof value === 'string' && allowed.has(value) ? (value as T) : undefined
-}
-
-/** An integer in `min`–`max`, accepting the text a number input sends. */
-function integer(value: unknown, min: number, max: number): number | undefined {
-  const numeric = typeof value === 'string' && value.trim().length > 0 ? Number(value) : value
-  return typeof numeric === 'number' && Number.isInteger(numeric) && numeric >= min && numeric <= max ? numeric : undefined
-}
-
-/** A list of non-empty trimmed strings; absent when nothing is left. */
-function stringList(value: unknown, limit = MAX_MATCH_LENGTH): readonly string[] | undefined {
-  if (!Array.isArray(value)) {
-    const single = clamped(value, limit)
-    return single === undefined ? undefined : [single]
-  }
-  const kept = value.flatMap((item) => {
-    const one = clamped(item, limit)
-    return one === undefined ? [] : [one]
-  })
-  return kept.length === 0 ? undefined : kept
-}
-
 /**
  * 把一条条件收成可信形状。
  *
  * 收窄放在这里而不是条件实现里：实现只该处理「形状已经对了」的情况，否则每个
  * 实现都要重复一遍同样的判断，而且判断标准会漂移。
  * @param input - 规则文件里的一条 `when` 元素。
- * @returns 条件，或 undefined（写歪了，由 `normalizeRule` 丢弃整条规则）。
+ * @returns 条件，或 undefined（写歪了，由内核丢弃整条规则）。
  */
 export function normalizeCondition(input: unknown): ConditionSpec | undefined {
   if (!isRecord(input)) return undefined
@@ -255,99 +199,43 @@ export function normalizeAction(input: unknown): ActionSpec | undefined {
 }
 
 /**
- * 由规则名派生一个稳定的 id。
+ * 预编译一遍正则条件。
  *
- * 中文名派生出来会只剩连字符，所以退化成 `rule-<位置>`：id 的作用是「在同一次
- * 会话里定位这一条」，不是好看。
- * @param name - 规则名。
- * @param index - 它在文件里的位置，用于兜底。
- * @returns 一个能进 URL 的 id。
+ * 放在加载期而不是运行期：一个写错的正则如果等到某封邮件真的到达才发现，用户
+ * 得到的是「这封邮件没被处理」，而不是「你的第三条规则正则写错了」。宁可整份
+ * 文件拒绝加载，也不要让一条规则静默失效。
+ * @param rules - 已归一化的规则。
+ * @returns 第一个不合法的正则，或 undefined。
  */
-function deriveId(name: string, index: number): string {
-  const slug = name
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '')
-    .slice(0, 40)
-  return slug === '' ? `rule-${String(index + 1)}` : slug
+function validateRegexes(rules: readonly Rule[]): { readonly message: string } | undefined {
+  for (const rule of rules) {
+    for (const condition of rule.when) {
+      if (condition.kind !== 'regex' || condition.pattern === undefined) continue
+      try {
+        new RegExp(condition.pattern, 'i')
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { message: `规则「${rule.name}」的正则写错了：${message}` }
+      }
+    }
+  }
+  return undefined
 }
 
-/** 一次归一化的结果：可用的规则，以及被丢弃的原因（给日志）。 */
-export interface NormalizedRules {
-  readonly rules: readonly Rule[]
-  /** 每条被丢弃的条目一句话，包含它在文件里的位置。 */
-  readonly dropped: readonly string[]
+/** 邮件这一侧的词表：内核拿它把文件里的条目收成条件与动作。 */
+export const MAIL_VOCABULARY: RuleVocabulary<ConditionSpec, ActionSpec> = {
+  normalizeCondition,
+  normalizeAction,
+  validate: validateRegexes,
 }
 
 /**
  * 把一份规则数组收成可信、可用、有序的规则表。
- *
- * `priority` 缺省按数组下标 × 10：文件的书写顺序就是优先级顺序，这是人唯一能
- * 从文件里直接读出来的顺序预期。
  * @param input - YAML 解析出来的顶层值。
  * @returns 排好序的规则与被丢弃的条目。
  */
-export function normalizeRules(input: unknown): NormalizedRules {
-  const dropped: string[] = []
-  if (!Array.isArray(input)) {
-    return { rules: [], dropped: ['规则文件的顶层必须是一个数组（每条规则一个元素）'] }
-  }
-  const rules: Rule[] = []
-  const usedIds = new Set<string>()
-  input.forEach((item, index) => {
-    const where = `第 ${String(index + 1)} 条`
-    if (!isRecord(item)) {
-      dropped.push(`${where}：不是一个对象`)
-      return
-    }
-    const name = clamped(item.name, MAX_NAME_LENGTH)
-    if (name === undefined) {
-      dropped.push(`${where}：缺少 name`)
-      return
-    }
-    if (!Array.isArray(item.when)) {
-      dropped.push(`${where}（${name}）：when 必须是数组（空数组表示匹配一切）`)
-      return
-    }
-    const when = item.when.map(normalizeCondition)
-    if (when.some(condition => condition === undefined)) {
-      dropped.push(`${where}（${name}）：when 里有写歪的条件，整条规则已跳过`)
-      return
-    }
-    if (!Array.isArray(item.then)) {
-      dropped.push(`${where}（${name}）：then 必须是数组`)
-      return
-    }
-    const then = item.then.map(normalizeAction)
-    if (then.some(action => action === undefined)) {
-      dropped.push(`${where}（${name}）：then 里有写歪的动作，整条规则已跳过`)
-      return
-    }
-    // 一个动作都不做的规则没有意义：它只会占位并挡住后面的规则。
-    if (then.length === 0) {
-      dropped.push(`${where}（${name}）：then 是空的，没有任何动作`)
-      return
-    }
-    let id = clamped(item.id, MAX_NAME_LENGTH) ?? deriveId(name, index)
-    if (usedIds.has(id)) {
-      dropped.push(`${where}（${name}）：id "${id}" 与前面重复，已改用位置派生`)
-      id = `${id}-${String(index + 1)}`
-    }
-    usedIds.add(id)
-    const label = clamped(item.label, MAX_NAME_LENGTH)
-    rules.push({
-      id,
-      name,
-      enabled: item.enabled === undefined ? true : item.enabled === true,
-      priority: integer(item.priority, 0, 1_000_000) ?? index * 10,
-      when: when as readonly ConditionSpec[],
-      ...(label === undefined ? {} : { label }),
-      then: then as readonly ActionSpec[],
-      ...(typeof item.stopOnMatch === 'boolean' ? { stopOnMatch: item.stopOnMatch } : {}),
-    })
-  })
-  rules.sort((left, right) => left.priority - right.priority)
-  return { rules, dropped }
+export function normalizeRules(input: unknown): { readonly rules: readonly Rule[]; readonly dropped: readonly string[] } {
+  return normalizeRuleList(input, MAIL_VOCABULARY)
 }
 
 /** 发货默认的仓库根目录；发货规则里的 `{repoRoot}` 就是它。 */
@@ -360,11 +248,7 @@ export const DEFAULT_REPO_ROOT = 'D:/open'
  * 抄的默认值，两份默认值一旦漂移就很难查。
  */
 export const DEFAULT_CONFIG: Config = {
-  enabled: true,
-  dryRun: false,
-  undoWindowSeconds: DEFAULT_UNDO_WINDOW_SECONDS,
-  runHistoryLimit: DEFAULT_RUN_HISTORY_LIMIT,
-  runRetentionDays: DEFAULT_RUN_RETENTION_DAYS,
+  ...DEFAULT_DECISION_CONFIG,
   repoRoot: DEFAULT_REPO_ROOT,
 }
 
@@ -374,17 +258,16 @@ export const DEFAULT_CONFIG: Config = {
  * 坏字段退回默认值而不是报错：这一行是用户手写的 YAML，写错一个数字该少一点
  * 功能，不该让插件起不来（与 `packages/mail/src/config.ts` 同一取舍）。
  * @param input - Loader 行给的配置。
- * @returns 三个数都在合法区间里的配置。
+ * @returns 五个判定层字段 + 这个插件自己的 `repoRoot`。
  */
 export function normalizeConfig(input: unknown): Config {
   const source = isRecord(input) ? input : {}
   return {
-    // `enabled` 缺省为真：装了插件却什么都不做，是更难查的「坏掉」。
-    enabled: source.enabled === undefined ? true : source.enabled === true,
-    dryRun: source.dryRun === true,
-    undoWindowSeconds: integer(source.undoWindowSeconds, 0, MAX_UNDO_WINDOW_SECONDS) ?? DEFAULT_UNDO_WINDOW_SECONDS,
-    runHistoryLimit: integer(source.runHistoryLimit, 1, MAX_RUN_HISTORY_LIMIT) ?? DEFAULT_RUN_HISTORY_LIMIT,
-    runRetentionDays: integer(source.runRetentionDays, 1, MAX_RUN_RETENTION_DAYS) ?? DEFAULT_RUN_RETENTION_DAYS,
+    ...normalizeDecisionConfig(source),
     repoRoot: clamped(source.repoRoot, MAX_NAME_LENGTH) ?? DEFAULT_REPO_ROOT,
   }
+}
+
+export {
+  DEFAULT_RUN_HISTORY_LIMIT, DEFAULT_RUN_RETENTION_DAYS, DEFAULT_UNDO_WINDOW_SECONDS,
 }

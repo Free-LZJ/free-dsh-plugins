@@ -11,6 +11,9 @@
 | `createRunStore` | 命中记录的仓：追加、按 id 取、改状态（撤销）、按「先天数后条数」裁剪；文件读坏了回落成空历史 |
 | `createPendingStore` | 待撤销队列：按到期时间排队、取消、到期取走；**只取 `undo`，`suggest` 永远等**（否则一条建议会在两分钟后自己执行） |
 | `ConditionRegistry` / `ActionRegistry` / `registerAll` | 按 `kind` 注册与取出。泛型参数是连接器填的（配置类型、上下文类型、结果类型），所以内核不认识任何一种具体条件或动作 |
+| `parseRuleFile` / `loadRuleFile` | 规则文件：YAML 解析、版本检查、两种顶层形态（裸数组 / `version` + `rules`）、整份文件级的额外校验（由连接器提供） |
+| `setRuleEnabled` / `setActionMode` / `swapPriority` | 保留注释的定向修改：改 `priority` 值而不是重排文件 |
+| `normalizeRules` / `normalizeDecisionConfig` | 结构归一化：顶层是不是数组、`name` 有没有、id 重不重复、`priority` 是不是整数；条件与动作的字段校验由连接器注入的 `RuleVocabulary` 决定 |
 | `writeTextFile` / `readJson` / `serialWriter` | 落盘：临时文件 + rename 的原子写；串行写链（按钮与轮询可能同时在写） |
 
 两份记录都只对**调度字段**有要求：命中记录要 `at`、队列要 `dueAt`/`kind`。事件本身、动作配置、重放需要的摘要都是连接器的字段，内核原样存取——所以抽包没有改动任何一份已有文件的形状。
@@ -23,5 +26,5 @@
 
 ## 已知限制
 
-- **还没有规则解析与编排**：`rules.ts` / `config.ts`（规则文件、kind 校验）与 `triage.ts`（判定流程）还在 `@free-lzj/dsh-mail`，按 P1a 的分片继续搬；注册表与队列已经在这里了。
+- **还没有编排**：`triage.ts`（判定流程：取正文 → 匹配 → 执行 → 记账）与通用动作（`session`/`http`/`mcp`/`script`/`notify`）还在 `@free-lzj/dsh-mail`，按 P1a 的分片继续搬。
 - **没有版本化迁移**：`runs.json` 的 `version: 1` 只增不减；形状变了靠连接器的 `parseEvent` 兼容旧记录，不写一次性迁移脚本。

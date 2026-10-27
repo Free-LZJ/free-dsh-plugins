@@ -8,7 +8,9 @@
  * @module @free-lzj/dsh-mail/triage/types
  */
 
-import type { PendingRecord as CorePending, Run as CoreRun } from '@free-lzj/dsh-decision'
+import type {
+  ActionMode, PendingRecord as CorePending, Rule as CoreRule, Run as CoreRun,
+} from '@free-lzj/dsh-decision'
 
 /* ───────────────────────── 对 mail 插件的结构依赖 ───────────────────────── */
 
@@ -144,7 +146,7 @@ export type ActionKind =
  * 定：IMAP 动作与开会话都可逆或有记录，所以 `auto`；跑脚本、调 MCP、发 HTTP
  * 不可撤销，所以默认 `suggest`。
  */
-export type ActionMode = 'auto' | 'suggest' | 'off'
+export type { ActionMode } from '@free-lzj/dsh-decision'
 
 /** 一个动作的配置。字段名是契约，`src/actions/*` 按名字读。 */
 export interface ActionSpec {
@@ -198,25 +200,11 @@ export interface ActionSpec {
 /**
  * 一条规则。
  *
- * 条件是**组间 AND、组内 OR**：`when` 数组里每个元素都要成立，元素内部的
- * `any` 任一命中即可。这与 mail 现有的过滤语义一致，也覆盖了真实需求
- * （「发件人是 GitHub 且 List-Id 属于这个仓库」）。
+ * 结构与优先级顺序归内核（`@free-lzj/dsh-decision`）；这里只把两个词表位置填成
+ * 邮件的条件配置与动作配置。
  */
-export interface Rule {
-  /** 稳定标识，用于命中记录与页面定位；缺省由 name 派生。 */
-  readonly id: string
-  readonly name: string
-  readonly enabled: boolean
-  /** 升序匹配，首条命中生效。缺省按数组下标 × 10。 */
-  readonly priority: number
-  /** 空数组 = 匹配一切（兜底规则）。 */
-  readonly when: readonly ConditionSpec[]
-  /** 命中后打的标签；缺省 = 规则名。 */
-  readonly label?: string
-  readonly then: readonly ActionSpec[]
-  /** 命中后是否停止后续匹配。默认 true。 */
-  readonly stopOnMatch?: boolean
-}
+export type Rule = CoreRule<ConditionSpec, ActionSpec>
+
 
 /* ──────────────────────────────── 命中记录 ─────────────────────────────── */
 
