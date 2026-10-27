@@ -1,44 +1,26 @@
 /**
- * 跑一个外部命令。
+ * 跑一个外部命令 —— 现在只是**内核实现的邮件适配**。
  *
- * 两条硬规则，都是为了让它不至于变成注入通道：
+ * 参数不过 shell、只替换投影里的值、退出码带输出、截断加省略号，全都在
+ * `@free-lzj/dsh-decision` 的 `runScript` 里。这里只剩投影与结果形状的转换。
  *
- * 1. **参数是数组，不经过 shell**。`args: ['-m', 'xyz']` 里的内容永远不会被当成
- *    命令解析，所以邮件正文里写 `; rm -rf /` 也没有东西去执行它。
- * 2. **邮件内容不进命令行**。占位符只在 `args` 里支持 `{subject}` 这类**头部字段**，
- *    不支持正文；真要把正文交给脚本，应当走「开会话」让 agent 判断。这条不是洁癖：
- *    脚本参数会出现在进程列表里，而正文是不可信内容。
- *
- * 默认三态是 `suggest`（见 `src/config.ts`），因为跑出去的命令收不回来。
+ * 默认三态是 `suggest`：跑出去的命令收不回来。
  *
  * @module @free-lzj/dsh-mail/triage/actions/script
  */
 
-import { fillTemplate } from '../repo.ts'
+import { fillArgs as fillArgsOf, runScript } from '@free-lzj/dsh-decision'
 import type { Action, ActionContext, ActionOutcome } from './context.ts'
-import { failure } from './context.ts'
-
-/** 输出截断：命中记录里只放摘要，完整输出没有存放它的地方。 */
-const OUTPUT_LIMIT = 500
-
 /**
- * 把头部字段填进参数里的占位符。
+ * 把投影里的值填进参数里的占位符。
+ *
+ * 保留这个导出是因为别处（规则页的预览）也想要同一个函数；实现只有内核那一份。
  * @param args - 规则里写的参数。
  * @param context - 动作上下文。
  * @returns 替换后的参数。
  */
 export function fillArgs(args: readonly string[], context: ActionContext): readonly string[] {
-  const { summary, rule } = context.task
-  const values = {
-    ...context.vars,
-    subject: summary.subject,
-    from: summary.from.address,
-    folder: summary.folder,
-    uid: String(summary.uid),
-    rule: rule.name,
-    account: context.task.accountName,
-  }
-  return args.map(arg => fillTemplate(arg, values))
+  return fillArgsOf(args, context.templateValues)
 }
 
 /** 脚本动作。 */
@@ -46,29 +28,17 @@ export const scriptAction: Action = {
   kind: 'script',
   sideEffect: true,
   async run(spec, context): Promise<ActionOutcome> {
-    const runner = context.subprocess
-    if (runner === undefined) return failure('未挂载子进程能力，无法执行脚本')
-    if (spec.command === undefined) return failure('这条 script 动作没有写 command')
-    const args = fillArgs(spec.args ?? [], context)
-    try {
-      const result = await runner.spawn({
-        command: spec.command,
-        args,
+    const outcome = await runScript(
+      {
+        ...(spec.command === undefined ? {} : { command: spec.command }),
+        ...(spec.args === undefined ? {} : { args: spec.args }),
         ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
-      })
-      if (result.code !== 0) {
-        return failure(`脚本退出码 ${String(result.code)}：${firstLine(result.stderr) || firstLine(result.stdout)}`)
-      }
-      const summary = firstLine(result.stdout)
-      return { ok: true, detail: summary === '' ? `${spec.command} 执行完成` : `${spec.command}：${summary}` }
-    } catch (error: unknown) {
-      return failure(`脚本执行失败：${error instanceof Error ? error.message : String(error)}`)
-    }
+      },
+      {
+        templateValues: context.templateValues,
+        ...(context.subprocess === undefined ? {} : { subprocess: context.subprocess }),
+      },
+    )
+    return outcome.ok ? { ok: true, detail: outcome.detail } : { ok: false, detail: outcome.message }
   },
-}
-
-/** 取输出的第一行并截断；空输出给空串。 */
-function firstLine(text: string): string {
-  const line = text.split('\n').map(part => part.trim()).find(part => part !== '') ?? ''
-  return line.length <= OUTPUT_LIMIT ? line : `${line.slice(0, OUTPUT_LIMIT)}…`
 }

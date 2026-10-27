@@ -35,14 +35,14 @@ function agent(sessionId = 'session-1') {
 
 describe('mailTemplateValues', () => {
   it('projects the values a template can use, and drops the empty ones', () => {
-    const values = mailTemplateValues({ summary: '限时优惠', accountName: '工作邮箱', ruleName: '推广' }, 'D:/open')
-    expect(values).toMatchObject({ summary: '限时优惠', account: '工作邮箱', rule: '推广', repo: 'D:/open' })
+    const values = mailTemplateValues({ summary: { subject: '限时优惠', from: { address: 'a@b.com' } }, accountName: '工作邮箱', ruleName: '推广' }, 'D:/open')
+    expect(values).toMatchObject({ subject: '限时优惠', account: '工作邮箱', rule: '推广', from: 'a@b.com', repo: 'D:/open' })
     // 没有正文就**不放这个键**：{body} 填充时本来就是空串，塞个空键只会让投影看起来有值。
     expect(values).not.toHaveProperty('body')
   })
 
   it('leaves the repo out when the machine names none', () => {
-    expect(mailTemplateValues({ summary: 'x', accountName: 'a', ruleName: 'r' }, '')).not.toHaveProperty('repo')
+    expect(mailTemplateValues({ summary: { subject: 'x' }, accountName: 'a', ruleName: 'r' }, '')).not.toHaveProperty('repo')
   })
 })
 

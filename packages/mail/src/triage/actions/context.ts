@@ -179,18 +179,26 @@ export function modeOf(spec: ActionSpec): ActionMode {
  * @returns 模板值。
  */
 export function mailTemplateValues(input: {
-  readonly summary: string
+  readonly summary: { readonly subject: string; readonly folder?: string; readonly uid?: number; readonly date?: string; readonly from?: { readonly address?: string; readonly name?: string } }
   readonly accountName: string
   readonly ruleName: string
-  readonly from?: string
   readonly body?: string
+  /** 机器上配的变量（`repoRoot`）；与信头同名的键以信头为准。 */
+  readonly vars?: Readonly<Record<string, string>>
 }, repoRoot: string): Readonly<Record<string, string>> {
+  const from = input.summary.from
   return {
-    summary: input.summary,
+    // 键名必须和**模板里写的**一致（`{subject}` 不是 `{summary}`）：这些名字是用户在
+    // `rules.yml` 里敲的，改键名等于改用户的规则。
+    subject: input.summary.subject,
     account: input.accountName,
     rule: input.ruleName,
-    ...(input.from === undefined ? {} : { from: input.from }),
+    ...(from?.address === undefined ? {} : { from: from.address, sender: from.name ?? from.address }),
+    ...(input.summary.folder === undefined ? {} : { folder: input.summary.folder }),
+    ...(input.summary.uid === undefined ? {} : { uid: String(input.summary.uid) }),
+    ...(input.summary.date === undefined ? {} : { date: input.summary.date }),
     ...(input.body === undefined ? {} : { body: input.body }),
     ...(repoRoot === '' ? {} : { repo: repoRoot }),
+    ...(input.vars ?? {}),
   }
 }

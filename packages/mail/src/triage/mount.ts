@@ -248,11 +248,12 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
       },
       vars: { repoRoot: config.repoRoot },
       templateValues: mailTemplateValues({
-        summary: input.summary.subject,
+        summary: input.summary,
         accountName: input.accountName,
         ruleName: input.ruleName,
-        from: input.summary.from.address,
+
         ...(input.body === undefined ? {} : { body: input.body }),
+        vars: { repoRoot: config.repoRoot },
       }, config.repoRoot),
       mail: deps.mail as NonNullable<ActionContext['mail']>,
       ...(sessions === undefined ? {} : { sessions }),

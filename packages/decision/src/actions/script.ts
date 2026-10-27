@@ -21,7 +21,9 @@ const OUTPUT_LIMIT = 500
 
 /** What a command run needs to report. */
 export interface SpawnResult {
-  readonly code: number
+  /** Exit code; 
+ull when the process died by a signal rather than exiting. */
+  readonly code: number | null
   readonly stdout: string
   readonly stderr: string
 }
