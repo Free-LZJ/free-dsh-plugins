@@ -22,7 +22,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { MailDetail, MailState, RouteResult } from './types.ts'
 import {
   ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
-  TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
+  TRIAGE_RULE_CONDITION_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
   TRIAGE_TEST_PATH, TRIAGE_UNDO_PATH,
 } from './paths.ts'
 import type { TriageResult, TriageRouteHost } from './triage/types.ts'
@@ -456,6 +456,16 @@ export function registerRoutes(ctx: Context, host: RouteHost): void {
       return await host.triage.setMode(ruleId, actionIndex, mode)
     })
 
+    mountTriageMutation(TRIAGE_RULE_CONDITION_PATH, 'condition', async (body) => {
+      const ruleId = textOf(body, 'ruleId')
+      const conditionIndex = intOf(body, 'conditionIndex')
+      const raw = (body ?? {}) as Record<string, unknown>
+      const values = Array.isArray(raw.values) ? raw.values.filter((value): value is string => typeof value === 'string') : []
+      if (ruleId === undefined || conditionIndex === undefined) {
+        return { ok: false, message: 'ruleId and conditionIndex are both required' }
+      }
+      return await host.triage.setCondition(ruleId, conditionIndex, values)
+    })
     mountTriageMutation(TRIAGE_RULE_PRIORITY_PATH, 'priority', async (body) => {
       const ruleId = textOf(body, 'ruleId')
       const direction = textOf(body, 'direction')

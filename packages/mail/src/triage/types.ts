@@ -352,6 +352,8 @@ export interface TriageRouteHost {
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
   /** 改一条规则里某个动作的三态。 */
   setMode(ruleId: string, actionIndex: number, mode: string): Promise<TriageResult>
+  /** 改一条规则里某个条件的匹配值列表（只改值，不改种类）。 */
+  setCondition(ruleId: string, conditionIndex: number, values: readonly string[]): Promise<TriageResult>
   /** 把一条规则上移或下移。 */
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
   /** 命中记录，`since` 之后的新记录（没有 `since` 时给最近一批）。 */

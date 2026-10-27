@@ -52,6 +52,7 @@ export const TRIAGE_RULE_ENABLED_PATH = `${TRIAGE_PREFIX}/rules/enabled`
 
 /** Route the panel changes one action's three-state mode through. */
 export const TRIAGE_RULE_MODE_PATH = `${TRIAGE_PREFIX}/rules/mode`
+export const TRIAGE_RULE_CONDITION_PATH = `${TRIAGE_PREFIX}/rules/condition`
 
 /** Route the panel moves one rule up or down through. */
 export const TRIAGE_RULE_PRIORITY_PATH = `${TRIAGE_PREFIX}/rules/priority`

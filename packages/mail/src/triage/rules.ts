@@ -8,13 +8,13 @@
  */
 
 import {
-  loadRuleFile, parseRuleFile, RULES_VERSION, setActionMode, setRuleEnabled, swapPriority,
+  loadRuleFile, parseRuleFile, RULES_VERSION, setActionMode, setConditionValues, setRuleEnabled, swapPriority,
   type EditResult, type LoadedRules, type RuleFileError,
 } from '@free-lzj/dsh-decision'
 import { MAIL_VOCABULARY } from './config.ts'
 import type { Rule } from './types.ts'
 
-export { RULES_VERSION, setActionMode, setRuleEnabled, swapPriority }
+export { RULES_VERSION, setActionMode, setConditionValues, setRuleEnabled, swapPriority }
 export type { EditResult, LoadedRules, RuleFileError }
 
 /**

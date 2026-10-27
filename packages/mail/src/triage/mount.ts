@@ -24,7 +24,7 @@ import { builtinConditions } from './conditions.ts'
 import { ActionRegistry, ConditionRegistry, registerAll, writeTextFile } from '@free-lzj/dsh-decision'
 import type { ActionOutcome } from './actions/index.ts'
 import type { MatchContext } from './conditions.ts'
-import { loadRules, setActionMode, setRuleEnabled, swapPriority } from './rules.ts'
+import { loadRules, setActionMode, setConditionValues, setRuleEnabled, swapPriority } from './rules.ts'
 import { createMailPendingStore, createMailRunStore } from './records.ts'
 import { applySuggestion } from './suggest.ts'
 import { runDue, labelUniverse, matches, triage, undoRun, type IncomingMail, type MatchState, type TriagePorts } from './triage.ts'
@@ -492,6 +492,8 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
     setEnabled: async (ruleId, enabled) => await editRules(raw => setRuleEnabled(raw, ruleId, enabled)),
     setMode: async (ruleId, actionIndex, mode) =>
       await editRules(raw => setActionMode(raw, ruleId, actionIndex, mode as ActionMode)),
+    setCondition: async (ruleId, conditionIndex, values) =>
+      await editRules(raw => setConditionValues(raw, ruleId, conditionIndex, values)),
     movePriority: async (ruleId, direction) => await editRules(raw => swapPriority(raw, ruleId, rules, direction)),
     runs: async since => {
       const all = runs.list()

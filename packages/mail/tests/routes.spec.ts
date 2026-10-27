@@ -17,7 +17,7 @@ import {
 } from '../src/routes.ts'
 import {
   ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
-  TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
+  TRIAGE_RULE_CONDITION_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
   TRIAGE_TEST_PATH, TRIAGE_UNDO_PATH,
 } from '../src/paths.ts'
 import type { MailState, RouteResult } from '../src/types.ts'
@@ -141,6 +141,7 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
       }),
       setEnabled: async () => ({ ok: true }),
       setMode: async () => ({ ok: true }),
+      setCondition: async () => ({ ok: true }),
       movePriority: async () => ({ ok: true }),
       runs: async () => ({ runs: [] }),
       undo: async () => ({ ok: true }),
@@ -210,13 +211,16 @@ describe('the registered routes', () => {
     const { routes } = mounted()
     for (const path of [
       PANEL_PATH, STATE_PATH, MESSAGE_PATH, ATTACHMENT_PATH, ACTION_PATH, CONFIG_PATH, REFRESH_PATH, MORE_PATH,
-      TRIAGE_RULES_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH,
+      TRIAGE_RULES_PATH, TRIAGE_RULE_CONDITION_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH,
+      TRIAGE_RULE_PRIORITY_PATH,
       TRIAGE_RUNS_PATH, TRIAGE_UNDO_PATH, TRIAGE_TEST_PATH,
     ]) {
       expect(routes.has(path)).toBe(true)
     }
-    expect(routes.size).toBe(15)
+    expect(routes.size).toBe(16)
   })
+
+
 
   it('runs an older page through the same mutation guards as a refresh', async () => {
     const run = vi.fn(async () => ({ ok: true, added: 30, exhausted: false }) as RouteResult)
