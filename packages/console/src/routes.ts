@@ -19,7 +19,8 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { ConsoleHost, ItemResult } from './console-host.ts'
-import type { ConsoleLayout, ConsoleState } from './protocol.ts'
+import type { ConsoleLayout, ConsoleState, ConsoleView } from './protocol.ts'
+import { isConsoleView } from './store.ts'
 import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from './paths.ts'
 
 /** Header a mutating request must carry, together with a JSON content type. */
@@ -41,6 +42,8 @@ export interface RouteHost {
   setChannels(channels: readonly string[]): Promise<void>
   /** Persist the view layout. */
   setLayout(layout: ConsoleLayout): Promise<void>
+  /** Persist the view the workbench is showing. */
+  setView(view: ConsoleView): Promise<void>
 }
 
 /** What reading a request body produced. */
@@ -275,6 +278,13 @@ function readItemCommand(value: unknown): ItemCommand {
  */
 function readConfigCommand(value: unknown): ConfigCommand {
   const body = (value ?? {}) as Record<string, unknown>
+  if (body.view !== undefined) {
+    const view = body.view
+    if (!isConsoleView(view)) {
+      return { ok: false, error: 'view must be board, rules, focus, connectors or apps' }
+    }
+    return { ok: true, apply: (host) => host.setView(view) }
+  }
   if (body.layout !== undefined) {
     const layout = body.layout
     if (layout !== 'grid' && layout !== 'list' && layout !== 'compact') {

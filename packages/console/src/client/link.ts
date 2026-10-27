@@ -13,7 +13,7 @@
 
 import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector'
 import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from '../paths.ts'
-import type { ConsoleLayout, ConsoleNoticeRecord, ConsoleState } from '../protocol.ts'
+import type { ConsoleLayout, ConsoleNoticeRecord, ConsoleState, ConsoleView } from '../protocol.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 
 /** Header a mutating request must carry; the Host refuses to write without it. */
@@ -32,6 +32,7 @@ export interface DeliveredNotice {
 export class ConsoleLink {
   private snapshot: ConsoleState | undefined
   private layout: ConsoleLayout = 'grid'
+  private view: ConsoleView = 'board'
   private locale = 'en'
   private readonly listeners = new Set<() => void>()
   private readonly noticeListeners = new Set<(notice: DeliveredNotice) => void>()
@@ -48,6 +49,26 @@ export class ConsoleLink {
   /** The layout the user saved, as far as this page knows it. */
   layoutPreference(): ConsoleLayout {
     return this.layout
+  }
+
+  /** The view the workbench is on, as far as this page knows it. */
+  viewPreference(): ConsoleView {
+    return this.snapshot?.currentView ?? this.view
+  }
+
+  /**
+   * Adopt a view locally before the Host confirms it, so a click repaints now.
+   *
+   * The layout's own selection is memory-only, so this document is the only
+   * place the page can learn "which view was I on" after a reload.
+   * @param view - the view the user picked.
+   */
+  setView(view: ConsoleView): void {
+    this.view = view
+    const current = this.snapshot
+    if (current !== undefined) this.snapshot = { ...current, currentView: view }
+    this.publish()
+    void this.configure({ view })
   }
 
   /**
@@ -136,6 +157,8 @@ export class ConsoleLink {
       const state = await response.json() as ConsoleState
       this.snapshot = state
       this.layout = state.layout
+      // 旧 Host 不会带这个字段：进程没重启时，宁可留住页面记着的那个视图，也不要变空。
+      this.view = state.currentView ?? this.view
       this.publish()
     } catch {
       // Offline or restarting: the stream's own retry covers it.
@@ -235,6 +258,7 @@ export class ConsoleLink {
         const state = JSON.parse((event as MessageEvent<string>).data) as ConsoleState
         this.snapshot = state
         this.layout = state.layout
+        this.view = state.currentView ?? this.view
         this.publish()
       } catch {
         // A truncated frame is a Host fault; keep the last good snapshot.

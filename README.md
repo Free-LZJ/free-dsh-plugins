@@ -156,7 +156,7 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 pnpm install
 pnpm run typecheck   # 每个包，两个半边一起
 pnpm run build       # tsc 出类型 + tsdown 出 lib/index.js（Node 半边）、lib/client.js（浏览器半边）
-pnpm run test        # vitest：56 个 spec 文件 / 838 个测试（含 1 个 Windows 跳过项）
+pnpm run test        # vitest：57 个 spec 文件 / 855 个测试（含 1 个 Windows 跳过项）
 ```
 
 先 `build` 再 `test`：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口没有向 Host 半边取值，以及 `console` 的契约产物仍是可被内联的普通模块），没有 `lib/` 时其中一条会显示为 skipped。

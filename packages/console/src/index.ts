@@ -200,6 +200,9 @@ export function apply(ctx: Context, config: Config): void {
     setLayout: async (layout) => {
       host.applyConfig(layout)
     },
+    setView: async (view) => {
+      await host.setView(view)
+    },
   }
 
   registerRoutes(ctx, routeHost)

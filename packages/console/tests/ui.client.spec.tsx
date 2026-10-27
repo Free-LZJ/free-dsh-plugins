@@ -1,22 +1,27 @@
 // @vitest-environment jsdom
 /**
- * The home list: what it is built from, and how the user meets it.
+ * The workbench shell: what the pages are built from, and how the user meets them.
  *
- * The list is the join of two facts owned by different halves — the panels a
- * browser half adopted, and the pin list the Host stored. Both rules that have
- * no other guard live here: **only adopted panels ever appear** (the workbench
- * shows the plugins that joined it, not everything the profile loaded), and the
- * user must not be able to switch every notification channel off.
+ * The pages are the join of two facts owned by different halves — the panels a
+ * browser half adopted, and the pin list the Host stored — plus the view the user
+ * is on. The rules that have no other guard live here: **only adopted panels ever
+ * appear** (the workbench shows the plugins that joined it, not everything the
+ * profile loaded), the user must not be able to switch every notification
+ * channel off, and a view that cannot be reached says why instead of doing
+ * nothing.
  *
  * @module @free-lzj/dsh-console/tests/ui
  */
 
+import { useSyncExternalStore } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ChannelInfo, ConsoleLogEntry, ConsoleNoticeRecord, RunningSession } from '../src/protocol.ts'
-import { ConsoleShell, filterPanels, mergeNotices } from '../src/client/shell.tsx'
+import type {
+  ChannelInfo, ConsoleLogEntry, ConsoleNoticeRecord, ConsoleView, RunningSession,
+} from '../src/protocol.ts'
+import { ConsoleShell, mergeNotices } from '../src/client/shell.tsx'
 import { ConsoleSettingsRow } from '../src/client/settings-row.tsx'
-import { PanelRegistry, panelRows, type PanelRow } from '../src/client/registry.ts'
+import { PanelRegistry, filterPanels, panelRows, type PanelRow } from '../src/client/registry.ts'
 import type { ConsolePanelDescriptor } from '../src/client/contract.ts'
 import { zh, type Translate } from '../src/client/locales.ts'
 
@@ -96,17 +101,51 @@ function row(id: string, title: string, extra: Partial<PanelRow> = {}): PanelRow
   return { id, title, order: 10, pinned: false, ...extra }
 }
 
+/**
+ * A tiny store standing in for the Host-backed view preference.
+ *
+ * The real `useView` subscribes to the page's link; a fake getter would freeze
+ * the page after a click, and "click 应用, see the directory" is exactly what
+ * these tests are here to check.
+ * @param initial - the view the page opens on.
+ * @returns the snapshot reader, the writer, and the subscription.
+ */
+function viewStore(initial: ConsoleView) {
+  let value = initial
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => value,
+    subscribe: (fn: () => void): (() => void) => {
+      listeners.add(fn)
+      return () => {
+        listeners.delete(fn)
+      }
+    },
+    set: (next: ConsoleView): void => {
+      value = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
 /** The shell's injected face, recording what it was asked to do. */
 function shellFace(
   rows: readonly PanelRow[],
   notices: readonly ConsoleNoticeRecord[] = [],
   running: readonly RunningSession[] = [],
   logEntries: readonly ConsoleLogEntry[] = [],
-  /** 让「打开」失败，用来验证失败会被说出来。 */
-  openOutcome: { readonly ok: boolean; readonly message?: string } = { ok: true },
+  options: {
+    /** 让「打开」失败，用来验证失败会被说出来。 */
+    readonly openOutcome?: { readonly ok: boolean; readonly message?: string }
+    /** 让「切视图」失败，同上。 */
+    readonly navigateOutcome?: { readonly ok: boolean; readonly message?: string }
+    /** 页面打开时所在的视图。 */
+    readonly view?: ConsoleView
+  } = {},
 ) {
   const calls = {
     open: [] as string[],
+    nav: [] as string[],
     pin: [] as string[],
     layout: [] as string[],
     cleared: 0,
@@ -114,17 +153,26 @@ function shellFace(
     acted: [] as string[],
     dismissed: [] as string[],
   }
+  const views = viewStore(options.view ?? 'board')
+  const openOutcome = options.openOutcome ?? { ok: true }
   return {
     calls,
     face: {
       t,
       useRows: <S,>(select: (all: readonly PanelRow[]) => S) => select(rows),
       useNotices: <S,>(select: (all: readonly ConsoleNoticeRecord[]) => S) => select(notices),
+      useView: <S,>(select: (view: ConsoleView) => S) => select(useSyncExternalStore(views.subscribe, views.getSnapshot)),
       // 「待处理」由 Host 算；这些用例里就是状态为 new 的条数。
       awaiting: () => notices.filter(notice => notice.state === 'new').length,
       running: () => running,
       log: () => logEntries,
       layout: () => 'grid' as const,
+      navigate: (view: ConsoleView) => {
+        calls.nav.push(view)
+        const outcome = options.navigateOutcome ?? { ok: true }
+        if (outcome.ok) views.set(view)
+        return outcome
+      },
       open: (panel: PanelRow) => {
         calls.open.push(panel.id)
         // 这几条用例走的是「打得开」的路；打不开的那条在下面单独测。
@@ -144,6 +192,11 @@ function shellFace(
       liveNotices: () => [],
     },
   }
+}
+
+/** Switch the page to 应用, where the panel directory lives. */
+function openApps(): void {
+  fireEvent.click(screen.getByRole('button', { name: t('viewApps') }))
 }
 
 describe('what the list is built from', () => {
@@ -193,17 +246,58 @@ describe('what the list is built from', () => {
   })
 })
 
-describe('the home list on screen', () => {
-  it('draws every row', () => {
+describe('the workbench on screen', () => {
+  it('draws the five views and marks the current one', () => {
+    const { face } = shellFace([])
+    render(<ConsoleShell {...face} />)
+    for (const key of ['viewBoard', 'viewRules', 'viewFocus', 'viewConnectors', 'viewApps'] as const) {
+      expect(screen.getByRole('button', { name: t(key) })).toBeTruthy()
+    }
+    expect(screen.getByRole('button', { name: t('viewBoard') }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('button', { name: t('viewRules') }).getAttribute('aria-current')).toBeNull()
+  })
+
+  it('draws the panels only in the apps view', () => {
     const { face } = shellFace([row('mail', '邮件'), row('notes', '笔记')])
     render(<ConsoleShell {...face} />)
-    expect(screen.getByText('邮件')).toBeTruthy()
-    expect(screen.getByText('笔记')).toBeTruthy()
+    // 看板是第一屏：面板目录降级成第四个视图，不再抢首屏。
+    expect(screen.queryByRole('button', { name: '邮件' })).toBeNull()
+    openApps()
+    expect(screen.getByRole('button', { name: '邮件' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '笔记' })).toBeTruthy()
+  })
+
+  it('goes to the focus page through the layout, not by drawing it in place', () => {
+    // 决策 Q1：聚焦是**第二个 main panel**，所以点它必须是一次 selectPanel。
+    const { face, calls } = shellFace([row('mail', '邮件')])
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('viewFocus') }))
+    expect(calls.nav).toEqual(['focus'])
+  })
+
+  it('says why a view could not be reached', () => {
+    // 同面板打开的老坑：`selectPanel` 会抛，吞掉就只剩「点了没反应」。
+    const { face } = shellFace([], [], [], [], {
+      navigateOutcome: { ok: false, message: 'layout.selectPanel: main panel "console-focus" is not registered' },
+    })
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('viewFocus') }))
+    expect(screen.getByText(new RegExp(t('viewFailed')))).toBeTruthy()
+    expect(screen.getByText(/is not registered/)).toBeTruthy()
+  })
+
+  it('draws the rules placeholder with its reason instead of fake buttons', () => {
+    const { face } = shellFace([row('mail', '邮件')])
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('viewRules') }))
+    expect(screen.getByText(t('rulesHint'))).toBeTruthy()
+    expect(screen.getByText(t('rulesLater'))).toBeTruthy()
   })
 
   it('opens the row the user clicked', () => {
     const { face, calls } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
+    openApps()
     fireEvent.click(screen.getByRole('button', { name: '邮件' }))
     expect(calls.open).toEqual(['mail'])
   })
@@ -214,9 +308,10 @@ describe('the home list on screen', () => {
     const { face } = shellFace(
       [row('mail', '邮件分诊')],
       [], [], [],
-      { ok: false, message: 'layout.selectPanel: main panel "mail" is not registered' },
+      { openOutcome: { ok: false, message: 'layout.selectPanel: main panel "mail" is not registered' } },
     )
     render(<ConsoleShell {...face} />)
+    openApps()
     fireEvent.click(screen.getByRole('button', { name: '邮件分诊' }))
 
     expect(screen.getByText(new RegExp(t('openFailed')))).toBeTruthy()
@@ -226,6 +321,7 @@ describe('the home list on screen', () => {
   it('narrows to the search term and restores the list when it is cleared', () => {
     const { face } = shellFace([row('mail', '邮件'), row('notes', '笔记')])
     render(<ConsoleShell {...face} />)
+    openApps()
     const search = screen.getByRole('searchbox', { name: t('search') })
     fireEvent.change(search, { target: { value: '笔记' } })
     expect(screen.queryByText('邮件')).toBeNull()
@@ -237,6 +333,7 @@ describe('the home list on screen', () => {
   it('asks for the layout the user picked', () => {
     const { face, calls } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
+    openApps()
     fireEvent.click(screen.getByRole('tab', { name: t('layoutList') }))
     expect(calls.layout).toEqual(['list'])
   })
@@ -244,6 +341,7 @@ describe('the home list on screen', () => {
   it('pins a row from its action menu, without opening it', () => {
     const { face, calls } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
+    openApps()
     fireEvent.click(screen.getByRole('button', { name: t('cardActions') }))
     fireEvent.click(screen.getByRole('menuitem', { name: t('pin') }))
     expect(calls.pin).toEqual(['mail'])
@@ -253,6 +351,7 @@ describe('the home list on screen', () => {
   it('explains an empty list rather than showing nothing', () => {
     const { face } = shellFace([])
     render(<ConsoleShell {...face} />)
+    openApps()
     expect(screen.getByText(new RegExp(t('listEmpty')))).toBeTruthy()
   })
 
@@ -305,7 +404,7 @@ describe('the home list on screen', () => {
     const { face } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
     expect(screen.getByText(t('attentionClear'))).toBeTruthy()
-    expect(screen.getByText(t('panelsHeading'))).toBeTruthy()
+    expect(screen.getByText(t('attentionEmpty'))).toBeTruthy()
   })
 
   it('draws an item\'s actions and hands the click back by id', async () => {

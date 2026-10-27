@@ -1,16 +1,19 @@
 /**
- * The workbench shell: everything that is *not* a plugin panel.
+ * The workbench shell: header, view navigation, and whichever view is current.
  *
- * Two seats, one module. As `main:console` it draws the home list — header,
- * search, layout control, notice centre, the chosen layout. As the sidebar row
- * it draws only the glyph; the shell forwards its click to `selectPanel`
- * itself, so the row the shell already renders opens the workbench like any
- * other panel and no second navigation path exists.
+ * Two pages, one module. As `main:console` it hosts 看板 / 规则 / 连接器 / 应用 and
+ * draws the plugin directory as the last of them; as `main:console-focus` it
+ * draws the focus page. Both pages wear the same header and the same five-item
+ * navigation, reading the current view from the same stored preference, so
+ * moving between them does not flip a strip that is supposed to be stable.
  *
- * The header mirrors the conversation page's top bar — same geometry, same
- * `--dsw-alias-border-l3` rule — and every control in it is a shared primitive,
- * so the workbench sits in the shell's visual language rather than beside it
- * (`rules/plugin-ui.md`).
+ * The navigation is embedded in the page rather than reached through the
+ * sidebar: the sidebar opens the workbench once, and from there the views are
+ * pages, not panels. 聚焦 is the exception — it is a real second main panel, so
+ * selecting it is `ctx.layout.selectPanel`, which **throws** for a key the layout
+ * does not consider registered. A click that fails silently reads as "the app is
+ * broken", so the reason is shown under the navigation (the same treatment the
+ * panel directory already gives its failures).
  *
  * @module @free-lzj/dsh-console/client/shell
  */
@@ -18,16 +21,25 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Button, IconSearchOutlineRegular, Input, MenuSurface, SegmentedControl, Tag,
-  useAnchoredPosition, useDismissOnOutsidePointer,
+  Button, MenuSurface, Tag, useAnchoredPosition, useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ConsoleLayout, ConsoleLogEntry, ConsoleNoticeRecord, RunningSession } from '../protocol.ts'
-import { LAYOUTS, LAYOUT_ORDER, type HomeListProps } from './home.tsx'
+import type {
+  ConsoleLayout, ConsoleLogEntry, ConsoleNoticeRecord, ConsoleView, RunningSession,
+} from '../protocol.ts'
+import type { PanelRow } from './registry.ts'
+import { FocusPage } from './focus.tsx'
+import { ViewNav } from './nav.tsx'
+import { AppsView, ConnectorsView, RulesView } from './views.tsx'
+import { BoardView, WorkbenchUnavailable, type WorkbenchFace } from './workbench/board.tsx'
 import { AttentionQueue } from './attention.tsx'
 import type { Translate } from './locales.ts'
-import type { PanelRow } from './registry.ts'
 import { CLS } from './styles.ts'
-import { WorkbenchSection, type WorkbenchFace } from './workbench/board.tsx'
+
+/** What opening one panel produced: success, or a reason worth showing. */
+export interface PanelOutcome {
+  readonly ok: boolean
+  readonly message?: string
+}
 
 /** Everything the shell reads and calls, injected by the plugin's `apply`. */
 export interface ShellInjected {
@@ -49,13 +61,29 @@ export interface ShellInjected {
   /** The layout the user saved on the Host. */
   readonly layout: () => ConsoleLayout
   /**
+   * Selector hook over the view the workbench is on.
+   *
+   * A hook rather than a getter because picking a view repaints the page: the
+   * stored value is the only thing that moved, and no other subscription here
+   * would see it.
+   */
+  readonly useView: <S>(select: (view: ConsoleView) => S, equal?: (a: S, b: S) => boolean) => S
+  /**
+   * Go to one view.
+   *
+   * Returns an outcome rather than nothing: reaching 聚焦 goes through the
+   * layout's `selectPanel`, which throws for a key it does not consider
+   * registered, and a click that fails silently is worse than one that fails
+   * loudly.
+   */
+  readonly navigate: (view: ConsoleView) => PanelOutcome
+  /**
    * Open one panel.
    *
-   * Returns an outcome rather than nothing: opening goes through the layout's
-   * `selectPanel`, which **throws** for a key it does not consider registered, and a
-   * click that fails silently is worse than one that fails loudly.
+   * Same contract as {@link navigate}: opening goes through `selectPanel`, which
+   * throws for a key it does not consider registered.
    */
-  readonly open: (panel: PanelRow) => { readonly ok: boolean; readonly message?: string }
+  readonly open: (panel: PanelRow) => PanelOutcome
   /** Pin or unpin one row. */
   readonly togglePin: (panel: PanelRow) => void
   /** Save the chosen layout. */
@@ -81,7 +109,7 @@ export interface ShellInjected {
 }
 
 /**
- * Props of the `main:console` seat.
+ * Props of a workbench page seat.
  *
  * Declared as what the shell *reads* rather than as the framework's whole
  * composed seat: a component taking a subset of the props is the documented
@@ -100,78 +128,137 @@ export type ConsoleShellProps = { readonly t: Translate } & ShellInjected
 const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
 
 /**
- * Draw the workbench home.
+ * Draw the workbench page: the view the user is on, under the shared chrome.
  * @param props - the framework seat plus the injected face.
  * @returns the shell.
  */
 export function ConsoleShell(props: ConsoleShellProps): ReactNode {
-  const { t, useRows, useNotices, awaiting, running, log, layout, open, togglePin, setLayout, clearNotices, actOnItem, dismissItem, liveNotices, workbench } = props
-  const rows = useRows((all) => all)
-  const stored = useNotices((all) => all)
-  const [query, setQuery] = useState('')
-  /** 上一次「打开面板」失败的原因；空串表示没有。 */
-  const [openError, setOpenError] = useState('')
-  const current = layout()
-  const Layout = LAYOUTS[current]
-  const notices = mergeNotices(stored, liveNotices())
-  const homeProps: HomeListProps = {
-    panels: filterPanels(rows, query),
-    t,
-    // 打开失败要说出来：静默的失败让人以为是「这个插件坏了」，而真正的原因
-    // （这个面板没在 `main` 槽里生效）是能修的。
-    onOpen: (panel) => {
-      const outcome = open(panel)
-      setOpenError(outcome.ok ? '' : (outcome.message ?? t('openFailed')))
-    },
-    onTogglePin: togglePin,
-    emptyTitle: rows.length === 0 ? t('listEmpty') : t('searchEmpty'),
-    emptyHint: rows.length === 0 ? t('listEmptyHint') : t('searchEmptyHint'),
+  const { t, useView, navigate, workbench } = props
+  const current = useView((view) => view)
+  const rows = props.useRows((all) => all)
+  const notices = mergeNotices(props.useNotices((all) => all), props.liveNotices())
+  /** 上一次导航或打开失败的原因；空串表示没有。 */
+  const [failure, setFailure] = useState('')
+  /** 把一句失败原因显示出来：空串表示没事了。 */
+  const report = (label: string, detail: string | undefined): void => {
+    setFailure(detail === undefined ? label : `${label}：${detail}`)
+  }
+  const go = (next: ConsoleView): void => {
+    const outcome = navigate(next)
+    if (outcome.ok) setFailure('')
+    else report(t('viewFailed'), outcome.message)
+  }
+  // 布局不持久化：刷新后落回对话页，再进来时按存下的视图补一次跳转，否则「聚焦」
+  // 会永远停在看板。只在挂载时对一次——之后的切换由导航自己负责。
+  useEffect(() => {
+    if (current !== 'focus') return
+    const outcome = navigate('focus')
+    if (!outcome.ok) report(t('viewFailed'), outcome.message)
+    // 只跑一次：`current` 是挂载那一刻的值，正是要恢复的那个。
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className={CLS.root}>
+      <WorkbenchTop {...props} notices={notices} current={current} onSelect={go} />
+      <div className={CLS.body}>
+        {failure === '' ? null : <p className={CLS.openError} role="status">{failure}</p>}
+        {current === 'board' && (
+          <>
+            {/*
+              注意力队列排在看板上方：它是「现在要你决定的事」里不能变成卡片的那一半
+              （插件的 notice 与条目）。看板的三列回答的是另一半。
+            */}
+            <AttentionQueue
+              t={t}
+              notices={notices}
+              running={props.running}
+              log={props.log}
+              actOnItem={props.actOnItem}
+              dismissItem={props.dismissItem}
+            />
+            {workbench === undefined ? <WorkbenchUnavailable t={t} /> : <BoardView face={workbench} t={t} />}
+          </>
+        )}
+        {current === 'rules' && <RulesView t={t} face={workbench} />}
+        {current === 'connectors' && (workbench === undefined
+          ? <WorkbenchUnavailable t={t} />
+          : <ConnectorsView face={workbench} t={t} />)}
+        {current === 'apps' && (
+          <AppsView
+            t={t}
+            panels={rows}
+            layout={props.layout()}
+            onOpen={(panel) => {
+              const outcome = props.open(panel)
+              if (outcome.ok) setFailure('')
+              else report(t('openFailed'), outcome.message)
+            }}
+            onTogglePin={props.togglePin}
+            setLayout={props.setLayout}
+          />
+        )}
+        {current === 'focus' && <p className={CLS.viewMeta}>{t('viewFocusSwitched')}</p>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Draw the focus page under the same chrome.
+ * @param props - the framework seat plus the injected face.
+ * @returns the focus page.
+ */
+export function FocusShell(props: ConsoleShellProps): ReactNode {
+  const { t, useView, navigate } = props
+  const current = useView((view) => view)
+  const notices = mergeNotices(props.useNotices((all) => all), props.liveNotices())
+  const [failure, setFailure] = useState('')
+  const go = (next: ConsoleView): void => {
+    const outcome = navigate(next)
+    setFailure(outcome.ok ? '' : (outcome.message === undefined ? t('viewFailed') : `${t('viewFailed')}：${outcome.message}`))
   }
   return (
     <div className={CLS.root}>
+      <WorkbenchTop {...props} notices={notices} current={current} onSelect={go} />
+      <div className={CLS.body}>
+        {failure === '' ? null : <p className={CLS.openError} role="status">{failure}</p>}
+        <FocusPage t={t} running={props.running} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The header and the view navigation both pages wear.
+ *
+ * One component rather than two copies: the design brief asks for the two pages
+ * to look and behave identically here, and two copies drift the first time one
+ * of them is edited.
+ * @param props - the translate seat, the notices, the current view, and the actions.
+ * @returns the header and the navigation.
+ */
+function WorkbenchTop(props: ConsoleShellProps & {
+  readonly notices: readonly ConsoleNoticeRecord[]
+  readonly current: ConsoleView
+  readonly onSelect: (view: ConsoleView) => void
+}): ReactNode {
+  return (
+    <>
       <header className={CLS.header}>
-        <h1 className={CLS.title}>{t('title')}</h1>
+        <h1 className={CLS.title}>{props.t('title')}</h1>
         <div className={CLS.tools}>
-          <Input
-            className={CLS.search}
-            type="search"
-            icon={<IconSearchOutlineRegular />}
-            value={query}
-            placeholder={t('search')}
-            aria-label={t('search')}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <SegmentedControl
-            id="dsh-console-layout"
-            value={current}
-            label={t('layout')}
-            options={LAYOUT_ORDER.map((name) => ({
-              value: name,
-              label: t(name === 'grid' ? 'layoutGrid' : name === 'list' ? 'layoutList' : 'layoutCompact'),
-            }))}
-            onChange={(next: ConsoleLayout) => setLayout(next)}
-          />
           <NoticeButton
-            t={t}
-            notices={notices}
-            awaiting={awaiting()}
-            onClear={clearNotices}
-            actOnItem={actOnItem}
-            dismissItem={dismissItem}
+            t={props.t}
+            notices={props.notices}
+            awaiting={props.awaiting()}
+            onClear={props.clearNotices}
+            actOnItem={props.actOnItem}
+            dismissItem={props.dismissItem}
           />
         </div>
       </header>
-      <div className={CLS.body}>
-        {openError === '' ? null : (
-          <p className={CLS.openError} role="status">{t('openFailed')}：{openError}</p>
-        )}
-        {/* 注意力队列排在最上面：首页要回答的是「现在需要我决定什么」，插件目录是手段。 */}
-        <AttentionQueue t={t} notices={notices} running={running} log={log} actOnItem={actOnItem} dismissItem={dismissItem} />
-        {workbench !== undefined && <WorkbenchSection face={workbench} t={t} />}
-        <h2 className={CLS.attentionSubheading}>{t('panelsHeading')}</h2>
-        <Layout {...homeProps} />
-      </div>
-    </div>
+      <ViewNav current={props.current} t={props.t} onSelect={props.onSelect} />
+    </>
   )
 }
 
@@ -320,21 +407,6 @@ function toneClass(tone: ConsoleNoticeRecord['tone']): string {
   if (tone === 'warn') return CLS.noticeWarn
   if (tone === 'error') return CLS.noticeError
   return ''
-}
-
-/**
- * The rows the home list draws, filtered by the search box.
- * @param panels - every row.
- * @param query - the search text.
- * @returns the matching rows, order preserved.
- */
-export function filterPanels(panels: readonly PanelRow[], query: string): readonly PanelRow[] {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return panels
-  return panels.filter((panel) => [panel.title, panel.description ?? '', ...(panel.keywords ?? [])]
-    .join(' ')
-    .toLowerCase()
-    .includes(needle))
 }
 
 /**

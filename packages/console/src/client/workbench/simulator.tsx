@@ -1,19 +1,18 @@
 /**
- * The event simulator and the board's meta lists, browser half.
+ * The event simulator, browser half.
  *
  * The simulator is the webhook entrance in miniature: it posts an event to
  * the ingest route and shows the classification and routing the Host
  * answered with, so the whole classify → route → card → dispatch chain is
- * drivable from the page without any outside system. The meta lists state
- * the board's connectors and routing version, including which connectors are
- * placeholders that send no real request.
+ * drivable from the page without any outside system. It lives in the
+ * connectors view and is labelled as a debug tool there (decision Q7), not on
+ * the board.
  *
  * @module @free-lzj/dsh-console/client/workbench/simulator
  */
 
 import { useState, type ReactNode } from 'react'
-import { Button, Input, SegmentedControl, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { WorkbenchState } from '../../protocol.ts'
+import { Button, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from '../locales.ts'
 import { CLS } from '../styles.ts'
 import type { WorkbenchFace } from './board.tsx'
@@ -35,7 +34,6 @@ export function WorkbenchSimulator(props: { face: WorkbenchFace; t: Translate })
 
   return (
     <div className={CLS.wbSim}>
-      <h3 className={CLS.wbSubtitle}>{t('simTitle')}</h3>
       <div className={CLS.wbRow}>
         <SegmentedControl
           id="dsh-console-sim-source"
@@ -83,41 +81,6 @@ export function WorkbenchSimulator(props: { face: WorkbenchFace; t: Translate })
             : t('simError', { error: typeof answer.error === 'string' ? answer.error : t('simUnknownError') })}
         </p>
       )}
-    </div>
-  )
-}
-
-/**
- * Draw the connector list and the routing version.
- * @param props - the board state and the translate seat.
- * @returns the meta lists.
- */
-export function WorkbenchMeta(props: { state: WorkbenchState; t: Translate }): ReactNode {
-  const { state, t } = props
-  return (
-    <div className={CLS.wbMeta}>
-      <h3 className={CLS.wbSubtitle}>{t('connectorsTitle')}</h3>
-      <ul className={CLS.wbMetaList}>
-        {state.connectors.map((connector) => (
-          <li key={connector.id} className={CLS.wbMetaItem}>
-            <span>{connector.label}</span>
-            {' '}
-            <Tag>{connector.directions.join('+')}</Tag>
-            {' '}
-            <Tag>{connector.enabled ? t('connectorEnabled') : t('connectorDisabled')}</Tag>
-            {!connector.implemented && (
-              <>
-                {' '}
-                <Tag>{t('connectorPlaceholder')}</Tag>
-              </>
-            )}
-            {connector.note !== undefined && <span className={CLS.wbMetaNote}>{connector.note}</span>}
-          </li>
-        ))}
-      </ul>
-      <p className={CLS.wbMetaNote}>
-        {t('routingVersion', { version: state.routingVersion })}
-      </p>
     </div>
   )
 }

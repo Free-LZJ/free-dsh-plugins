@@ -29,17 +29,23 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: the sidebar's `sidebar.panellist` declaration.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { CONSOLE_PANEL_ID, type ConsoleLayout, type ConsoleNoticeRecord, type WorkbenchState } from '../protocol.ts'
+import {
+  CONSOLE_FOCUS_PANEL_ID, CONSOLE_PANEL_ID, type ConsoleLayout, type ConsoleNoticeRecord, type ConsoleView,
+  type WorkbenchState,
+} from '../protocol.ts'
 import type { ConsoleClientService } from './contract.ts'
 import { bindSelector, link } from './link.ts'
 import { WorkbenchLink } from './workbench/link.ts'
 import type { WorkbenchFace } from './workbench/board.tsx'
 import { PanelRegistry, panelRows, type PanelRow } from './registry.ts'
-import { ConsoleIcon, ConsoleShell } from './shell.tsx'
+import { ConsoleIcon, ConsoleShell, FocusShell, type ConsoleShellProps } from './shell.tsx'
 import { ConsoleSettingsRow } from './settings-row.tsx'
 import { createPageFace, desktopBlockedReason } from './surfaces.ts'
 import { installConsoleStyles } from './styles.ts'
 import { en, zh, type ConsoleLocaleKey } from './locales.ts'
+
+/** The workbench's two main panels, as the seat that speaks. */
+type ConsoleSeat = 'console' | 'console-focus'
 
 export type { ConsoleClientService, ConsolePanelDescriptor, StandalonePanelOptions } from './contract.ts'
 export { CONSOLE_SERVICE, consoleService } from './contract.ts'
@@ -132,6 +138,11 @@ export function apply(ctx: ClientContext): void {
     subscribe: (fn: () => void) => link.subscribe(fn),
   }
   const useNotices = bindSelector<readonly ConsoleNoticeRecord[]>(notices)
+  const views = {
+    getSnapshot: (): ConsoleView => link.viewPreference(),
+    subscribe: (fn: () => void) => link.subscribe(fn),
+  }
+  const useView = bindSelector<ConsoleView>(views)
 
   ctx.provide('console', {
     register: (descriptor) => registry.register(descriptor),
@@ -166,76 +177,122 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'console: workbench link')
 
+  /**
+   * 打开一个面板。
+   *
+   * 为什么不是一行 `selectPanel`：那个调用**会抛**（`layout.selectPanel: main panel "x"
+   * is not registered`），而这里原来把抛吞掉了——于是「点进去什么也没有」，用户看到的
+   * 是空白，看不到原因。
+   *
+   * 补注册要小心：`main` 是**键控**槽，同键同优先级再注册会直接抛
+   * （`keyed slot "main" already has an entry for key "x" at priority 0`）。所以先看
+   * 这条键在不在注册表里——在，就说明问题不是「没注册」，补一次只会制造错误；不在，
+   * 才按**更低的优先级**（`priority` 越低越先渲染）补一次，这样即便还有一条僵尸条目
+   * 也能盖住它。
+   * @param panel - 被打开的那一行。
+   * @returns 成功，或者一句能显示给人看的原因。
+   */
+  const openPanel = (panel: PanelRow): { readonly ok: boolean; readonly message?: string } => {
+    const select = (): boolean => {
+      try {
+        ctx.layout.selectPanel(panel.id as Parameters<typeof ctx.layout.selectPanel>[0])
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (select()) return { ok: true }
+    const descriptor = registry.get(panel.id)?.descriptor
+    if (descriptor === undefined) {
+      return { ok: false, message: `「${panel.title}」没有注册到 main 槽，工作台手里也没有它的渲染器` }
+    }
+    const slots = ctx.slots as unknown as {
+      entries?: (name: string) => readonly { options?: { key?: string } }[]
+    }
+    const present = (slots.entries?.('main') ?? [])
+      .some(entry => entry.options?.key === panel.id)
+    if (present) {
+      return { ok: false, message: `「${panel.title}」在 main 槽里，但布局不肯显示它（selectPanel 被拒）` }
+    }
+    try {
+      ctx.slots.register(
+        { name: 'main', key: panel.id, locale: NS, priority: -1 } as never,
+        descriptor.render as never,
+      )
+    } catch (error: unknown) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
+    return select() ? { ok: true } : { ok: false, message: `补注册「${panel.title}」之后仍然打不开` }
+  }
+
+  /**
+   * 切到一个视图。
+   *
+   * 四个视图住在 `main:console` 里，切换只是改自己记着的那个值；**聚焦**是第二个
+   * main panel，所以那一次切换是 `selectPanel`——它会抛，抛了就把原因交回去显示，
+   * 而不是把异常吞掉（§4.1 里那两条实现注意）。
+   * @param seat - 发起这次切换的页面。
+   * @param view - 目标视图。
+   * @returns 成功，或者一句能显示给人看的原因。
+   */
+  const navigate = (seat: ConsoleSeat, view: ConsoleView): { readonly ok: boolean; readonly message?: string } => {
+    const target = view === 'focus' ? CONSOLE_FOCUS_PANEL_ID : CONSOLE_PANEL_ID
+    if (target !== seat) {
+      try {
+        ctx.layout.selectPanel(target as Parameters<typeof ctx.layout.selectPanel>[0])
+      } catch (error: unknown) {
+        return { ok: false, message: error instanceof Error ? error.message : String(error) }
+      }
+    }
+    // 切换之后再记：丢进 prefs 的必须是真正到得了的那个视图。
+    link.setView(view)
+    return { ok: true }
+  }
+
+  /**
+   * 一个页面的注入面。两个 main panel 共用同一份：状态条、通知、面板目录都不该
+   * 因为换了一页而换一套数据。
+   * @param seat - 这个页面自己是谁。
+   * @returns 槽位要传给组件的 props。
+   */
+  const seatProps = (seat: ConsoleSeat): ConsoleShellProps => ({
+    t,
+    useRows,
+    useNotices,
+    awaiting: () => link.getSnapshot()?.awaiting ?? 0,
+    running: () => link.getSnapshot()?.running ?? [],
+    log: () => link.getSnapshot()?.log ?? [],
+    layout: () => link.layoutPreference(),
+    useView,
+    navigate: (view: ConsoleView) => navigate(seat, view),
+    open: openPanel,
+    togglePin: (panel: PanelRow) => link.setPinned(panel.id, !panel.pinned),
+    setLayout: (layout: ConsoleLayout) => link.setLayout(layout),
+    clearNotices: () => {
+      liveNotices = []
+      void link.clearNotices()
+    },
+    actOnItem: (id: string, actionId: string) => link.actOnItem({ op: 'act', id, actionId }),
+    dismissItem: (id: string) => link.actOnItem({ op: 'dismiss', id }),
+    liveNotices: () => liveNotices,
+    workbench: workbenchFace,
+  })
+
   ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main',
     key: CONSOLE_PANEL_ID,
     locale: NS,
-    inject: () => ({
-      useRows,
-      useNotices,
-      awaiting: () => link.getSnapshot()?.awaiting ?? 0,
-      running: () => link.getSnapshot()?.running ?? [],
-      log: () => link.getSnapshot()?.log ?? [],
-      layout: () => link.layoutPreference(),
-      /**
-       * 打开一个面板。
-       *
-       * 为什么不是一行 `selectPanel`：那个调用**会抛**（`layout.selectPanel: main panel "x"
-       * is not registered`），而这里原来把抛吞掉了——于是「点进去什么也没有」，用户看到的
-       * 是空白，看不到原因。
-       *
-       * 补注册要小心：`main` 是**键控**槽，同键同优先级再注册会直接抛
-       * （`keyed slot "main" already has an entry for key "x" at priority 0`）。所以先看
-       * 这条键在不在注册表里——在，就说明问题不是「没注册」，补一次只会制造错误；不在，
-       * 才按**更低的优先级**（`priority` 越低越先渲染）补一次，这样即便还有一条僵尸条目
-       * 也能盖住它。
-       * @param panel - 被打开的那一行。
-       * @returns 成功，或者一句能显示给人看的原因。
-       */
-      open: (panel: PanelRow) => {
-        const select = (): boolean => {
-          try {
-            ctx.layout.selectPanel(panel.id as Parameters<typeof ctx.layout.selectPanel>[0])
-            return true
-          } catch {
-            return false
-          }
-        }
-        if (select()) return { ok: true }
-        const descriptor = registry.get(panel.id)?.descriptor
-        if (descriptor === undefined) {
-          return { ok: false, message: `「${panel.title}」没有注册到 main 槽，工作台手里也没有它的渲染器` }
-        }
-        const slots = ctx.slots as unknown as {
-          entries?: (name: string) => readonly { options?: { key?: string } }[]
-        }
-        const present = (slots.entries?.('main') ?? [])
-          .some(entry => entry.options?.key === panel.id)
-        if (present) {
-          return { ok: false, message: `「${panel.title}」在 main 槽里，但布局不肯显示它（selectPanel 被拒）` }
-        }
-        try {
-          ctx.slots.register(
-            { name: 'main', key: panel.id, locale: NS, priority: -1 } as never,
-            descriptor.render as never,
-          )
-        } catch (error: unknown) {
-          return { ok: false, message: error instanceof Error ? error.message : String(error) }
-        }
-        return select() ? { ok: true } : { ok: false, message: `补注册「${panel.title}」之后仍然打不开` }
-      },
-      togglePin: (panel: PanelRow) => link.setPinned(panel.id, !panel.pinned),
-      setLayout: (layout: ConsoleLayout) => link.setLayout(layout),
-      clearNotices: () => {
-        liveNotices = []
-        void link.clearNotices()
-      },
-      actOnItem: (id: string, actionId: string) => link.actOnItem({ op: 'act', id, actionId }),
-      dismissItem: (id: string) => link.actOnItem({ op: 'dismiss', id }),
-      liveNotices: () => liveNotices,
-      workbench: workbenchFace,
-    }),
-  }, ConsoleShell)), 'console: home list')
+    inject: () => seatProps('console'),
+  }, ConsoleShell)), 'console: workbench page')
+
+  // 聚焦页是**第二个** main panel（决策 Q1）：导航点「聚焦」时是真正的页面切换，
+  // 两个页面各自持自己的内容。
+  ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
+    name: 'main',
+    key: CONSOLE_FOCUS_PANEL_ID,
+    locale: NS,
+    inject: () => seatProps('console-focus'),
+  }, FocusShell)), 'console: focus page')
 
   ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',

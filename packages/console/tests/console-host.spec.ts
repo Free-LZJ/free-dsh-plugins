@@ -55,6 +55,8 @@ describe('the Host state', () => {
       awaiting: 0,
       availableChannels: [],
       layout: 'grid',
+      // 布局的选择是内存状态，所以「上次停在哪一页」由这里记着。
+      currentView: 'board',
       pinned: [],
       // 没接会话服务时首页只是少一块，不是坏掉。
       running: [],
@@ -150,5 +152,24 @@ describe('preferences on disk', () => {
     await host.setPinned('mail', true)
     const raw = JSON.parse(await readFile(join(root, STATE_DIR, 'prefs.json'), 'utf8')) as unknown
     expect(raw).toEqual({ pinned: ['mail'] })
+  })
+
+  it('remembers the view across a restart', async () => {
+    // 布局不持久化（刷新落回对话页），所以「上次停在哪」只能记在这里，否则聚焦页永远打不开。
+    const root = await home()
+    await bench(root).setView('focus')
+
+    const second = bench(root)
+    await second.ready
+    expect(second.state().currentView).toBe('focus')
+  })
+
+  it('drops a view a newer build wrote, instead of showing no page at all', async () => {
+    const root = await home()
+    await mkdir(join(root, STATE_DIR), { recursive: true })
+    await writeFile(join(root, STATE_DIR, 'prefs.json'), JSON.stringify({ pinned: [], currentView: 'timeline' }), 'utf8')
+    const host = bench(root)
+    await host.ready
+    expect(host.state().currentView).toBe('board')
   })
 })

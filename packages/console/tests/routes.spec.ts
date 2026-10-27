@@ -72,6 +72,7 @@ const STATE: ConsoleState = {
   awaiting: 0,
   availableChannels: [{ id: 'desktop', enabled: true }, { id: 'inapp', enabled: true }],
   layout: 'grid',
+  currentView: 'board',
   pinned: [],
   running: [],
   log: [],
@@ -82,7 +83,7 @@ const STATE: ConsoleState = {
 interface Bench {
   routes: Map<string, Handler>
   written: unknown[]
-  saved: { layout: string[]; channels: unknown[]; pinned: unknown[]; cleared: number }
+  saved: { layout: string[]; view: string[]; channels: unknown[]; pinned: unknown[]; cleared: number }
   host: RouteHost
   detach: () => void
 }
@@ -94,7 +95,7 @@ interface Bench {
 function bench(): Bench {
   const routes = new Map<string, Handler>()
   const written: unknown[] = []
-  const saved = { layout: [] as string[], channels: [] as unknown[], pinned: [] as unknown[], cleared: 0 }
+  const saved = { layout: [] as string[], view: [] as string[], channels: [] as unknown[], pinned: [] as unknown[], cleared: 0 }
   const openGates: (() => void)[] = []
   const detach = (): void => {
     for (const close of openGates.splice(0)) close()
@@ -118,6 +119,10 @@ function bench(): Bench {
     },
     setLayout: (layout) => {
       saved.layout.push(layout)
+      return Promise.resolve()
+    },
+    setView: (view) => {
+      saved.view.push(view)
       return Promise.resolve()
     },
   }
@@ -194,7 +199,7 @@ describe('console routes', () => {
     expect(res.headers.allow).toBe('POST')
   })
 
-  it('saves a layout, a channel set, a pin and a clear', async () => {
+  it('saves a layout, a view, a channel set, a pin and a clear', async () => {
     const route = bench()
     const write = (body: unknown): Promise<RecordedResponse> => call(route, request({
       url: CONFIG_PATH,
@@ -203,16 +208,18 @@ describe('console routes', () => {
       body: JSON.stringify(body),
     }))
     expect((await write({ layout: 'compact' })).status).toBe(200)
+    expect((await write({ view: 'focus' })).status).toBe(200)
     expect((await write({ channels: ['inapp'] })).status).toBe(200)
     expect((await write({ pinned: { id: 'mail', pinned: true } })).status).toBe(200)
     expect((await write({ notices: 'clear' })).status).toBe(200)
     expect(route.saved.layout).toEqual(['compact'])
+    expect(route.saved.view).toEqual(['focus'])
     expect(route.saved.channels).toEqual([['inapp']])
     expect(route.saved.pinned).toEqual([{ id: 'mail', pinned: true }])
     expect(route.saved.cleared).toBe(1)
   })
 
-  it('refuses an empty channel set and an unknown layout', async () => {
+  it('refuses an empty channel set, an unknown layout and an unknown view', async () => {
     const route = bench()
     const write = (body: unknown): Promise<RecordedResponse> => call(route, request({
       url: CONFIG_PATH,
@@ -222,8 +229,11 @@ describe('console routes', () => {
     }))
     expect((await write({ channels: [] })).status).toBe(400)
     expect((await write({ layout: 'fancy' })).status).toBe(400)
+    // 一个更新的版本也许有别的视图，但这个构建没有——宁可拒绝，也不要存下一个没人认得的页。
+    expect((await write({ view: 'timeline' })).status).toBe(400)
     expect((await write({ nothing: true })).status).toBe(400)
     expect(route.saved.layout).toEqual([])
+    expect(route.saved.view).toEqual([])
   })
 
   it('answers a malformed body instead of throwing into the server', async () => {

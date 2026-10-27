@@ -98,6 +98,21 @@ export class PanelRegistry implements ObservableSnapshot<readonly RegisteredPane
 }
 
 /**
+ * The rows matching a search term.
+ * @param panels - every row.
+ * @param query - the search text.
+ * @returns the matching rows, order preserved.
+ */
+export function filterPanels(panels: readonly PanelRow[], query: string): readonly PanelRow[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return panels
+  return panels.filter((panel) => [panel.title, panel.description ?? '', ...(panel.keywords ?? [])]
+    .join(' ')
+    .toLowerCase()
+    .includes(needle))
+}
+
+/**
  * Turn the adopted panels plus the stored pin list into home-list rows.
  *
  * Pinned rows sort first, then declaration order, then title.

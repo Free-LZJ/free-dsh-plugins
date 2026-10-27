@@ -1,5 +1,6 @@
 /**
- * The one user preference this package keeps: which panels are pinned.
+ * The user preferences this package keeps: the pinned panel list and the view
+ * the workbench was last showing.
  *
  * Written as a tiny JSON document below `$DSH_HOME`, for the same reason the
  * mail package keeps its own state file: a whole storage domain would buy a
@@ -13,6 +14,7 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { CONSOLE_VIEWS, type ConsoleView } from './protocol.ts'
 
 /** The directory below `$DSH_HOME` these files live in. */
 export const STATE_DIR = 'dsh-console'
@@ -21,6 +23,13 @@ export const STATE_DIR = 'dsh-console'
 export interface ConsolePrefs {
   /** Panel ids the user pinned, in the order they were pinned. */
   pinned: string[]
+  /**
+   * The view the workbench was last showing.
+   *
+   * Absent until the user first navigates; the reader falls back to the default
+   * view, so an older document (and a fresh profile) both stay valid.
+   */
+  currentView?: ConsoleView
 }
 
 /** An empty document: what a missing or unreadable file resolves to. */
@@ -62,15 +71,30 @@ export async function writePrefs(home: string, prefs: ConsolePrefs): Promise<voi
 }
 
 /**
- * Keep only the string array, dropping anything a hand-edited file put in.
+ * Whether a hand-edited value names a view this build knows.
+ *
+ * A view id from a newer version is dropped rather than trusted: the reader has
+ * no page to show for it, and the default view is the only safe answer.
+ * @param value - the candidate.
+ * @returns true when it is one of {@link CONSOLE_VIEWS}.
+ */
+export function isConsoleView(value: unknown): value is ConsoleView {
+  return typeof value === 'string' && CONSOLE_VIEWS.includes(value as ConsoleView)
+}
+
+/**
+ * Keep only the fields this module can trust, dropping anything a hand-edited
+ * file put in.
  * @param value - the parsed document.
  * @returns the document this module can trust.
  */
 function normalize(value: unknown): ConsolePrefs {
-  const candidate = ((value ?? {}) as Record<string, unknown>).pinned
+  const document = (value ?? {}) as Record<string, unknown>
+  const candidate = document.pinned
   return {
     pinned: Array.isArray(candidate)
       ? candidate.filter((item): item is string => typeof item === 'string')
       : [],
+    ...(isConsoleView(document.currentView) ? { currentView: document.currentView } : {}),
   }
 }

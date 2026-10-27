@@ -30,7 +30,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import { PresenceGate } from './builtin-channels.ts'
 import { ChannelRegistry, type NoticeDelivery } from './channels.ts'
 import type {
-  ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, NoticeTone,
+  ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, ConsoleView, NoticeTone,
   RunningSession, WorkbenchEvent,
 } from './protocol.ts'
 import { emptyPrefs, readPrefs, writePrefs, type ConsolePrefs } from './store.ts'
@@ -47,6 +47,9 @@ export const NOTICE_LIMIT = 50
  * the work (the mail plugin keeps its own run history).
  */
 export const LOG_LIMIT = 100
+
+/** The view a profile that never navigated opens on. */
+export const DEFAULT_VIEW: ConsoleView = 'board'
 
 /**
  * What a plugin does when the user picks one of its item's actions.
@@ -425,6 +428,7 @@ export class ConsoleHost extends Service {
       awaiting: this.awaiting(),
       availableChannels: this.channelInfos(),
       layout: this.layout,
+      currentView: this.prefs.currentView ?? DEFAULT_VIEW,
       pinned: this.prefs.pinned,
       running: this.running,
       log: this.logEntries,
@@ -455,6 +459,16 @@ export class ConsoleHost extends Service {
     const next = this.prefs.pinned.filter((entry) => entry !== id)
     if (pinned) next.push(id)
     await this.save({ ...this.prefs, pinned: next })
+  }
+
+  /**
+   * Remember the view the user is on, so a reload reopens it.
+   * @param view - the view to restore next time.
+   */
+  async setView(view: ConsoleView): Promise<void> {
+    await this.ready
+    if ((this.prefs.currentView ?? DEFAULT_VIEW) === view) return
+    await this.save({ ...this.prefs, currentView: view })
   }
 
   /**

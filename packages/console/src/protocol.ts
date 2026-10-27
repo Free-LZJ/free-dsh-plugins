@@ -106,8 +106,21 @@ export interface RunningSession {
   readonly cwd?: string
 }
 
-/** Per-user view preferences the workbench persists on the Host. */
+/** Per-user layout preference for the plugin directory. */
 export type ConsoleLayout = 'grid' | 'list' | 'compact'
+
+/**
+ * One of the five views the workbench navigation switches between.
+ *
+ * Four are pages inside `main:console`; `focus` is its own main panel
+ * ({@link CONSOLE_FOCUS_PANEL_ID}), because in DSH's terms a page is one keyed
+ * entry in the `main` slot — so reaching it is a `layout.selectPanel` call, not
+ * a state flip.
+ */
+export type ConsoleView = 'board' | 'rules' | 'focus' | 'connectors' | 'apps'
+
+/** The five views, in navigation order. */
+export const CONSOLE_VIEWS: readonly ConsoleView[] = ['board', 'rules', 'focus', 'connectors', 'apps']
 
 /**
  * One thing an automation did on its own.
@@ -148,6 +161,14 @@ export interface ConsoleState {
   readonly availableChannels: readonly ChannelInfo[]
   /** The view the user last saved. */
   readonly layout: ConsoleLayout
+  /**
+   * The view the workbench was last showing.
+   *
+   * The layout's own selection is memory-only (`ui-layout` persists nothing), so a
+   * reload lands back on the conversation; this is what the workbench reads to
+   * reopen the page the user left.
+   */
+  readonly currentView: ConsoleView
   /** Panel ids the user pinned, in the order they were pinned. */
   readonly pinned: readonly string[]
   /**
@@ -171,6 +192,15 @@ export const CONSOLE_SERVICE = 'console'
 
 /** Main-panel key (and sidebar entry id) the workbench shell occupies. */
 export const CONSOLE_PANEL_ID = 'console'
+
+/**
+ * Main-panel key of the focus page — the workbench's second page.
+ *
+ * A separate keyed entry rather than a state inside `console`, so switching to
+ * it is a real page navigation (`ctx.layout.selectPanel`) and the two pages each
+ * own their content, exactly as the design brief asked (decision Q1).
+ */
+export const CONSOLE_FOCUS_PANEL_ID = 'console-focus'
 
 /**
  * The workbench board's vocabulary: what crosses the wire between its two
