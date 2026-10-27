@@ -19,6 +19,11 @@ import {
 /** Homes created by one test, removed afterwards. */
 const homes: string[] = []
 
+/** 等一个 mtime 刻度，让下一次写真的看起来是新的。 */
+async function settle(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 15))
+}
+
 afterEach(async () => {
   for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true })
 })
@@ -117,6 +122,7 @@ describe('RoutingTableStore', () => {
     const store = new RoutingTableStore(path, defaultRoutingTable(), () => {})
     expect((await store.current()).version).toBe('v2')
     await writeFile(path, JSON.stringify({ version: 'v3', rules: [] }))
+    await settle()
     expect((await store.current()).version).toBe('v3')
   })
 
@@ -127,11 +133,15 @@ describe('RoutingTableStore', () => {
     const warned: string[] = []
     const store = new RoutingTableStore(path, defaultRoutingTable(), (line) => warned.push(line))
     expect((await store.current()).version).toBe('v2')
+    // 文件监听按 mtime 判断「有没有变」，而两次写入可能落在同一毫秒里——那样这次修改就是
+    // 不可见的。等一小会儿，让 mtime 真的前进（这是测试的时序，不是产品行为）。
     await writeFile(path, '{ not json')
+    await settle()
     expect((await store.current()).version).toBe('v2')
     expect((await store.current()).version).toBe('v2')
     expect(warned).toHaveLength(1)
     await writeFile(path, JSON.stringify({ version: 'v3', rules: [] }))
+    await settle()
     expect((await store.current()).version).toBe('v3')
   })
 })
