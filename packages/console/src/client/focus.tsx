@@ -29,6 +29,13 @@ import { CLS } from './styles.ts'
 export function FocusPage(props: {
   readonly t: Translate
   readonly running: () => readonly RunningSession[]
+  /**
+   * 会话 id → 它有一条**还没处理**的条目。
+   *
+   * 这不是「在跑」，而是「在等你」——两者在页面上必须分开：一条会话在跑但等你确认，与
+   * 它自己空转，需要的动作完全不同。数据来自工作台已有的条目，不依赖宿主暴露会话状态。
+   */
+  readonly waitingOn: (sessionId: string) => boolean
 }): ReactNode {
   const { t } = props
   const sessions = props.running()
@@ -56,8 +63,17 @@ export function FocusPage(props: {
                   )}
                 </div>
                 <span className={CLS.focusState}>
-                  <StateDot state="ongoing" />
-                  <Tag tone="info">{t('statusRunning')}</Tag>
+                  {props.waitingOn(session.sessionId) ? (
+                    <>
+                      <StateDot state="ongoing" />
+                      <Tag tone="quiet">{t('focusWaiting')}</Tag>
+                    </>
+                  ) : (
+                    <>
+                      <StateDot state="ongoing" />
+                      <Tag tone="info">{t('statusRunning')}</Tag>
+                    </>
+                  )}
                 </span>
               </li>
             ))}

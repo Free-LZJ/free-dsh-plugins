@@ -225,7 +225,11 @@ export function FocusShell(props: ConsoleShellProps): ReactNode {
       <WorkbenchTop {...props} notices={notices} current={current} onSelect={go} />
       <div className={CLS.body}>
         {failure === '' ? null : <p className={CLS.openError} role="status">{failure}</p>}
-        <FocusPage t={t} running={props.running} />
+        <FocusPage
+          t={t}
+          running={props.running}
+          waitingOn={sessionId => notices.some(notice => notice.state === 'new' && notice.sessionId === sessionId)}
+        />
       </div>
     </div>
   )
