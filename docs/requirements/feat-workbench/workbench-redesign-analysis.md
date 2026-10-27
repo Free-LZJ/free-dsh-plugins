@@ -510,6 +510,12 @@ ctx.uiWorkspace.openSession(target: SessionTarget): void
 2. 动作真正需要的是**模板值**，不是「事件」本身——`notify` 要标题与摘要、`http` 要一段 JSON、`session` 要仓库与发件人。把这些压成 `EventPayload` 会丢掉每个来源特有的字段，最后还是要一层投影。
 3. 内核保持 `TEvent` 泛型只需要一个注入点；出问题时排查范围小。
 
+**`http` / `session` 的额外约定（搬这两个动作时发现）**：这两个动作的载荷/参数是**连接器形状**的——`http` 发的是邮件元数据 JSON（`from`、`headers`、`folder`、`uid`），`session` 要仓库与权限预设。按 §10.5 的方案 B，它们不向内核投降：
+
+- 内核的 `runHttp` 只收「URL/method + 一个**已经拼好的**载荷」，载荷由连接器给；
+- 内核的 `runSession` 只收「标题、prompt、目标仓库与预设」，同样是连接器给的平表；
+- 判断标准一致：**内核不认识邮件的字段名**，只做投递与错误折叠。
+
 实施顺序（留给下一轮或接手的人）：先给内核的 `ActionContext` 加 `templateValues`（连接器注入），再逐个把动作搬进内核（`notify` → `mcp` → `script` → `session` → `http`，从简单到复杂），每搬一个都保留原有测试，最后把邮件的 `triage/triage.ts` 编排也搬过去。
 
 ---
