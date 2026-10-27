@@ -23,11 +23,13 @@
 
 import { randomUUID } from 'node:crypto'
 import type { ActionContext } from './actions/context.ts'
-import type { ClassifyRequest, ClassifyResult } from './conditions.ts'
-import type { ActionRegistry, ConditionRegistry } from './registry.ts'
-import type { PendingStore } from './pending.ts'
-import type { RunStore } from '@free-lzj/dsh-decision'
-import type { Config, MailSummaryLike, Rule, Run, RunAction, RunStatus } from './types.ts'
+import type { ActionOutcome } from './actions/index.ts'
+import type { ClassifyRequest, ClassifyResult, MatchContext } from './conditions.ts'
+import type { ActionRegistry, ConditionRegistry, PendingStore, RunStore } from '@free-lzj/dsh-decision'
+import type {
+  ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, PendingAction, Rule, Run,
+  RunAction, RunStatus,
+} from './types.ts'
 
 /** 一封刚到的邮件。 */
 export interface IncomingMail {
@@ -42,10 +44,10 @@ export interface IncomingMail {
 export interface TriagePorts {
   readonly rules: () => readonly Rule[]
   readonly config: () => Config
-  readonly conditions: ConditionRegistry
-  readonly actions: ActionRegistry
+  readonly conditions: ConditionRegistry<ConditionSpec, MatchContext, ConditionKind>
+  readonly actions: ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>
   readonly runs: RunStore<Run['event']>
-  readonly pending: PendingStore
+  readonly pending: PendingStore<PendingAction>
   /** 造一个动作上下文（含 mail / sessions / console 等端口与 `vars`）。 */
   readonly context: (input: {
     readonly mail: IncomingMail

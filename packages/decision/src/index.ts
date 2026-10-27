@@ -8,5 +8,7 @@
  * @module @free-lzj/dsh-decision
  */
 
+export * from './pending.ts'
+export * from './registry.ts'
 export * from './runs.ts'
 export * from './store.ts'

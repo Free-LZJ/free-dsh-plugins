@@ -8,16 +8,15 @@
  * @module @free-lzj/dsh-mail/triage/suggest
  */
 
-import type { ActionRegistry } from './registry.ts'
-import type { PendingStore } from './pending.ts'
-import type { RunStore } from '@free-lzj/dsh-decision'
-import type { Run } from './types.ts'
+import type { ActionRegistry, PendingStore, RunStore } from '@free-lzj/dsh-decision'
+import type { ActionContext, ActionOutcome } from './actions/index.ts'
+import type { ActionKind, ActionSpec, PendingAction, Run } from './types.ts'
 import type { TriagePorts } from './triage.ts'
 
 /** 处理一次建议点击需要的东西。 */
 export interface SuggestDeps {
-  readonly pending: PendingStore
-  readonly actions: ActionRegistry
+  readonly pending: PendingStore<PendingAction>
+  readonly actions: ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>
   readonly runs: RunStore<Run['event']>
   readonly ports: TriagePorts
 }

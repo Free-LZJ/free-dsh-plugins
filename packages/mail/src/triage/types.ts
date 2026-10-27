@@ -8,7 +8,7 @@
  * @module @free-lzj/dsh-mail/triage/types
  */
 
-import type { Run as CoreRun } from '@free-lzj/dsh-decision'
+import type { PendingRecord as CorePending, Run as CoreRun } from '@free-lzj/dsh-decision'
 
 /* ───────────────────────── 对 mail 插件的结构依赖 ───────────────────────── */
 
@@ -243,10 +243,8 @@ export type { RunAction, RunStatus } from '@free-lzj/dsh-decision'
 
 
 /** 排着队等撤销窗口过去的动作。 */
-export interface PendingAction {
-  readonly id: string
+export interface PendingAction extends CorePending {
   readonly runId: string
-  readonly dueAt: string
   readonly action: ActionSpec
   readonly ruleId: string
   /**

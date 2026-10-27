@@ -11,6 +11,7 @@
  * @module @free-lzj/dsh-mail/triage/conditions
  */
 
+import type { Condition as CoreCondition } from '@free-lzj/dsh-decision'
 import type { ConditionKind, ConditionSpec, MailSummaryLike } from './types.ts'
 
 /**
@@ -58,30 +59,7 @@ export interface ClassifyResult {
  *
  * `needsBody` 与 `async` 不是元数据装饰，而是编排层的取数依据：声明了才付代价。
  */
-export interface Condition {
-  readonly kind: ConditionKind
-  /** 这个条件**总是**需要正文；编排层据此决定要不要 FETCH。 */
-  readonly needsBody: boolean
-  /**
-   * 这个条件要不要正文取决于它的配置。
-   *
-   * 只有 `regex` 用得上：`field: body` 要读正文，`field: subject` 不读。声明在 spec 上
-   * 而不是在实现上，是因为「读不读」是**每条规则**的决定，而不是每种条件的决定——
-   * 如果一个正则条件永远要求正文，那些只看主题的规则就要为每封邮件多付一次 FETCH。
-   * @param spec - 已收窄的条件配置。
-   * @returns 这条配置需要正文时为 true。
-   */
-  needsBodyFor?(spec: ConditionSpec): boolean
-  /** 这个条件会异步（只有 `classifier` 会）。 */
-  readonly async?: boolean
-  /**
-   * 判断是否命中。
-   * @param spec - 已经过 `normalizeCondition` 收窄的条件。
-   * @param context - 这封邮件能提供的一切。
-   * @returns 命中为 true。
-   */
-  test(spec: ConditionSpec, context: MatchContext): boolean | Promise<boolean>
-}
+export type Condition = CoreCondition<ConditionSpec, MatchContext, ConditionKind>
 
 /* ─────────────────────────────── 具体实现 ─────────────────────────────── */
 

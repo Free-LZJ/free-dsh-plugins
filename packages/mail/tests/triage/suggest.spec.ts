@@ -9,15 +9,14 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { builtinActions, type ActionContext } from '../../src/triage/actions/index.ts'
-import { builtinConditions } from '../../src/triage/conditions.ts'
-import { ActionRegistry, ConditionRegistry, registerAll } from '../../src/triage/registry.ts'
-import { createPendingStore } from '../../src/triage/pending.ts'
-import { createRunStore } from '@free-lzj/dsh-decision'
+import { builtinActions, type ActionContext, type ActionOutcome } from '../../src/triage/actions/index.ts'
+import { builtinConditions, type MatchContext } from '../../src/triage/conditions.ts'
+import { ActionRegistry, ConditionRegistry, registerAll } from '@free-lzj/dsh-decision'
+import { createMailPendingStore, createMailRunStore } from '../../src/triage/records.ts'
 import { normalizeConfig } from '../../src/triage/config.ts'
 import { applySuggestion } from '../../src/triage/suggest.ts'
 import type { TriagePorts } from '../../src/triage/triage.ts'
-import type { MailEvent, MailSummaryLike, Rule } from '../../src/triage/types.ts'
+import type { ActionKind, ActionSpec, ConditionKind, ConditionSpec, MailSummaryLike, Rule } from '../../src/triage/types.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,15 +43,12 @@ function summary(): MailSummaryLike {
 async function bench(options: { readonly actionFails?: boolean } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'mail-triage-suggest-'))
   const calls: string[] = []
-  const actions = new ActionRegistry()
+  const actions = new ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>()
   registerAll(actions, builtinActions())
-  const conditions = new ConditionRegistry()
+  const conditions = new ConditionRegistry<ConditionSpec, MatchContext, ConditionKind>()
   registerAll(conditions, builtinConditions())
-  const pending = createPendingStore({ path: join(home, 'pending.json') })
-  const runs = createRunStore<MailEvent>({
-    path: join(home, 'runs.json'),
-    parseEvent: (record) => record['event'] as MailEvent | undefined,
-  })
+  const pending = createMailPendingStore(join(home, 'pending.json'))
+  const runs = createMailRunStore(join(home, 'runs.json'))
 
   const context = (): ActionContext => ({
     task: {
@@ -166,7 +162,7 @@ describe('applySuggestion', () => {
     const b = await bench()
     await queueSuggestion(b, 'item-4')
     // 把动作注册表里的 move 拿掉，模拟一个更旧的部署。
-    const stripped = new ActionRegistry()
+    const stripped = new ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>()
     registerAll(stripped, builtinActions().filter(action => action.kind !== 'move'))
 
     await expect(

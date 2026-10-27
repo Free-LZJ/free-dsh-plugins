@@ -21,14 +21,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import { builtinActions, type ActionContext, type SessionPort } from './actions/index.ts'
 import { createSessionClassifier } from './classify.ts'
 import { builtinConditions } from './conditions.ts'
-import { ActionRegistry, ConditionRegistry, registerAll } from './registry.ts'
-import { createPendingStore } from './pending.ts'
-import { createRunStore, writeTextFile } from '@free-lzj/dsh-decision'
+import { ActionRegistry, ConditionRegistry, registerAll, writeTextFile } from '@free-lzj/dsh-decision'
+import type { ActionOutcome } from './actions/index.ts'
+import type { MatchContext } from './conditions.ts'
 import { loadRules, setActionMode, setRuleEnabled, swapPriority } from './rules.ts'
+import { createMailPendingStore, createMailRunStore } from './records.ts'
 import { applySuggestion } from './suggest.ts'
 import { runDue, labelUniverse, matches, triage, undoRun, type IncomingMail, type MatchState, type TriagePorts } from './triage.ts'
 import type {
-  ActionMode, Config, MailLike, MailSummaryLike, Rule, RulesView, Run, TestView, TriageResult, TriageRouteHost,
+  ActionKind, ActionMode, ActionSpec, ConditionKind, ConditionSpec, Config, MailLike, MailSummaryLike,
+  Rule, RulesView, Run, TestView, TriageResult, TriageRouteHost,
 } from './types.ts'
 
 /* ─────────────────────────── 对宿主的最小结构声明 ─────────────────────────── */
@@ -170,25 +172,14 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
   const home = join(deps.home, 'triage')
   const rulesPath = join(home, 'rules.yml')
 
-  const conditions = new ConditionRegistry()
+  const conditions = new ConditionRegistry<ConditionSpec, MatchContext, ConditionKind>()
   registerAll(conditions, builtinConditions())
-  const actions = new ActionRegistry()
+  const actions = new ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>()
   registerAll(actions, builtinActions())
 
-  // 命中记录归内核；事件形状与**旧文件里的 `message` 字段**都由这一层说明。
-  const runs = createRunStore<Run['event']>({
-    path: join(home, 'runs.json'),
-    parseEvent: (record) => {
-      const event = record['event'] ?? record['message']
-      if (typeof event !== 'object' || event === null) return undefined
-      const candidate = event as Partial<Run['event']>
-      if (typeof candidate.accountId !== 'string' || typeof candidate.folder !== 'string') return undefined
-      if (typeof candidate.uid !== 'number' || typeof candidate.subject !== 'string') return undefined
-      return candidate as Run['event']
-    },
-  })
-  const pending = createPendingStore({ path: join(home, 'pending.json') })
+    const runs = createMailRunStore(join(home, 'runs.json'))
 
+  const pending = createMailPendingStore(join(home, 'pending.json'))
   /** 当前生效的规则；读文件失败时保留这一份。 */
   let rules: readonly Rule[] = []
   let rulesError: RulesView['error']

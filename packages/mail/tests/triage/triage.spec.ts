@@ -13,14 +13,15 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { builtinActions, type ActionContext, type SessionPort } from '../../src/triage/actions/index.ts'
-import { builtinConditions } from '../../src/triage/conditions.ts'
-import { ActionRegistry, ConditionRegistry, registerAll } from '../../src/triage/registry.ts'
-import { createPendingStore } from '../../src/triage/pending.ts'
-import { createRunStore } from '@free-lzj/dsh-decision'
+import { builtinActions, type ActionContext, type ActionOutcome, type SessionPort } from '../../src/triage/actions/index.ts'
+import { builtinConditions, type MatchContext } from '../../src/triage/conditions.ts'
+import { ActionRegistry, ConditionRegistry, registerAll } from '@free-lzj/dsh-decision'
+import { createMailPendingStore, createMailRunStore } from '../../src/triage/records.ts'
 import { normalizeConfig, normalizeRules } from '../../src/triage/config.ts'
 import { runDue, triage, undoRun, type IncomingMail, type TriagePorts } from '../../src/triage/triage.ts'
-import type { Config, MailEvent, MailSummaryLike, Rule } from '../../src/triage/types.ts'
+import type {
+  ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, Rule,
+} from '../../src/triage/types.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -129,9 +130,9 @@ async function makePorts(
   configOverrides: Partial<Config> = {},
 ): Promise<TriagePorts> {
   const home = await mkdtemp(join(tmpdir(), 'mail-triage-run-'))
-  const conditions = new ConditionRegistry()
+  const conditions = new ConditionRegistry<ConditionSpec, MatchContext, ConditionKind>()
   registerAll(conditions, builtinConditions())
-  const actions = new ActionRegistry()
+  const actions = new ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>()
   registerAll(actions, builtinActions())
   const normalized = normalizeRules(rulesSource)
   // 大多数用例关心的是「动作真的被执行了」，所以默认把撤销窗口关掉；专门测窗口的那
@@ -150,11 +151,8 @@ async function makePorts(
     config: () => config,
     conditions,
     actions,
-    runs: createRunStore<MailEvent>({
-      path: join(home, 'runs.json'),
-      parseEvent: (record) => record['event'] as MailEvent | undefined,
-    }),
-    pending: createPendingStore({ path: join(home, 'pending.json') }),
+    runs: createMailRunStore(join(home, 'runs.json')),
+    pending: createMailPendingStore(join(home, 'pending.json')),
     context: input => contextFor(input.rule, input.mail.summary, input.body),
     replayContext: input => contextFor(
       { id: input.ruleId, name: input.ruleId, enabled: true, priority: 0, when: [], then: [] },

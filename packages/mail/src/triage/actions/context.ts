@@ -13,6 +13,7 @@
  * @module @free-lzj/dsh-mail/triage/actions/context
  */
 
+import type { Action as CoreAction } from '@free-lzj/dsh-decision'
 import type { ActionKind, ActionMode, ActionSpec, MailSummaryLike, Rule } from '../types.ts'
 
 /** 这次动作处理的那封邮件。 */
@@ -150,17 +151,7 @@ export interface ActionOutcome {
  * `sideEffect` 决定**默认三态**（见 `src/config.ts` 的 `DEFAULT_MODE`）：不可撤销的
  * 动作默认只「建议」，因为没人看着的时候自动跑一个脚本是不可接受的默认值。
  */
-export interface Action {
-  readonly kind: ActionKind
-  readonly sideEffect: boolean
-  /**
-   * 执行。
-   * @param spec - 已经过 `normalizeAction` 收窄的动作配置。
-   * @param context - 这封邮件与可用的宿主能力。
-   * @returns 结果；**不要抛**，能力缺失与宿主拒绝都折成 `ok: false` 加一句说明。
-   */
-  run(spec: ActionSpec, context: ActionContext): Promise<ActionOutcome>
-}
+export type Action = CoreAction<ActionSpec, ActionContext, ActionOutcome, ActionKind>
 
 /** 各动作共用的失败结果。 */
 export function failure(detail: string): ActionOutcome {
