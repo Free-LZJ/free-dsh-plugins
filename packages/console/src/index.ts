@@ -37,6 +37,10 @@ import { WorkbenchBoard } from './workbench/board.ts'
 import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
 import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
 import { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
+import {
+  createHarnessRunner, type SessionControllerLike, type WorkspaceRegistryLike,
+} from './workbench/harness-session.ts'
+import { RealSessionExecutor } from './workbench/real-session.ts'
 import { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
 import { registerWorkbenchRoutes } from './workbench/routes.ts'
 
@@ -84,6 +88,7 @@ type ConfigInput = {
   layout?: ConsoleLayout
   workbenchConnectors?: string[]
   workbenchClassifier?: string
+  workbenchWorkspace?: string
 }
 
 /** Live workbench configuration, resolved by the Loader row. */
@@ -96,6 +101,8 @@ export interface Config {
   workbenchConnectors: string[]
   /** Classifier id the board routes with; an unknown id falls back to the rule classifier. */
   workbenchClassifier: string
+  /** Directory real runs happen in; empty means the real executor is not registered. */
+  workbenchWorkspace: string
 }
 
 export const Config = Schema.object({
@@ -111,6 +118,9 @@ export const Config = Schema.object({
   workbenchClassifier: Schema.string()
     .default(RULE_CLASSIFIER_ID)
     .description('Classifier id the board routes with.'),
+  workbenchWorkspace: Schema.string()
+    .default('')
+    .description('Directory real sessions run in; empty keeps the board on the simulated executors.'),
 }) as Schema<ConfigInput, Config>
 
 /**
@@ -149,6 +159,22 @@ export function apply(ctx: Context, config: Config): void {
   const executors = new ExecutorRegistry()
   executors.register(new SimulatedExecutor('dsh', 'DSH（模拟）'))
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
+  // 真实会话执行器：只有宿主给了会话服务、且配了工作目录时才注册。没注册时路由
+  // 表指着它只会得到「执行器未注册」的 hold，而不是一个假装在跑的实现。
+  const sessionController = ctx.get('sessionController') as SessionControllerLike | undefined
+  const workspaces = ctx.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
+  const harnessRunner = sessionController === undefined
+    ? undefined
+    : createHarnessRunner({
+      controller: sessionController,
+      ...(workspaces === undefined ? {} : { workspaces }),
+      cwd: config.workbenchWorkspace,
+      subscribe: (listener) => ctx.on('session/event', listener),
+      log: (line) => {
+        ctx.logger.warn(line)
+      },
+    })
+  if (harnessRunner !== undefined) executors.register(new RealSessionExecutor(harnessRunner))
   const connectors = new ConnectorRegistry()
   for (const connector of builtinConnectors()) connectors.register(connector)
   const routing = new RoutingTableStore(join(home, STATE_DIR, 'routing.json'), defaultRoutingTable(), (line) => {
@@ -220,8 +246,8 @@ export function apply(ctx: Context, config: Config): void {
   ctx.logger.info(`console: board mounted (connectors: ${connectors.list().map((connector) => connector.id).join(', ')})`)
 }
 
-/** 会话服务里本插件用得到的那部分。 */
-interface SessionControllerLike {
+/** 会话服务里「列出会话」那一半（与驱动会话的 {@link SessionControllerLike} 分开）。 */
+interface SessionListLike {
   list?(request?: unknown, signal?: unknown): Promise<{
     readonly items?: readonly {
       readonly sessionId?: string
@@ -241,7 +267,7 @@ interface SessionControllerLike {
  * @returns 正在运行的会话；读不到时给空数组。
  */
 async function readRunningSessions(ctx: Context): Promise<readonly RunningSession[]> {
-  const controller = ctx.get('sessionController') as SessionControllerLike | undefined
+  const controller = ctx.get('sessionController') as SessionListLike | undefined
   if (controller?.list === undefined) return []
   const page = await controller.list({})
   return (page.items ?? [])
