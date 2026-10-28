@@ -489,7 +489,17 @@ ctx.uiWorkspace.openSession(target: SessionTarget): void
 | 可达性：键盘全路径、拖拽有等价菜单 | ✅ | 卡片有 `role`/`tabIndex`/Enter 打开；移列有「移到…」菜单，拖拽不是唯一手段 |
 | 性能：首屏不拉全量日志；轮询增量 | ✅ | `/workbench/state?since=<revision>` 未变时只回 `{unchanged:true}`（实测 331 vs 1494 字节）；标签页隐藏时不轮询；写盘合并 |
 
-**一处未达成且原因明确**：P2 执行器真实化等宿主暴露建会话入口（证据见 `docs/workbench-session-api.md`），不影响上面六条的验收。P1a 的第四刀已按 §10.5 收口：五个动作 + 匹配 + 到期执行 + 撤销进了内核，主编排按同一节的判断留在连接器。
+**全部达成**（2026-10-28）：
+
+- P1a 第四刀按 §10.5 收口：五个动作 + 匹配 + 到期执行 + 撤销进了内核，主编排按同一节的判断留在连接器。
+- P2 执行器真实化**已打通**：`~/.dsh/profiles/desktop/cordis.patch.yml` 里给 console 配了
+  `workbenchWorkspace`，运行中实例的状态接口返回 `executors = dsh, codex, session`、
+  `executorNote = ''`——真实执行器已注册。
+- 三档状态全部有真实来源：在跑＝Host 会话快照、等你处置＝工作台条目（并列出「等的是哪件」）、
+  已结束待确认＝看板卡片的 `awaitingConfirmation`。
+- 会话操作：详情里可插话、可「停止这一轮」（走 `cancel()`，卡片退回待处理、会话标 ended）。
+- 失败路径：创建会话失败时卡片**自己退回待处理并带失败标记**，原因写进会话日志，可直接重试——
+  以前会卡在「进行中」而 `dispatch` 对它早退，成了一条死路。
 
 ---
 
