@@ -1077,9 +1077,6 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
       if (failure !== undefined && added === 0) return failure
       return { ok: true, added, exhausted }
     },
-
-    // 分诊的读与写：规则、命中记录、撤销、试跑（同一份状态，工作台也读它）。
-    triage: engine.routes,
   }
 
   registerRoutes(ctx, routeHost)

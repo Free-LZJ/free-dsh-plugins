@@ -22,11 +22,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { MailDetail, MailState, RouteResult } from './types.ts'
 import {
   ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
-  TRIAGE_RULE_CONDITION_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
-  TRIAGE_TEST_PATH, TRIAGE_UNDO_PATH,
 } from './paths.ts'
-import type { TriageResult, TriageRouteHost } from './triage/types.ts'
-import { isRecord, text } from './config.ts'
 
 /** Header a mutating request must carry, together with a JSON content type. */
 export const MUTATION_HEADER = 'x-dsh-mail'
@@ -103,13 +99,6 @@ export interface RouteHost {
    * folder, when absent.
    */
   more(input: unknown): Promise<RouteResult>
-  /**
-   * The triage engine's own read/write operations.
-   *
-   * Injected rather than imported so this module stays about HTTP: it never sees
-   * the rule file, the run store or a single condition.
-   */
-  triage: TriageRouteHost
 }
 
 /**
@@ -394,123 +383,6 @@ export function registerRoutes(ctx: Context, host: RouteHost): void {
     mountMutation(REFRESH_PATH, 'refresh', (input) => host.refresh(input))
     mountMutation(MORE_PATH, 'more', (input) => host.more(input))
 
-    /* ── 分诊：规则、命中记录、撤销与试跑 ── */
-
-    register(TRIAGE_RULES_PATH, guard(async (_req, res) => {
-      respond(res, 200, await host.triage.rules())
-    }, 'reading triage rules'), 'mail.triage-rules-route')
-
-    register(TRIAGE_RUNS_PATH, guard(async (req, res) => {
-      respond(res, 200, await host.triage.runs(queryOf(req).get('since') ?? undefined))
-    }, 'reading triage runs'), 'mail.triage-runs-route')
-
-    /**
-     * Answer a triage write.
-     *
-     * These carry a plain sentence rather than the message routes' `code`: the
-     * panel only ever shows it, and the page that reads it (`panel.html`) has an
-     * `{ error }` shape for every other write already.
-     */
-    const answerTriage = (res: ServerResponse, result: TriageResult): void => {
-      respond(res, result.ok ? 200 : 400, result.ok ? { ok: true } : { error: result.message ?? 'rejected' })
-    }
-
-    /** One triage write: POST, the shared mutation header, a JSON body. */
-    const mountTriageMutation = (
-      path: string,
-      what: string,
-      run: (body: unknown) => Promise<TriageResult>,
-    ): void => {
-      register(path, guard(async (req, res) => {
-        if (req.method !== 'POST') {
-          res.setHeader('allow', 'POST')
-          respond(res, 405, { error: 'method not allowed' })
-          return
-        }
-        if (!isMutationRequest(req)) {
-          respond(res, 403, { error: `a mutating request needs ${MUTATION_HEADER}: 1 and a JSON content type` })
-          return
-        }
-        const body = await readJsonBody(req)
-        if (!body.ok) {
-          respond(res, body.status, { error: body.error })
-          return
-        }
-        answerTriage(res, await run(body.value))
-      }, what), `mail.triage-${what}-route`)
-    }
-
-    mountTriageMutation(TRIAGE_RULE_ENABLED_PATH, 'enable', async (body) => {
-      const ruleId = textOf(body, 'ruleId')
-      if (ruleId === undefined) return { ok: false, message: 'ruleId must not be empty' }
-      return await host.triage.setEnabled(ruleId, isRecord(body) && body['enabled'] === true)
-    })
-
-    mountTriageMutation(TRIAGE_RULE_MODE_PATH, 'mode', async (body) => {
-      const ruleId = textOf(body, 'ruleId')
-      const actionIndex = intOf(body, 'actionIndex')
-      const mode = textOf(body, 'mode')
-      if (ruleId === undefined || actionIndex === undefined || mode === undefined) {
-        return { ok: false, message: 'ruleId, actionIndex and mode are all required' }
-      }
-      return await host.triage.setMode(ruleId, actionIndex, mode)
-    })
-
-    mountTriageMutation(TRIAGE_RULE_CONDITION_PATH, 'condition', async (body) => {
-      const ruleId = textOf(body, 'ruleId')
-      const conditionIndex = intOf(body, 'conditionIndex')
-      const raw = (body ?? {}) as Record<string, unknown>
-      const values = Array.isArray(raw.values) ? raw.values.filter((value): value is string => typeof value === 'string') : []
-      if (ruleId === undefined || conditionIndex === undefined) {
-        return { ok: false, message: 'ruleId and conditionIndex are both required' }
-      }
-      return await host.triage.setCondition(ruleId, conditionIndex, values)
-    })
-    mountTriageMutation(TRIAGE_RULE_PRIORITY_PATH, 'priority', async (body) => {
-      const ruleId = textOf(body, 'ruleId')
-      const direction = textOf(body, 'direction')
-      if (ruleId === undefined || (direction !== 'up' && direction !== 'down')) {
-        return { ok: false, message: 'ruleId and direction (up|down) are required' }
-      }
-      return await host.triage.movePriority(ruleId, direction)
-    })
-
-    mountTriageMutation(TRIAGE_UNDO_PATH, 'undo', async (body) => {
-      const runId = textOf(body, 'runId')
-      if (runId === undefined) return { ok: false, message: 'runId must not be empty' }
-      return await host.triage.undo(runId)
-    })
-
-    // 试跑成功时回答的是试跑结果，不是 `{ ok: true }`，所以不走上面那个包装。
-    register(TRIAGE_TEST_PATH, guard(async (req, res) => {
-      if (req.method !== 'POST') {
-        res.setHeader('allow', 'POST')
-        respond(res, 405, { error: 'method not allowed' })
-        return
-      }
-      if (!isMutationRequest(req)) {
-        respond(res, 403, { error: `a mutating request needs ${MUTATION_HEADER}: 1 and a JSON content type` })
-        return
-      }
-      const body = await readJsonBody(req)
-      if (!body.ok) {
-        respond(res, body.status, { error: body.error })
-        return
-      }
-      const accountId = textOf(body.value, 'accountId')
-      const folder = textOf(body.value, 'folder')
-      const uid = intOf(body.value, 'uid')
-      if (accountId === undefined || folder === undefined || uid === undefined || uid <= 0) {
-        respond(res, 400, { error: 'accountId, folder and a positive uid are required' })
-        return
-      }
-      const result = await host.triage.test(accountId, folder, uid)
-      if (isRecord(result) && result['ok'] === false) {
-        respond(res, 400, { error: typeof result['message'] === 'string' ? result['message'] : 'rejected' })
-        return
-      }
-      respond(res, 200, result)
-    }, 'trying the triage rules'), 'mail.triage-test-route')
   })
 }
 
@@ -526,17 +398,6 @@ function queryOf(req: IncomingMessage): URLSearchParams {
 /** Describe any thrown value for a log line. */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-/** A trimmed, non-empty string field of a request body. */
-function textOf(body: unknown, field: string): string | undefined {
-  return isRecord(body) ? text(body[field]) : undefined
-}
-
-/** A non-negative integer field of a request body. */
-function intOf(body: unknown, field: string): number | undefined {
-  const value = isRecord(body) ? body[field] : undefined
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
 /** The failure code a thrown value carries, when it carries one. */

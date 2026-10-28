@@ -17,8 +17,6 @@ import {
 } from '../src/routes.ts'
 import {
   ACTION_PATH, ATTACHMENT_PATH, CONFIG_PATH, MESSAGE_PATH, MORE_PATH, PANEL_PATH, REFRESH_PATH, STATE_PATH,
-  TRIAGE_RULE_CONDITION_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH, TRIAGE_RULE_PRIORITY_PATH, TRIAGE_RULES_PATH, TRIAGE_RUNS_PATH,
-  TRIAGE_TEST_PATH, TRIAGE_UNDO_PATH,
 } from '../src/paths.ts'
 import type { MailState, RouteResult } from '../src/types.ts'
 
@@ -134,19 +132,6 @@ function host(overrides: Partial<RouteHost> = {}): RouteHost {
     config: async () => ok,
     refresh: async () => ok,
     more: async () => ok,
-    triage: {
-      rules: async () => ({
-        rules: [], source: 'default', path: '/tmp/rules.yml', raw: '', dropped: [],
-        config: { enabled: true, dryRun: false, undoWindowSeconds: 120, runHistoryLimit: 500, runRetentionDays: 30, repoRoot: 'D:/open' },
-      }),
-      setEnabled: async () => ({ ok: true }),
-      setMode: async () => ({ ok: true }),
-      setCondition: async () => ({ ok: true }),
-      movePriority: async () => ({ ok: true }),
-      runs: async () => ({ runs: [] }),
-      undo: async () => ({ ok: true }),
-      test: async () => ({ ruleId: '(none)', ruleName: '没有规则命中', actions: [], reason: '' }),
-    },
     ...overrides,
   }
 }
@@ -211,50 +196,10 @@ describe('the registered routes', () => {
     const { routes } = mounted()
     for (const path of [
       PANEL_PATH, STATE_PATH, MESSAGE_PATH, ATTACHMENT_PATH, ACTION_PATH, CONFIG_PATH, REFRESH_PATH, MORE_PATH,
-      TRIAGE_RULES_PATH, TRIAGE_RULE_CONDITION_PATH, TRIAGE_RULE_ENABLED_PATH, TRIAGE_RULE_MODE_PATH,
-      TRIAGE_RULE_PRIORITY_PATH,
-      TRIAGE_RUNS_PATH, TRIAGE_UNDO_PATH, TRIAGE_TEST_PATH,
     ]) {
       expect(routes.has(path)).toBe(true)
     }
-    expect(routes.size).toBe(16)
-  })
-
-  it('posts a condition edit with its values, and refuses a body without an index', async () => {
-    // 这条是「页面点了保存，文件真的被改」的服务端那一半：参数必须原样到达 triage。
-    const seen: { ruleId: string; conditionIndex: number; values: readonly string[] }[] = []
-    const stub = host()
-    const { call } = mounted(host({
-      triage: {
-        ...stub.triage,
-        setCondition: async (ruleId, conditionIndex, values) => {
-          seen.push({ ruleId, conditionIndex, values })
-          return { ok: true }
-        },
-      },
-    }))
-
-    const accepted = new RecordedResponse()
-    await call(
-      TRIAGE_RULE_CONDITION_PATH,
-      request({
-        url: TRIAGE_RULE_CONDITION_PATH,
-        method: 'POST',
-        headers: asJson,
-        body: JSON.stringify({ ruleId: 'jira', conditionIndex: 0, values: ['a@b.com', 'c@d.com'] }),
-      }),
-      accepted as unknown as ServerResponse,
-    )
-    expect(accepted.status).toBe(200)
-    expect(seen).toEqual([{ ruleId: 'jira', conditionIndex: 0, values: ['a@b.com', 'c@d.com'] }])
-
-    const refused = new RecordedResponse()
-    await call(
-      TRIAGE_RULE_CONDITION_PATH,
-      request({ url: TRIAGE_RULE_CONDITION_PATH, method: 'POST', headers: asJson, body: '{"ruleId":"jira"}' }),
-      refused as unknown as ServerResponse,
-    )
-    expect(refused.status).toBe(400)
+    expect(routes.size).toBe(8)
   })
 
   it('runs an older page through the same mutation guards as a refresh', async () => {

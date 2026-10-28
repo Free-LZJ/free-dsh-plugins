@@ -340,28 +340,3 @@ export interface TestView {
   readonly actions: readonly { readonly kind: string; readonly detail: string }[]
   readonly reason: string
 }
-
-/**
- * 分诊路由要用到的插件能力。
- *
- * 注入进来，所以 HTTP 那一层不需要规则文件、也不需要宿主就能测；`packages/mail/src/routes.ts`
- * 只负责路径、守卫与状态码。
- */
-export interface TriageRouteHost {
-  /** 当前规则与它的来源状态。 */
-  rules(): Promise<RulesView>
-  /** 开关一条规则。 */
-  setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
-  /** 改一条规则里某个动作的三态。 */
-  setMode(ruleId: string, actionIndex: number, mode: string): Promise<TriageResult>
-  /** 改一条规则里某个条件的匹配值列表（只改值，不改种类）。 */
-  setCondition(ruleId: string, conditionIndex: number, values: readonly string[]): Promise<TriageResult>
-  /** 把一条规则上移或下移。 */
-  movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
-  /** 命中记录，`since` 之后的新记录（没有 `since` 时给最近一批）。 */
-  runs(since?: string): Promise<{ readonly runs: readonly Run[] }>
-  /** 撤销一条记录。 */
-  undo(runId: string): Promise<TriageResult>
-  /** 拿一封已缓存的邮件试跑规则。 */
-  test(accountId: string, folder: string, uid: number): Promise<TestView | TriageResult>
-}

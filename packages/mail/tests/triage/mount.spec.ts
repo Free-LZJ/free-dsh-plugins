@@ -18,7 +18,20 @@ import { DecisionEngine } from '@free-lzj/dsh-decision'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createTriage, type TriageEngine } from '../../src/triage/mount.ts'
 import { DEFAULT_CONFIG as TRIAGE_DEFAULT } from '../../src/triage/config.ts'
-import type { MailLike, MailSummaryLike } from '../../src/triage/types.ts'
+import type { MailLike, MailSummaryLike, Rule, RulesView } from '../../src/triage/types.ts'
+
+/**
+ * 引擎的规则视图，收窄回邮件这一侧的类型。
+ *
+ * 引擎只认识「有个 kind 的规则」，测试要读的是邮件动作自己的字段
+ * （`workspacePath` / `instructions`），所以在这里投影一次，而不是在断言里逐个强转。
+ * @param engine - 装配出来的分诊引擎。
+ * @returns 规则视图，规则用邮件侧的类型。
+ */
+async function viewOf(engine: TriageEngine): Promise<RulesView> {
+  const view = await engine.decision().view()
+  return { ...view, rules: view.rules as readonly Rule[], config: TRIAGE_DEFAULT }
+}
 
 /** 发货的默认规则：这份文件必须真的能解析，否则新装的用户第一次就没有规则。 */
 const DEFAULT_RULES = fileURLToPath(new URL('../../defaults/basic.yml', import.meta.url))
@@ -110,7 +123,7 @@ describe('分诊装配', () => {
     const home = await workspace('mount')
     const { engine, lines } = await mounted(home)
 
-    const view = await engine.routes.rules()
+    const view = await viewOf(engine)
     expect(view.source).toBe('default')
     // 发货规则八条：四条确定性快路径（GitHub / Jira / 安全发件人 / 群发）+ 四条按类型判类。
     // 写歪了这里会先炸。
@@ -129,21 +142,21 @@ describe('分诊装配', () => {
 
     // 再看一次：文件已经在，来源就该是 file。
     const second = await mounted(home)
-    expect((await second.engine.routes.rules()).source).toBe('file')
+    expect((await viewOf(second.engine)).source).toBe('file')
   })
 
   it('开关一条规则落到规则文件里，并且立刻生效', async () => {
     const home = await workspace('toggle')
     const { engine } = await mounted(home)
 
-    expect(await engine.routes.setEnabled('github', false)).toEqual({ ok: true })
-    const view = await engine.routes.rules()
+    expect(await engine.decision().setEnabled('github', false)).toEqual({ ok: true })
+    const view = await viewOf(engine)
     expect(view.rules.find(rule => rule.id === 'github')?.enabled).toBe(false)
     // 注释要留住：用户读的是这个文件，agent 改的也是它。
     expect(await readFile(view.path, 'utf8')).toContain('# 发货默认规则')
 
     // 不存在的 id 要回一句人话，而不是静默成功。
-    const missing = await engine.routes.setEnabled('nope', false)
+    const missing = await engine.decision().setEnabled('nope', false)
     expect(missing.ok).toBe(false)
     expect(missing.message).toContain('nope')
   })
@@ -164,7 +177,7 @@ describe('分诊装配', () => {
     ].join('\n'), 'utf8')
 
     const { engine } = await mounted(home)
-    const view = await engine.routes.rules()
+    const view = await viewOf(engine)
     expect(view.rules.map(rule => rule.id)).toEqual(['mine'])
     expect(view.source).toBe('file')
     // 旧目录还在：那是用户的文件，不是本插件的缓存。
@@ -190,7 +203,7 @@ describe('分诊装配', () => {
     await writeFile(join(legacy, 'runs.json'), '{"version":1,"runs":[]}\n', 'utf8')
 
     const { engine, lines } = await mounted(home)
-    const view = await engine.routes.rules()
+    const view = await viewOf(engine)
     expect(view.rules.map(rule => rule.id)).toEqual(['kept'])
     expect(lines.some(line => line.includes('已把 rules.yml'))).toBe(true)
     // 旧目录留着，用户自己决定要不要清。
@@ -208,7 +221,7 @@ describe('分诊装配', () => {
     expect(shared.view().connector).toBe(false)
 
     const { engine } = await mounted(home, mailStub(), { console: { decision: shared } })
-    const view = await engine.routes.rules()
+    const view = await viewOf(engine)
 
     // 规则读的是工作台那份：同一个路径、同一份状态。
     expect(view.path).toBe(shared.rulesPath)
@@ -253,7 +266,7 @@ describe('分诊装配', () => {
     engines.push(engine)
     await engine.start()
     // 先自己跑起来：规则可读，文件落在工作台的目录约定下。
-    expect((await engine.routes.rules()).rules).toHaveLength(8)
+    expect((await viewOf(engine)).rules).toHaveLength(8)
 
     const shared = new DecisionEngine({ home: rulesHome })
     sharedEngines.push(shared)
@@ -275,7 +288,7 @@ describe('分诊装配', () => {
     expect(shared.view().connector).toBe(true)
     expect(shared.view().rules).toHaveLength(8)
     // 页面读的就是这一份：同一个路径。
-    expect((await engine.routes.rules()).path).toBe(shared.rulesPath)
+    expect((await viewOf(engine)).path).toBe(shared.rulesPath)
   })
 
   it('试跑只回答会命中哪条，不改动任何邮件', async () => {
@@ -303,15 +316,15 @@ describe('分诊装配', () => {
     engines.push(engine)
     await engine.start()
     // 默认规则里没有「发票」，所以试跑必须说没命中。
-    const outcome = await engine.routes.test('qq', 'INBOX', 7)
-    expect(outcome).toMatchObject({ ruleId: '(none)' })
+    const outcome = await engine.decision().test({ accountId: 'qq', folder: 'INBOX', uid: 7 })
+    expect(outcome).toMatchObject({ ok: true, result: { ruleId: '(none)' } })
     expect(applied).toHaveLength(0)
   })
 
   it('读不到那封邮件时试跑说明原因', async () => {
     const home = await workspace('try-miss')
     const { engine } = await mounted(home)
-    const outcome = await engine.routes.test('qq', 'INBOX', 7)
+    const outcome = await engine.decision().test({ accountId: 'qq', folder: 'INBOX', uid: 7 })
     expect(outcome).toMatchObject({ ok: false })
   })
 })

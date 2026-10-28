@@ -85,7 +85,7 @@ tarball 走普通安装路径（`node_modules` 下的实体目录），不进「
 1. **先看 Loader 行**：分诊的开关在 `id: mail` 这一行的 `config.triage` 里（`enabled` / `dryRun` / `undoWindowSeconds` / `runHistoryLimit` / `runRetentionDays` / `repoRoot`）。`dryRun: true` 只记录命中、不执行动作，看起来就像「规则没生效」。
 2. **规则文件的问题会写进 Host 日志**：路径是 `$DSH_HOME/dsh-console/rules/rules.yml`（规则状态归工作台那一侧的引擎；没装工作台时邮件自己建的引擎写同一个位置）。出现 `规则文件有问题，已保留上一份可用规则` 表示整份文件没被采用（YAML 解析失败、正则编译失败）；出现 `丢弃了一条规则（…）` 表示只有那一条写歪，其余规则照常工作（`when` 写成对象、`then` 为空、`id` 重复都会走到这条）。
 3. **同一封邮件只处理一次**：账本是 `文件夹:UIDVALIDITY:UID`，重连、重启、重复投递都不会二次触发；改了 IMAP 文件夹或账号后 UIDVALIDITY 会变，旧的账本条目自然失效，这是预期行为。分诊只对 `INBOX` 生效，其他文件夹既不触发也不进分诊。
-4. **工作台的「规则」页空白但 Host 正常**：规则界面在工作台（`@free-lzj/dsh-console`），不在邮件面板里；规则引擎由工作台持有，页面读的是工作台自己的 `/dsh-console/rules/*`。页面说「还没有连接器提供规则」= 没有插件把条件与动作注册进引擎（今天就是 mail 没装或没启用）；说「规则引擎没有响应」= 工作台的 Host 半边没起来。有引擎但读不出规则，按第 2 条看 Host 日志。写请求要带 `x-dsh-console: 1`（本插件自己的 `/dsh-mail/triage/*` 是 `x-dsh-mail: 1`）与 JSON content-type，跨站请求会被 403 挡掉。
+4. **工作台的「规则」页空白但 Host 正常**：规则界面在工作台（`@free-lzj/dsh-console`），不在邮件面板里；规则引擎由工作台持有，页面读的是工作台自己的 `/dsh-console/rules/*`（邮件的旧 `/dsh-mail/triage/*` 入口已删除）。页面说「还没有连接器提供规则」= 没有插件把条件与动作注册进引擎（今天就是 mail 没装或没启用）；说「规则引擎没有响应」= 工作台的 Host 半边没起来。有引擎但读不出规则，按第 2 条看 Host 日志。写请求要带 `x-dsh-console: 1` 与 JSON content-type，跨站请求会被 403 挡掉。
 5. **怀疑两套规则**：装工作台时 mail 用的是工作台的引擎（`ctx.console.decision`），规则文件只有一个读/写者。日志里出现「规则引擎已被另一个连接器占用」或「工作台的规则目录…与本插件的不一致」才说明它退回了自己的一份，按那句话查。
 
 ## 会话服务用错了名字（工作台 / 邮件的会话动作）

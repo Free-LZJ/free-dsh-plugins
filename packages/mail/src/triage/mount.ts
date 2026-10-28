@@ -26,10 +26,10 @@ import { builtinConditions, type MatchContext } from './conditions.ts'
 import { MAIL_VOCABULARY } from './config.ts'
 import { createMailPendingStore, createMailRunStore } from './records.ts'
 import { applySuggestion } from './suggest.ts'
-import { labelUniverse, matches, triage, undoRun, type IncomingMail, type MatchState, type TriagePorts } from './triage.ts'
+import { labelUniverse, matches, triage, type IncomingMail, type MatchState, type TriagePorts } from './triage.ts'
 import type {
   ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailLike, MailSummaryLike, PendingAction,
-  Rule, RulesView, Run, TestView, TriageResult, TriageRouteHost,
+  Rule, Run, TestView, TriageResult,
 } from './types.ts'
 
 /* ─────────────────────────── 对宿主的最小结构声明 ─────────────────────────── */
@@ -154,7 +154,13 @@ export interface TriageDeps {
 /** 邮件插件拿着的那两个动词与三份状态。 */
 export interface TriageEngine {
   readonly config: Config
-  readonly routes: TriageRouteHost
+  /**
+   * 这次装配用的规则引擎（规则文件、命中记录、待确认与撤销都在它手上）。
+   *
+   * 装了工作台时它就是工作台持有的那一个；没装时是本插件自建的同类引擎。**没有**第二
+   * 个 HTTP 出口：规则页读 `/dsh-console/rules/*`，邮件这一侧只把事件喂进去。
+   */
+  decision(): DecisionEngine
   /** 分诊一封刚到的邮件。 */
   triage(mail: IncomingMail): Promise<Run>
   /** 读状态、读规则、开始监听规则文件。 */
@@ -593,35 +599,6 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
   /* ── 路由要的那几个操作 ── */
 
   /**
-   * 本插件自己的分诊路由要的那几个操作。
-   *
-   * 规则状态归引擎，所以除了「试跑」之外都是转交；留着这组路由是因为邮件插件要能在
-   * 没有工作台的部署里被调用（工作台那一页读的是 `/dsh-console/rules/*`，同一份状态）。
-   */
-  const routes: TriageRouteHost = {
-    rules: async (): Promise<RulesView> => {
-      const view = engineOf().view()
-      return {
-        rules: view.rules as readonly Rule[],
-        ...(view.error === undefined ? {} : { error: view.error }),
-        source: view.source,
-        path: view.path,
-        raw: view.raw,
-        dropped: view.dropped,
-        config,
-      }
-    },
-    setEnabled: async (ruleId, enabled) => await engineOf().setEnabled(ruleId, enabled),
-    setMode: async (ruleId, actionIndex, mode) => await engineOf().setMode(ruleId, actionIndex, mode),
-    setCondition: async (ruleId, conditionIndex, values) =>
-      await engineOf().setConditionValues(ruleId, conditionIndex, values),
-    movePriority: async (ruleId, direction) => await engineOf().movePriority(ruleId, direction),
-    runs: async since => ({ runs: engineOf().listRuns(since ?? undefined) as readonly Run[] }),
-    undo: async runId => await undoRun(runId, portsOf()),
-    test: testRule,
-  }
-
-  /**
    * 用户在建议条目上点了按钮。
    *
    * 逻辑在 {@link applySuggestion}，这里只把它接到工作台的服务上——那条路要靠真实
@@ -675,7 +652,8 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
 
   return {
     config,
-    routes,
+    /** 这次装配用的引擎：规则状态都在它手上（工作台的，或本插件自建的）。 */
+    decision: () => engineOf(),
     triage: async mail => await triage(mail, portsOf()),
     start,
     stop,
