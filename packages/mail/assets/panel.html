@@ -271,7 +271,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
 
         <section class="m-card">
           <h3>新邮件怎么处理</h3>
-          <p class="m-hint">不再按账号逐个配置。新邮件统一交给分诊规则：规则文件在 <code>$DSH_HOME/mail/triage/rules.yml</code>，按类型决定通知、归档还是开会话；没有规则命中就留在面板里。规则的界面在工作台的「规则」页——改条件、开关、三态、试跑都在那里。</p>
+          <p class="m-hint">不再按账号逐个配置。新邮件统一交给分诊规则：规则文件在 <code>$DSH_HOME/dsh-console/rules/rules.yml</code>，按类型决定通知、归档还是开会话；没有规则命中就留在面板里。规则的界面在工作台的「规则」页——改条件、开关、三态、试跑都在那里（规则状态归工作台持有，本面板只管收发）。</p>
         </section>
 
         <section class="m-card">
