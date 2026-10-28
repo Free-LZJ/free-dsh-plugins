@@ -92,7 +92,6 @@ export function apply(ctx: ClientContext): void {
   const useBoard = bindSelector<WorkbenchState | undefined>(workbenchLink)
   const workbenchFace: WorkbenchFace = {
     useBoard,
-    ingest: (event) => workbenchLink.ingest(event),
     dispatch: (cardId, executor) => workbenchLink.act({
       action: 'dispatch',
       cardId,

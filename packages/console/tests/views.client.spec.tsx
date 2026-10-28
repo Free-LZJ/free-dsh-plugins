@@ -31,7 +31,7 @@ function board(): WorkbenchState {
   return {
     cards: [],
     sessions: [],
-    executors: [{ id: 'dsh', label: 'DSH（模拟）' }],
+    executors: [{ id: 'dsh', label: 'DSH 会话' }],
     connectors: [{
       id: 'mail',
       label: '邮件',
@@ -49,7 +49,6 @@ function board(): WorkbenchState {
 function face(state: WorkbenchState): WorkbenchFace {
   return {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
-    ingest: async () => ({ ok: true }),
     dispatch: async () => true,
     move: async () => true,
     interrupt: async () => true,
@@ -64,7 +63,7 @@ describe('ConnectorsView', () => {
   it('lists the executors this deployment registered', () => {
     render(<ConnectorsView t={t} face={face(board())} />)
     expect(screen.getByText(t('executorsTitle'))).toBeTruthy()
-    expect(screen.getByText('DSH（模拟）')).toBeTruthy()
+    expect(screen.getByText('DSH 会话')).toBeTruthy()
     expect(screen.getByText(t('executorReady'))).toBeTruthy()
   })
 

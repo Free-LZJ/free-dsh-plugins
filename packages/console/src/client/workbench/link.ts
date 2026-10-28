@@ -10,7 +10,7 @@
  */
 
 import { MUTATION_HEADER } from '../link.ts'
-import { WORKBENCH_ACTION_PATH, WORKBENCH_INGEST_PATH, WORKBENCH_STATE_PATH } from '../../paths.ts'
+import { WORKBENCH_ACTION_PATH, WORKBENCH_STATE_PATH } from '../../paths.ts'
 import type { WorkbenchState } from '../../protocol.ts'
 
 /** How often the page re-reads the board while it is open. */
@@ -81,15 +81,6 @@ export class WorkbenchLink {
     } catch {
       // Offline or restarting: the next poll covers it.
     }
-  }
-
-  /**
-   * Post one inbound event.
-   * @param event - the event the simulator built.
-   * @returns the Host's answer, parsed.
-   */
-  async ingest(event: { source: string; title: string; body?: string }): Promise<Record<string, unknown>> {
-    return this.post(WORKBENCH_INGEST_PATH, event)
   }
 
   /**

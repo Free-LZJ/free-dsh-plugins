@@ -2,12 +2,12 @@
  * Two of the content views the workbench shows beside the board: 连接器 and 应用.
  *
  * **连接器** is real capability that already exists: the connector metadata the
- * board advertises, plus the event simulator, which is marked as a debug tool
- * rather than a product feature. **应用** is the old home page's reason for
- * existing, demoted from the whole workbench body to one view: the panel
- * directory, with its three layouts and its search.
+ * board advertises and the executors this deployment actually registered.
+ * **应用** is the old home page's reason for existing, demoted from the whole
+ * workbench body to one view: the panel directory, with its three layouts and
+ * its search.
  *
- * 规则 has its own module (`./rules.tsx`) because it talks to another plugin.
+ * 规则 has its own module (`./rules.tsx`) because it talks to the rule engine.
  *
  * @module @free-lzj/dsh-console/client/views
  */
@@ -20,13 +20,12 @@ import { filterPanels, type PanelRow } from './registry.ts'
 import { LAYOUTS, LAYOUT_ORDER, type HomeListProps } from './home.tsx'
 import { CLS } from './styles.ts'
 import type { WorkbenchFace } from './workbench/board.tsx'
-import { WorkbenchSimulator } from './workbench/simulator.tsx'
 
 /**
- * Draw the connectors view: what comes in, what goes out, and the debug simulator.
+ * Draw the connectors view: what comes in, what goes out, which agents exist.
  * @param props.t - the translate seat.
  * @param props.face - the board face (the connectors are the board's own list).
- * @returns the connectors, their routing version, and the simulator.
+ * @returns the connectors, their routing version, and the executors.
  */
 export function ConnectorsView({ t, face }: {
   readonly t: Translate
@@ -86,11 +85,6 @@ export function ConnectorsView({ t, face }: {
             <p className={CLS.viewMeta}>{t('routingVersion', { version: state.routingVersion })}</p>
           </>
         )}
-      <h3 className={CLS.viewSubheading}>
-        {t('simTitle')}
-        <span className={CLS.viewBadge}>{t('simDebug')}</span>
-      </h3>
-      <WorkbenchSimulator face={face} t={t} />
     </section>
   )
 }

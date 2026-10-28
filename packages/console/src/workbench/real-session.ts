@@ -58,8 +58,12 @@ export function promptFor(card: WorkbenchCard): string {
  * says so in the log rather than pretending. `end` and `interrupt` are real.
  */
 export class RealSessionExecutor implements Executor {
-  readonly id = 'session'
-  readonly label = '真实会话'
+  /**
+   * The board's `dsh` id: a card dispatched to DSH *is* a session, so there is no
+   * second "session" executor to pick between.
+   */
+  readonly id = 'dsh'
+  readonly label = 'DSH 会话'
 
   /** @param runner - the Host's session verbs. */
   constructor(private readonly runner: SessionRunner) {}

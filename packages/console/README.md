@@ -77,7 +77,7 @@ await ctx.console?.notify({
 
 **试跑**在每条命中记录上：记录里已经带着那封邮件在哪（账号 / 文件夹 / uid），所以不用再给一个「选邮件」的控件——点一下拿那封邮件重跑当前规则，就地回答「会命中哪条、会做什么、为什么」，**不改动任何邮件**。
 
-事件模拟器（投递一个事件，看它怎么分类、路由、建卡）住在**连接器视图**的开发工具区，并标注「调试用」；连接器清单也在那里。
+连接器视图列出连接器、当前注册的执行器与路由表版本。**没有事件模拟器**：事件只从真实连接器进来（`ingest` 路由留给 webhook 这类外部来源）。
 
 流转是「确定性外壳 + 判断核 + 路由表」三层，和通知渠道一样的策略 + 注册表写法：
 
@@ -85,12 +85,12 @@ await ctx.console?.notify({
 |---|---|---|
 | 分类核 | 判断事件是什么任务 | 规则分类器（关键词打分，附置信度与理由）；大模型分类器是以后实现同一接口的另一个实现 |
 | 路由表 | 判断之后怎么办 | `$DSH_HOME/dsh-console/routing.json`，改完自动热加载，不用重启 |
-| 执行器 | 派给谁干活 | `dsh` / `codex` 两个 id，目前都是**模拟执行器**：跑固定脚本、写日志，不调模型、不碰工作区、不写任何外部系统 |
+| 执行器 | 派给谁干活 | `dsh` 是**真实会话**（派单就开一条 DSH 会话，完成后把结果带回来）；`codex` 仍是模拟执行器：跑固定脚本、写日志，不调模型、不碰工作区 |
 | 连接器 | 事件从哪来、结果往哪去 | `mail` / `webhook` 有入口（ingest 路由），`dingtalk` / `jira` 是占位：列出来、可配置，但不发真实请求 |
 
 规则只有三条硬线：置信度低于 0.6 的卡一律不自动派，落进待办等人工；同一来源同一外部 id 重复投递不重复建卡；**完工的卡只进「已处理」并标「待确认回写」，不自动回写任何外部系统**。审 diff 关口是用户明确暂缓的，v0 没有。
 
-事件入口有两条：页面上的事件模拟器，和 Host 上的 `ctx.console.ingestWorkbenchEvent(event)`（邮件这类插件以后从这里转交；调用前先探有没有这个方法，没有就是没挂看板）。
+事件入口：Host 上的 `ctx.console.ingestWorkbenchEvent(event)` 与 `/dsh-console/workbench/ingest` 路由（邮件这类插件从这里转交；调用前先探有没有这个方法，没有就是没挂看板）。
 
 | 渠道 | 行为 |
 |---|---|
@@ -211,7 +211,7 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 | `workbenchConnectors` | `('mail' \| 'webhook' \| 'dingtalk' \| 'jira')[]` | `['mail', 'webhook']` | 看板启用哪些连接器；写了实现里没有的 id 会被丢弃并告警 |
 | `workbenchClassifier` | `string` | `'rule'` | 看板用哪个分类器；写了没注册的 id 会回落到规则分类器并告警 |
 | `workbenchModel` | `string` | `'` | LLM 分类器用哪个模型（`provider/model`）。留空则该分类器没有路由，一律回退到规则分类。**provider 名不是猜的**：DeepSeek 账号登录是 `deepseek-account`，API key 是 `deepseek-official`（写错会得到「no adapter registered for provider …」并回退） |
-| `workbenchWorkspace` | `string` | `''` | **真实会话执行器**在哪个目录里跑。留空 = 不注册它（看板只有模拟执行器）；填了目录且宿主有会话服务时，session 执行器才会出现 |
+| `workbenchWorkspace` | `string` | `''` | `dsh` 执行器（真实会话）在哪个目录里跑。留空 = 不注册它，路由表指着 `dsh` 时只会得到「执行器未注册」的 hold；填了目录且宿主有建会话能力时它才会出现 |
 
 页面的置顶与「上次停在哪一页」（`$DSH_HOME/dsh-console/prefs.json`）不在这一行里：它们是**用户点击产生**的状态，不是配置。
 
@@ -250,10 +250,9 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 
 - **规则视图依赖邮件插件**：规则、命中记录与撤销都在 `@free-lzj/dsh-mail` 的 triage 引擎里，这一页读的是它自己的路由（`/dsh-mail/triage/*`）。没装邮件插件时这页只说「引擎没加载」，不画空列表——「没有规则」和「没有引擎」是两件事。P1a 把内核抽成 `@free-lzj/dsh-decision` 之后，换的是 `src/client/rules.tsx` 里那个数据源，不是这一页。
 - **规则视图只读回来了最近 20 条命中**：引擎最多给 100 条，页面画 20 条再报一句「共 N 条」；再往前翻要等搜索/分页，v0 不做。
-- **真实会话执行器要宿主组合 `sessionController` 才可能开（现状：开不了）**：桥接调用的是 `agents.createSession({cwd})`，但真机实测该方法是 `SessionController` 插件内部 `ApiSessionAgentController` 上的，**不在 `agents` 服务上**。所以 `createHarnessRunner` 现在先检查这个能力，没有就**不注册**执行器并写明原因（而不是注册一个派单时才抛 `TypeError` 的壳）。完整的实测记录、为什么第三方 Host 插件够不到、两条候选路径见 [`docs/workbench-session-api.md`](../../docs/workbench-session-api.md)。
-- **（旧记录）真实会话执行器注册不上**：它靠在 `inject(['sessionController'])` 里等会话服务就位。实测（harness 0.2.x）宿主提供的是 `sessions` 与 `agents`，**没有** `sessionController` / `workspaceRegistry`——所以这段回调不会触发，执行器不会被注册。这比注册一个假装能跑的实现好，但它仍是没接通：真正的建会话入口要从 `sessions`/`agents` 的原型上摸（`Object.keys` 只暴露 `store`/`projections`）。**同一个服务名问题也影响 mail 的会话动作**，一并待修。
-- **真实会话执行器要显式打开**：`workbenchWorkspace` 填一个目录、且宿主的 `sessionController` / `workspaceRegistry` 在，`session` 执行器才注册（卡片派给它就跑一次真实对话）。留空则该执行器**根本不存在**，路由表指着它只会得到「执行器未注册」的 hold，而不是一个假装在跑的壳。真实会话**不支持暂停**（一轮对话没法暂停），`end` 会归档会话并以失败收尾，`interrupt` 会把话投进会话。
-- **看板执行器默认仍是模拟的**：`dsh` / `codex` 目前只跑固定脚本、不调模型、不改代码；接真实 agent 是以后实现同一执行器接口的事，不是改看板。
+- **`dsh` 执行器要显式打开**：`workbenchWorkspace` 填一个目录、且宿主的 `agents.createSession({cwd})` 在，`dsh` 才注册成真实会话（派单就跑一轮真实对话）。留空则该 id **根本不存在**，路由表指着它只会得到「执行器未注册」的 hold，而不是一个假装在跑的壳。真实会话**不支持暂停**（一轮对话没法暂停），`end` 会停掉这一轮，`interrupt` 会把话投进会话。没有第二种 `dsh` 实现：派给 DSH 就是把卡变成一条真实会话。
+- **`codex` 仍是模拟执行器**：只跑固定脚本、不调模型、不改代码；接真实 agent 是以后实现同一执行器接口的事，不是改看板。
+- **读盘完成会推进一次 revision 并推送**：重启后页面若在读盘完成前问过一次（拿到 revision 0 的空板），之后带 `since=0` 的轮询本会被判成「没变」，看板就一直空着——卡片其实在磁盘上。现在 `load()` 结束时 bump 一次，`ingest` 也先等 `ready`，重启后第一张卡不会和恢复中的卡片交错。
 - **看板不自动回写**：完工的卡只标「待确认回写」，钉钉 / Jira / 邮箱的出站动作都没有接；确认后回写的流程等用户定。
 - **判据的文字归页面**：卡片上的「判断依据」在 Host 那边是**代码 + 参数**（`classify-none`、`route-matched{route}`…），文字由工作台按 locales 渲染。英文界面下不会再冒出中文句子；页面不认识的代码退化成卡片上存的原文，再退化成一句通用说明——**任何情况下都不会把代码显示给人**。旧卡片存的是整句，读盘时归一化成 `legacy` 行原样保留，不做一次性迁移脚本。
 - **「往你待办」按会话去重**：状态条的数字是**件事**的数量——同一条会话既举了通知又在等回答时只算一件；没有会话的纯提醒各自算一件。以前是一律累加，同一条会话的两条条目会被数成两件事。

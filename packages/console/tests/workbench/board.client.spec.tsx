@@ -102,7 +102,7 @@ function board(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
       },
     ],
     connectors: [],
-    executors: [{ id: 'dsh', label: 'DSH（模拟）' }],
+    executors: [{ id: 'dsh', label: 'DSH 会话' }],
     executorNote: '',
     routingVersion: 'workbench-routes-v1',
     revision: 1,
@@ -121,7 +121,6 @@ function face(state: WorkbenchState = board()) {
   }
   const fake: WorkbenchFace = {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
-    ingest: async () => ({ ok: true }),
     dispatch: async (cardId) => {
       calls.dispatch.push(cardId)
       return true
@@ -305,7 +304,6 @@ describe('the board on screen', () => {
   it('says the board is loading before the first snapshot', () => {
     const fake: WorkbenchFace = {
       useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(undefined),
-      ingest: async () => ({ ok: true }),
       dispatch: async () => true,
       move: async () => true,
       interrupt: async () => true,

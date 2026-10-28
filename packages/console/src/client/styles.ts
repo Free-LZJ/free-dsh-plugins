@@ -41,7 +41,6 @@ export const CLS = {
   viewEmpty: 'dshc-view-empty',
   viewMeta: 'dshc-view-meta',
   viewSubheading: 'dshc-view-subheading',
-  viewBadge: 'dshc-view-badge',
   appsTools: 'dshc-apps-tools',
   cards: 'dshc-cards',
   list: 'dshc-list',
@@ -179,9 +178,6 @@ export const CLS = {
   connectorOn: 'dshc-connector-on',
   connectorOff: 'dshc-connector-off',
   connectorNote: 'dshc-connector-note',
-  wbSim: 'dshc-wb-sim',
-  wbRow: 'dshc-wb-row',
-  wbAnswer: 'dshc-wb-answer',
 } as const
 
 /** Id of the one style element the workbench installs, keyed so a reload replaces it. */
@@ -211,7 +207,6 @@ const CSS = `
 .${CLS.viewEmpty}{margin:0;padding:20px 0;text-align:center;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.viewMeta}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.viewSubheading}{display:flex;align-items:center;gap:6px;margin:8px 0 0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
-.${CLS.viewBadge}{font-size:11px;line-height:16px;font-weight:400;color:var(--dsw-alias-label-tertiary)}
 .${CLS.appsTools}{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 /* The board: a summary strip, then three columns of cards. The strip is a line of
    figures, not four controls — it carries no fill so it reads as a summary. */
@@ -309,9 +304,6 @@ const CSS = `
 .${CLS.connectorOn}{color:var(--dsw-alias-state-success-primary)}
 .${CLS.connectorOff}{color:var(--dsw-alias-label-tertiary)}
 .${CLS.connectorNote}{flex-basis:100%;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
-.${CLS.wbSim}{display:flex;flex-direction:column;gap:8px}
-.${CLS.wbRow}{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.${CLS.wbAnswer}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .${CLS.cards}{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin:0;padding:0;list-style:none}
 .${CLS.list}{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
 .${CLS.compact}{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin:0;padding:0;list-style:none}

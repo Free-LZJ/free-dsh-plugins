@@ -33,8 +33,6 @@ import {
 export interface WorkbenchFace {
   /** Selector hook over the board state. */
   readonly useBoard: SnapshotSelectorHook<WorkbenchState | undefined>
-  /** Post one inbound event; resolves to the Host's answer. */
-  readonly ingest: (event: { source: string; title: string; body?: string }) => Promise<Record<string, unknown>>
   /** Dispatch one card. */
   readonly dispatch: (cardId: string, executor?: string) => Promise<boolean>
   /** Move one card between columns. */

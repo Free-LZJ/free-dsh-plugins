@@ -103,7 +103,7 @@ export interface Config {
   workbenchConnectors: string[]
   /** Classifier id the board routes with; an unknown id falls back to the rule classifier. */
   workbenchClassifier: string
-  /** Directory real runs happen in; empty means the real executor is not registered. */
+  /** Directory real runs happen in; empty means the `dsh` executor is not registered. */
   workbenchWorkspace: string
   /** `provider/model` the LLM classifier asks; empty leaves it without a route. */
   workbenchModel: string
@@ -124,7 +124,7 @@ export const Config = Schema.object({
     .description('Classifier id the board routes with.'),
   workbenchWorkspace: Schema.string()
     .default('')
-    .description('Directory real sessions run in; empty keeps the board on the simulated executors.'),
+    .description('Directory real DSH sessions run in; empty leaves the dsh executor unregistered.'),
   workbenchModel: Schema.string()
     .default('')
     .description('provider/model the LLM classifier asks (e.g. deepseek/deepseek-chat); empty names none.'),
@@ -176,7 +176,8 @@ export function apply(ctx: Context, config: Config): void {
     inner.logger.info(`console: llm classifier ${config.workbenchModel === '' ? 'registered (no model configured)' : `on (${config.workbenchModel})`}`)
   })
   const executors = new ExecutorRegistry()
-  executors.register(new SimulatedExecutor('dsh', 'DSH（模拟）'))
+  // `dsh` 只有真实会话这一种实现：派给 DSH 就是把卡变成一条真实会话，没有模拟版。
+  // （`codex` 仍是模拟，等它的真实接入单独做。）
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
   // 真实会话执行器：等 `agents` 服务就位之后才注册。
   //
