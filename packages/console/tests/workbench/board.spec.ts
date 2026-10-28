@@ -355,4 +355,23 @@ describe('connectors and persistence', () => {
     expect(second.board.state().sessions).toHaveLength(1)
     expect(second.board.state().sessions[0]?.status).toBe('done')
   })
+
+  it('pushes the restored board to subscribers once the read finishes', async () => {
+    // 重启后页面常常在读盘完成之前就问过一次（拿到 revision 0 的空板），之后带
+    // `since=0` 轮询。若读盘完成不推进 revision、也不推送，那次轮询会被判成
+    // 「没变」，看板就永远空着——卡片其实在磁盘上。
+    const directory = await home()
+    const first = bench({ homeDir: directory })
+    await first.board.ready
+    expect((await first.board.ingest({ source: 'webhook', title: '页面报错' })).ok).toBe(true)
+    await waitFor(() => first.board.state().cards[0]?.column === 'done', 'the run to finish')
+    await first.board.flush()
+
+    const second = bench({ homeDir: directory })
+    const pushed: number[] = []
+    second.board.subscribe((state) => pushed.push(state.cards.length))
+    await second.board.ready
+    expect(second.board.state().revision).toBeGreaterThan(0)
+    expect(pushed).toContain(1)
+  })
 })

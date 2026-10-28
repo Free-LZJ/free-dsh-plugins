@@ -119,6 +119,9 @@ export class WorkbenchBoard {
    * @returns the card and the decision, or why the event was refused.
    */
   async ingest(event: WorkbenchEvent): Promise<IngestResult> {
+    // 先等落盘那份读回来：否则重启后的第一张卡会与恢复中的卡片、去重键交错，
+    // 而且页面此时拿到的快照还不完整。
+    await this.ready
     const title = typeof event?.title === 'string' ? event.title.trim() : ''
     if (title === '') return { ok: false, error: 'an event needs a non-empty title' }
     const source = event.source
@@ -474,6 +477,10 @@ export class WorkbenchBoard {
         updatedAt: Date.now(),
       })
     }
+    // 读盘完成要推进一次 revision 并推给订阅者。少了这一步，重启后页面若在
+    // 读盘之前问过一次（拿到 revision 0 的空板），之后每两秒带着 `since=0`
+    // 轮询都会被判成「没变」，看板就一直是空的——卡片其实在磁盘上。
+    this.bump()
   }
 
   /**
