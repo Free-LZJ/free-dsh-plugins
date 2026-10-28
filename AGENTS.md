@@ -14,9 +14,9 @@ packages/
     tests/             #   *.spec.ts（Host）/ *.client.spec.tsx（浏览器）
     cordis.patch.yml   #   dsh.bundle 补丁：dsh plugin add 时插入的唯一 Loader 行
     tsdown.config.ts   #   两半的打包形态（平台模块表在这）
-  decision/            # @free-lzj/dsh-decision      决策内核（库，不是插件：没有 Loader 行、没有浏览器半边）+ 命中记录与撤销窗口
-  mail/                # @free-lzj/dsh-mail          邮箱面板（接入工作台后从工作台进入）+ 邮件 I/O 服务 + 规则分诊（规则文件、条件/动作注册表、命中记录与撤销、发货默认规则与预设；界面在工作台的「规则」页）
-  console/             # @free-lzj/dsh-console       工作台首页（注意力队列 + 正在跑的会话 + 自动化日志）+ 通知/条目接口 + 任务看板（看板/会话/连接器/规则在 src/workbench/）；对外导出 panel 契约
+  decision/            # @free-lzj/dsh-decision      决策内核（库，不是插件：没有 Loader 行、没有浏览器半边）：规则引擎（DecisionEngine）、条件/动作注册表、命中记录与撤销窗口
+  mail/                # @free-lzj/dsh-mail          邮箱面板（接入工作台后从工作台进入）+ 邮件 I/O 服务 + 规则分诊（作为连接器：发货默认规则、邮件自己的条件/动作实现、试跑；规则状态与界面都在工作台）
+  console/             # @free-lzj/dsh-console       工作台首页（注意力队列 + 正在跑的会话 + 自动化日志）+ 通知/条目接口 + 规则引擎宿主 + 任务看板（看板/会话/连接器在 src/workbench/，规则引擎与 /rules 路由在 src/rules/）；对外导出 panel 契约
     src/index.ts       #   Host 半边：ctx.console 服务（notify 通知 / raise 条目 / log 自动化日志）、通知渠道注册表
     src/client/        #   浏览器半边：注意力队列、插件列表、正在跑的会话、自动化日志、通知中心、设置行
     src/client/contract.ts  # 跨插件契约（消费方 import 的是它）
