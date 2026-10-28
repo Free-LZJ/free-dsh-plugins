@@ -40,6 +40,7 @@ function board(): WorkbenchState {
       implemented: true,
     }],
     routingVersion: 'workbench-routes-v1',
+    executorNote: '',
     revision: 3,
   }
 }
@@ -67,6 +68,16 @@ describe('ConnectorsView', () => {
     expect(screen.getByText(t('executorReady'))).toBeTruthy()
   })
 
+  it('says which setting is missing instead of just showing no real executor', () => {
+    // 静默缺席会让人以为功能坏了——上一轮我就是这么把 P2 判成「等宿主」的。
+    render(<ConnectorsView t={t} face={face({ ...board(), executorNote: 'no-workspace' })} />)
+    expect(screen.getByRole('status').textContent).toContain('workbenchWorkspace')
+  })
+
+  it('says nothing extra when the real executor is registered', () => {
+    render(<ConnectorsView t={t} face={face(board())} />)
+    expect(screen.queryByRole('status')).toBeNull()
+  })
   it('still says which connectors are on', () => {
     render(<ConnectorsView t={t} face={face(board())} />)
     expect(screen.getByText('邮件')).toBeTruthy()

@@ -64,6 +64,12 @@ export function ConnectorsView({ t, face }: {
             </ul>
             <h3 className={CLS.viewSubheading}>{t('executorsTitle')}</h3>
             <p className={CLS.viewHint}>{t('executorsHint')}</p>
+            {/* 真实执行器没接上时说清**差哪一项**：静默缺席会让人以为功能坏了。 */}
+            {state.executorNote === '' ? null : (
+              <p className={CLS.viewHint} role="status">
+                {state.executorNote === 'no-workspace' ? t('executorOffNoWorkspace') : t('executorOffNoSessionApi')}
+              </p>
+            )}
             <ul className={CLS.connectorList}>
               {state.executors.map((executor) => (
                 <li key={executor.id} className={CLS.connectorItem}>

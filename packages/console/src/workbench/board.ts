@@ -57,6 +57,13 @@ export interface WorkbenchBoardOptions {
   readonly routing: RoutingTableStore
   /** Connector ids the saved configuration switches on. */
   readonly enabledConnectors: () => readonly string[]
+  /**
+   * 为什么没有真实执行器（一个码，不是一句话：文案在 locales.ts）。
+   *
+   * 真实执行器关掉是**正常部署**，但静默关掉会让人以为功能坏了——这里把原因带出来，
+   * 连接器页就能说「要跑真会话还得配一项」。
+   */
+  readonly executorNote?: () => ExecutorNote
   /** Classifier id the saved configuration selects. */
   readonly classifierId: () => string
   /** Where a rejected configuration or a failed write is reported. */
@@ -426,6 +433,7 @@ export class WorkbenchBoard {
       sessions: this.sessions.list(),
       connectors: this.connectorInfos(),
       executors: this.options.executors.list().map((executor) => ({ id: executor.id, label: executor.label })),
+      executorNote: this.options.executorNote?.() ?? '',
       routingVersion: this.routingVersion,
       revision: this.revision,
     }
@@ -632,3 +640,5 @@ export class WorkbenchBoard {
     }
   }
 }
+/** Why the real executor is not registered; `''` means it is. */
+export type ExecutorNote = '' | 'no-workspace' | 'no-session-api'

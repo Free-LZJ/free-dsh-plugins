@@ -33,7 +33,7 @@ import { ConsoleHost } from './console-host.ts'
 import { BUILTIN_CHANNELS, type ConsoleLayout, type RunningSession } from './protocol.ts'
 import { registerRoutes, type RouteHost } from './routes.ts'
 import { registerAgentTools } from './tools.ts'
-import { WorkbenchBoard } from './workbench/board.ts'
+import { WorkbenchBoard, type ExecutorNote } from './workbench/board.ts'
 import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
 import { LlmClassifier, modelRoute, type LlmPortLike } from './workbench/llm-classifier.ts'
 import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
@@ -185,10 +185,16 @@ export function apply(ctx: Context, config: Config): void {
   // 永远等不到服务、静默什么都不做。`agents.createSession({cwd})` 是唯一同时建出
   // 代理与其会话的入口；`ctx.on('session/event')` 才是真正的事件源。
   let realRegistered = false
+  /** 为什么没有真实执行器：给连接器页用，空串表示有。 */
+  let note: ExecutorNote = 'no-session-api'
   ctx.inject(['agents'], (inner) => {
     if (realRegistered) return
     const agents = inner.get('agents') as HarnessAgentsLike | undefined
     if (agents === undefined) return
+    // 真实执行器关掉是正常部署，但要让界面能说出「还差哪一项」。
+    if (config.workbenchWorkspace === '') note = 'no-workspace'
+    else if (typeof (agents as { createSession?: unknown }).createSession !== 'function') note = 'no-session-api'
+    else note = ''
     const runner = createHarnessRunner({
       agents,
       cwd: config.workbenchWorkspace,
@@ -220,6 +226,7 @@ export function apply(ctx: Context, config: Config): void {
     homeDir: home,
     classifiers,
     executors,
+    executorNote: () => (realRegistered ? '' : note),
     connectors,
     routing,
     enabledConnectors: () => config.workbenchConnectors,

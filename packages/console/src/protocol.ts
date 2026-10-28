@@ -372,6 +372,13 @@ export interface WorkbenchState {
    * user can act on, whereas a silent no-op just looks like a dead button.
    */
   readonly executors: readonly WorkbenchExecutorInfo[]
+  /**
+   * 为什么没有真实执行器；'' 表示有。
+   *
+   * 一个**码**而不是一句话：文案在 locales.ts，两种语言才能各说各的。真实执行器关掉是
+   * 正常部署，但静默关掉会让人以为功能坏了——连接器页据此说明还差哪一项配置。
+   */
+  readonly executorNote: '' | 'no-workspace' | 'no-session-api'
   /** Version of the routing table the current decisions were made with. */
   readonly routingVersion: string
   readonly revision: number
