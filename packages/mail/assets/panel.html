@@ -270,11 +270,6 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
         </section>
 
         <section class="m-card">
-          <h3>新邮件怎么处理</h3>
-          <p class="m-hint">不再按账号逐个配置。新邮件统一交给分诊规则：规则文件在 <code>$DSH_HOME/dsh-console/rules/rules.yml</code>，按类型决定通知、归档还是开会话；没有规则命中就留在面板里。规则的界面在工作台的「规则」页——改条件、开关、三态、试跑都在那里（规则状态归工作台持有，本面板只管收发）。</p>
-        </section>
-
-        <section class="m-card">
           <h3>远程图片</h3>
           <label><input class="m-images-load" type="checkbox"> 默认加载远程图片</label>
           <p class="m-hint">关掉后，正文里的远程图片不再自动加载（追踪像素因此不会回执）。随邮件一起到达的图片（内嵌图）不受影响，照常显示；每封被挡下的邮件顶部会给出「加载所有图片」，或者把发件人加进下面的白名单。</p>
