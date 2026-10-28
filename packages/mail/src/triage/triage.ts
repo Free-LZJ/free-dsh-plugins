@@ -26,7 +26,7 @@ import type { ActionContext } from './actions/context.ts'
 import type { ActionOutcome } from './actions/index.ts'
 import type { ClassifyRequest, ClassifyResult, MatchContext } from './conditions.ts'
 import type { ActionRegistry, ConditionRegistry, PendingStore, RunStore } from '@free-lzj/dsh-decision'
-import { ruleMatches, runDueActions, undoRunById } from '@free-lzj/dsh-decision'
+import { ruleMatches } from '@free-lzj/dsh-decision'
 import type {
   ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, PendingAction, Rule, Run,
   RunAction, RunStatus,
@@ -49,6 +49,20 @@ export interface TriagePorts {
   readonly actions: ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>
   readonly runs: RunStore<Run['event']>
   readonly pending: PendingStore<PendingAction>
+  /**
+   * 规则状态的另一半：撤销与到期执行。
+   *
+   * 这两件事只依赖「一条排队记录 + 一个动作 + 一个造上下文的回调」，而那四样引擎
+   * 都有；编排层只把请求转交过去，不再自己实现一遍（否则同一份队列会有两个执行者）。
+   */
+  readonly engine: {
+    /** 撤销一条命中记录：窗口内取消，窗口外回滚。 */
+    undo(runId: string): Promise<{ readonly ok: boolean; readonly message: string }>
+    /** 执行到期的延迟动作，返回执行了几条。 */
+    runDue(now: Date): Promise<number>
+    /** 登记一个撤销闭包（动作已经真的执行过时）。 */
+    registerUndo(runId: string, undo: () => Promise<void>): void
+  }
   /** 造一个动作上下文（含 mail / sessions / console 等端口与 `vars`）。 */
   readonly context: (input: {
     readonly mail: IncomingMail
@@ -306,8 +320,9 @@ async function apply(
     status,
     ...(undoableUntil === undefined ? {} : { undoableUntil }),
   })
-  // 撤销闭包活在内存里：撤销窗口是分钟级，跨重启的撤销由 pending 队列承担。
-  undosByRun.set(run.id, undos)
+  // 撤销闭包交给引擎保管：撤销窗口内撤销、窗口过后回滚，靠的都是这份登记，而
+  // 撤销入口在引擎那边（页面读的是 `/dsh-console/rules/*`）。
+  for (const undo of undos) ports.engine.registerUndo(run.id, undo)
   // 记一条自动化日志——**不**举条目：做过的事不需要人决定，进队列只会打扰。
   const did = results.filter(result =>
     result.ok && !result.detail.startsWith('试运行') && !result.detail.startsWith('已建议'))
@@ -321,9 +336,6 @@ async function apply(
   }
   return run
 }
-
-/** 内存里的撤销闭包，按记录 id 索引。 */
-const undosByRun = new Map<string, readonly (() => Promise<void>)[]>()
 
 /**
  * 「建议」模式：推一条**能点的**条目。
@@ -434,66 +446,8 @@ async function record(
  * @returns 结果与一句说明。
  */
 export async function undoRun(runId: string, ports: TriagePorts): Promise<{ ok: boolean; message: string }> {
-  // 取消（还没发生的）与回滚（已经发生的）的区别、逆序回滚、失败只记不抛——都在内核里。
-  // 这里只把「这条记录排队的动作」翻译成「取消它们并数一数」，以及交出撤销闭包。
-  return await undoRunById(runId, {
-    runs: {
-      get: id => ports.runs.get(id),
-      // 内核只知道「状态是一个字符串」，这里转回这个包自己的状态集合。
-      patch: async (id, change) => await ports.runs.patch(id, { status: change.status as RunStatus }),
-    },
-    pendingFor: async (id) => {
-      const queued = ports.pending.list().filter(item => item.runId === id)
-      for (const item of queued) await ports.pending.cancel(item.id)
-      return queued.length
-    },
-    undosFor: id => undosByRun.get(id) ?? [],
-    log: ports.log,
-  })
-}
-
-/**
- * 执行到期的延迟动作。
- *
- * 这是「撤销窗口」的另一半：窗口内被撤销的项已经被 `undoRun` 从队列里删掉了，剩下
- * 到期的才在这里真的发生。
- *
- * 两条取舍：每个动作**单独执行、单独记结果**（一个失败不影响后面的，IMAP 动作本来
- * 就不是事务性的）；执行完把撤销闭包登记回去，所以**执行之后仍然可以撤销**——只是
- * 那时是回滚而不是取消。
- * @param ports - 注入的依赖。
- * @param now - 现在；测试可钉死。
- * @returns 执行了几条。
- */
-export async function runDue(ports: TriagePorts, now: Date = ports.now?.() ?? new Date()): Promise<number> {
-  // 骨架在内核（逐个执行、单独记结果、回填记录、登记撤销闭包），这里只提供邮件这一侧的
-  // 上下文与撤销登记。
-  return await runDueActions(
-    {
-      pending: ports.pending,
-      runs: {
-        get: runId => ports.runs.get(runId),
-        // 内核只知道「状态 + 动作列表」；把动作列表交给这个包自己的 RunAction 存储。
-        patch: async (runId, change) => await ports.runs.patch(runId, {
-          status: change.status as RunStatus,
-          actions: change.actions as readonly RunAction[],
-        }),
-      },
-      actions: ports.actions,
-      contextFor: item => ports.replayContext({
-        summary: item.summary,
-        accountId: item.message.accountId,
-        // 账号名字要在排队时记下来：`message` 里只有 id，用它当名字会让延迟执行的通知
-        // 显示成一串 id。旧记录没有这个字段时退回 id，而不是空字符串。
-        accountName: item.accountName ?? item.message.accountId,
-        ruleId: item.ruleId,
-      }),
-      recordUndo: (runId, undo) => {
-        const existing = undosByRun.get(runId) ?? []
-        undosByRun.set(runId, [...existing, undo])
-      },
-      log: ports.log,
-    },
-    now,
-  )
+  // 取消（还没发生的）与回滚（已经发生的）的区别、逆序回滚、失败只记不抛——都在内核里，
+  // 由引擎持着那份撤销闭包登记。这里只转交。
+  const result = await ports.engine.undo(runId)
+  return { ok: result.ok, message: result.message }
 }

@@ -1,19 +1,18 @@
 /**
- * The rules view: what the triage engine is doing to arriving mail, and the one
+ * The rules view: what the rule engine is doing to arriving events, and the one
  * place a human can steer it.
  *
- * **Why this talks to mail's routes rather than to a shared service.** The
- * decision core still lives inside `@free-lzj/dsh-mail` until P1a extracts it
- * (`@free-lzj/dsh-decision`); it owns the rule file, the run history and the
- * undo window, and it already exposes all of that over its own HTTP surface
- * (`/dsh-mail/triage/*`: rules, runs, enable, priority, mode, undo). Reading
- * that surface means there is exactly **one** rule state — the thing the brief
- * warned about is two copies, not two entry points. The coupling lives in this
- * one module ({@link createTriageSource}); when P1a lands, only this module
- * changes target and the view above it does not move.
+ * **Where the state lives.** The rule file, the hit records and the undo window
+ * belong to the workbench's own engine (`@free-lzj/dsh-decision`, held by this
+ * package's Host half), and the page reads that engine's surface under
+ * `/dsh-console/rules/*`. A connector (mail today) feeds the engine and registers
+ * the conditions and actions it knows; it does not keep a rule state of its own.
+ * Every write is followed by a re-read, so what is drawn is always the engine's
+ * copy.
  *
- * When mail is not mounted the routes answer 404 and the view says so instead of
- * drawing an empty rule list — "no rules" and "no engine" are different facts.
+ * Two absences look different on purpose: **no engine answering** is an HTTP
+ * failure, while **no connector registered** is a normal state (nothing feeds the
+ * engine yet) and the page says so instead of drawing an empty rule list.
  *
  * @module @free-lzj/dsh-console/client/rules
  */
@@ -66,7 +65,7 @@ export interface TriageRunAction {
   readonly sessionId?: string
 }
 
-/** One mail the engine acted on. */
+/** One event the engine acted on. */
 export interface TriageRun {
   readonly id: string
   readonly at: string
@@ -74,10 +73,11 @@ export interface TriageRun {
   readonly ruleName: string
   readonly label: string
   /**
-   * The mail this run is about, as the decision core stores it.
+   * The event this run is about, as the decision core stores it.
    *
    * The core keeps the connector's own shape (`event`), so the fields below are
    * what the mail connector writes — a different connector would carry its own.
+   * The page only needs the four it draws and hands back to a dry run.
    */
   readonly event: {
     readonly from: string
@@ -101,6 +101,13 @@ export interface TriageRules {
   readonly dropped: readonly string[]
   /** The file's own text, so the page can show what is really on disk. */
   readonly raw?: string
+  /**
+   * Whether a connector has registered with the engine.
+   *
+   * `false` means "nothing feeds the engine yet" — not "the rule file is empty".
+   * The page words those two differently.
+   */
+  readonly connector: boolean
 }
 
 /** One write's answer. */
@@ -147,42 +154,42 @@ export interface TriageSource {
   testRun(ref: { readonly accountId: string; readonly folder: string; readonly uid: number }): Promise<TriageTestAnswer>
 }
 
-/** Where the engine currently answers; the one line P1a has to move. */
-export const TRIAGE_PREFIX = '/dsh-mail/triage'
+/** Where the engine answers: this package's own Host half, under its own prefix. */
+export const RULES_PREFIX = '/dsh-console/rules'
 
-/** Header every triage write must carry, as the mail Host requires. */
-export const TRIAGE_MUTATION_HEADER = 'x-dsh-mail'
+/** Header every rules write must carry, as the console Host requires. */
+export const RULES_MUTATION_HEADER = 'x-dsh-console'
 
 /**
- * The engine is not there: mail is not mounted, or it is an older build.
+ * The engine is not answering at all.
  *
- * Distinct from "the rules are empty" — the view renders this as a sentence, not
- * as an empty list.
+ * Distinct from "no connector registered" — that state arrives as
+ * `rules.connector === false` and is worded for what it is.
  */
 export class TriageUnavailable extends Error {
   constructor(readonly status: number) {
-    super(`triage is not answering (HTTP ${String(status)})`)
+    super(`the rule engine is not answering (HTTP ${String(status)})`)
     this.name = 'TriageUnavailable'
   }
 }
 
 /**
- * Read and write one triage engine over its HTTP surface.
+ * Read and write the rule engine over its HTTP surface.
  * @returns the source the view is driven by.
  */
 export function createTriageSource(): TriageSource {
   /** One GET against the engine, throwing {@link TriageUnavailable} when absent. */
   const read = async <T,>(path: string): Promise<T> => {
-    const response = await fetch(`${TRIAGE_PREFIX}${path}`, { cache: 'no-store' })
+    const response = await fetch(`${RULES_PREFIX}${path}`, { cache: 'no-store' })
     if (!response.ok) throw new TriageUnavailable(response.status)
     return await response.json() as T
   }
 
   /** One guarded POST against the engine. */
   const write = async (path: string, body: unknown): Promise<TriageResult> => {
-    const response = await fetch(`${TRIAGE_PREFIX}${path}`, {
+    const response = await fetch(`${RULES_PREFIX}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', [TRIAGE_MUTATION_HEADER]: '1' },
+      headers: { 'content-type': 'application/json', [RULES_MUTATION_HEADER]: '1' },
       body: JSON.stringify(body),
     })
     const payload = await response.json().catch(() => ({})) as { error?: unknown }
@@ -191,18 +198,18 @@ export function createTriageSource(): TriageSource {
   }
 
   return {
-    rules: async () => await read<TriageRules>('/rules'),
+    rules: async () => await read<TriageRules>('/state'),
     runs: async () => (await read<{ runs: readonly TriageRun[] }>('/runs')).runs,
-    setEnabled: async (ruleId, enabled) => await write('/rules/enabled', { ruleId, enabled }),
-    movePriority: async (ruleId, direction) => await write('/rules/priority', { ruleId, direction }),
-    setMode: async (ruleId, actionIndex, mode) => await write('/rules/mode', { ruleId, actionIndex, mode }),
+    setEnabled: async (ruleId, enabled) => await write('/enable', { ruleId, enabled }),
+    movePriority: async (ruleId, direction) => await write('/priority', { ruleId, direction }),
+    setMode: async (ruleId, actionIndex, mode) => await write('/mode', { ruleId, actionIndex, mode }),
     setCondition: async (ruleId, conditionIndex, values) =>
-      await write('/rules/condition', { ruleId, conditionIndex, values }),
+      await write('/condition', { ruleId, conditionIndex, values }),
     undo: async (runId) => await write('/undo', { runId }),
     testRun: async (ref) => {
-      const response = await fetch(`${TRIAGE_PREFIX}/test`, {
+      const response = await fetch(`${RULES_PREFIX}/test`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', [TRIAGE_MUTATION_HEADER]: '1' },
+        headers: { 'content-type': 'application/json', [RULES_MUTATION_HEADER]: '1' },
         body: JSON.stringify(ref),
       })
       if (!response.ok) {
@@ -382,7 +389,10 @@ export function RulesView({ t, triage }: {
         ? <p className={CLS.viewEmpty}>{unavailable}</p>
         : data === undefined
           ? <p className={CLS.viewEmpty}>{t('boardLoading')}</p>
-          : <TriageBody t={t} data={data} triage={triage} act={act} />}
+          : data.rules.connector
+            ? <TriageBody t={t} data={data} triage={triage} act={act} />
+            // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把规则喂给它。
+            : <p className={CLS.viewEmpty}>{t('rulesNoConnector')}</p>}
     </section>
   )
 }

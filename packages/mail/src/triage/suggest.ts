@@ -18,7 +18,8 @@ export interface SuggestDeps {
   readonly pending: PendingStore<PendingAction>
   readonly actions: ActionRegistry<ActionSpec, ActionContext, ActionOutcome, ActionKind>
   readonly runs: RunStore<Run['event']>
-  readonly ports: TriagePorts
+  /** 只用到它的 `replayContext`：重放一次动作需要的上下文。 */
+  readonly ports: Pick<TriagePorts, 'replayContext'>
 }
 
 /**

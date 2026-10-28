@@ -85,7 +85,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => installConsoleStyles(), 'console: styles')
 
   const registry = new PanelRegistry()
-  // 规则视图的数据源：引擎现在住在 mail 里，P1a 之后换的是这一个对象。
+  // 规则视图的数据源：引擎由本包的 Host 半边持有，页面读 `/dsh-console/rules/*`。
   const triage = createTriageSource()
   const face = createPageFace()
   const workbenchLink = new WorkbenchLink()

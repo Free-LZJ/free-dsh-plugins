@@ -130,6 +130,16 @@ export class ConditionRegistry<TSpec extends ConditionSpecLike, TContext, TKind 
   kinds(): readonly TKind[] {
     return [...this.byKind.keys()]
   }
+
+  /**
+   * 忘掉全部实现。
+   *
+   * 连接器卸载时要用：引擎比连接器活得久，清不掉的话下一个连接器会看到上一个的
+   * 词表，拿它自己的上下文去调别人的条件。
+   */
+  clear(): void {
+    this.byKind.clear()
+  }
 }
 
 /** 动作注册表：按 kind 取实现。 */
@@ -156,6 +166,13 @@ export class ActionRegistry<TSpec extends ActionSpecLike, TContext, TOutcome, TK
   /** 已注册的 kind。 */
   kinds(): readonly TKind[] {
     return [...this.byKind.keys()]
+  }
+
+  /**
+   * 忘掉全部实现（连接器卸载时用，理由同 {@link ConditionRegistry.clear}）。
+   */
+  clear(): void {
+    this.byKind.clear()
   }
 }
 

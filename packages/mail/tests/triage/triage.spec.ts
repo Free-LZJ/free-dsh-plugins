@@ -12,19 +12,26 @@
  * @module @free-lzj/dsh-mail/tests/triage
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { builtinActions, type ActionContext, type ActionOutcome, type SessionPort } from '../../src/triage/actions/index.ts'
 import { builtinConditions, type MatchContext } from '../../src/triage/conditions.ts'
-import { ActionRegistry, ConditionRegistry, registerAll } from '@free-lzj/dsh-decision'
+import { ActionRegistry, ConditionRegistry, DecisionEngine, registerAll } from '@free-lzj/dsh-decision'
 import { createMailPendingStore, createMailRunStore } from '../../src/triage/records.ts'
-import { normalizeConfig, normalizeRules } from '../../src/triage/config.ts'
-import { runDue, triage, undoRun, type IncomingMail, type TriagePorts } from '../../src/triage/triage.ts'
+import { MAIL_VOCABULARY, normalizeConfig, normalizeRules } from '../../src/triage/config.ts'
+import { triage, undoRun, type IncomingMail, type TriagePorts } from '../../src/triage/triage.ts'
 import type {
-  ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, Rule,
+  ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, MailSummaryLike, PendingAction, Rule,
 } from '../../src/triage/types.ts'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+/** 这个用例建过的引擎：跑完停掉，别把定时器留在进程里。 */
+const engines: DecisionEngine[] = []
+
+afterEach(() => {
+  for (const engine of engines.splice(0)) engine.stop()
+})
 
 /** 一行一行记录调用的假宿主。 */
 interface Recorder {
@@ -147,13 +154,45 @@ async function makePorts(
     console: host.console,
     log: () => undefined,
   })
+  const runs = createMailRunStore(join(home, 'runs.json'))
+  const pending = createMailPendingStore(join(home, 'pending.json'))
+  // 撤销与到期执行归引擎：这里用**真的**引擎，队列与记录就是上面这两份仓，
+  // 所以「撤销」「到期扫描」跑的是生产路径，而不是测试里另写一份。
+  const engine = new DecisionEngine({ home, dueIntervalMs: 3_600_000 })
+  await engine.use({
+    vocabulary: MAIL_VOCABULARY,
+    defaultRules: '',
+    conditions: builtinConditions(),
+    actions: builtinActions(),
+    runs,
+    pending,
+    config: () => config,
+    replayContext: record => {
+      // 引擎只认识调度字段；`ruleId` / `summary` 是邮件这一侧存进队列的。
+      const queued = record as unknown as PendingAction
+      return contextFor(
+        { id: queued.ruleId, name: queued.ruleId, enabled: true, priority: 0, when: [], then: [] },
+        queued.summary,
+        '',
+      )
+    },
+  })
+  engines.push(engine)
   return {
     rules: () => normalized.rules,
     config: () => config,
     conditions,
     actions,
-    runs: createMailRunStore(join(home, 'runs.json')),
-    pending: createMailPendingStore(join(home, 'pending.json')),
+    runs,
+    pending,
+    engine: {
+      undo: async (runId) => {
+        const result = await engine.undo(runId)
+        return { ok: result.ok, message: result.message ?? '' }
+      },
+      runDue: async now => await engine.runDue(now),
+      registerUndo: (runId, undo) => { engine.registerUndo(runId, undo) },
+    },
     context: input => contextFor(input.rule, input.mail.summary, input.body),
     replayContext: input => contextFor(
       { id: input.ruleId, name: input.ruleId, enabled: true, priority: 0, when: [], then: [] },
@@ -508,7 +547,7 @@ describe('suggest 三态：建议是可点的，而不是自动执行的', () =>
     expect(ports.pending.findByItem('item-1')?.kind).toBe('suggest')
 
     // 就算时间到了也不该被执行——否则「建议」会在两分钟后变成「自动」。
-    await expect(runDue(ports, new Date('2030-01-01T00:00:00.000Z'))).resolves.toBe(0)
+    await expect(ports.engine.runDue(new Date('2030-01-01T00:00:00.000Z'))).resolves.toBe(0)
     expect(host.calls).toEqual(['raise:mail:item-1'])
     expect(ports.pending.list()).toHaveLength(1)
   })
@@ -521,7 +560,7 @@ describe('suggest 三态：建议是可点的，而不是自动执行的', () =>
     // 账号名要在排队时记下来：`message` 里只有 id，延迟执行的通知不能显示成一串 id。
     expect(ports.pending.list()[0]?.accountName).toBe('我的邮箱')
 
-    const executed = await runDue(ports, new Date('2030-01-01T00:00:00.000Z'))
+    const executed = await ports.engine.runDue(new Date('2030-01-01T00:00:00.000Z'))
     expect(executed).toBe(1)
     expect(host.calls).toContain('applyAction:markRead')
     expect(ports.pending.list()).toHaveLength(0)

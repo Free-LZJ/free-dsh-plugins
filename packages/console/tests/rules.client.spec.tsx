@@ -97,8 +97,9 @@ function engine(overrides: Partial<TriageSource> = {}) {
   const rules = (): Promise<TriageRules> => Promise.resolve({
     rules: RULES,
     source: 'file',
-    path: 'C:/dsh/mail/triage/rules.yml',
+    path: 'C:/dsh/dsh-console/rules/rules.yml',
     dropped: [],
+    connector: true,
   })
   const source: TriageSource = {
     rules,
@@ -166,7 +167,7 @@ describe('the rules view on screen', () => {
   it('says where the rules came from and which file', async () => {
     const { source } = engine()
     render(<RulesView t={t} triage={source} />)
-    expect(await screen.findByText(/C:\/dsh\/mail\/triage\/rules\.yml/)).toBeTruthy()
+    expect(await screen.findByText(/C:\/dsh\/dsh-console\/rules\/rules\.yml/)).toBeTruthy()
   })
 
   it('flips one rule on and off', async () => {
@@ -210,14 +211,32 @@ describe('the rules view on screen', () => {
     await waitFor(() => { expect(calls.undo).toEqual(['run-live']) })
   })
 
-  it('says the engine is absent instead of showing an empty rule file', async () => {
-    // mail 没装：404 不是「没有规则」，页面上这两件事必须长得不一样。
+  it('says the engine is absent when it does not answer at all', async () => {
+    // 引擎没响应：这既不是「没有规则」，也不是「没有连接器」，页面上三件事必须分得开。
     const { source } = engine({
-      rules: async () => { throw new TriageUnavailable(404) },
+      rules: async () => { throw new TriageUnavailable(500) },
     })
     render(<RulesView t={t} triage={source} />)
     expect(await screen.findByText(t('rulesUnavailable'))).toBeTruthy()
     expect(screen.queryByText(t('rulesNone'))).toBeNull()
+    expect(screen.queryByText(t('rulesNoConnector'))).toBeNull()
+  })
+
+  it('says no connector provides rules instead of drawing an empty rule file', async () => {
+    // 没装连接器（例如邮件）：规则引擎在，只是还没有谁把规则喂给它。
+    const { source } = engine({
+      rules: async () => ({
+        rules: [],
+        source: 'default' as const,
+        path: 'C:/dsh/dsh-console/rules/rules.yml',
+        dropped: [],
+        connector: false,
+      }),
+    })
+    render(<RulesView t={t} triage={source} />)
+    expect(await screen.findByText(t('rulesNoConnector'))).toBeTruthy()
+    expect(screen.queryByText(t('rulesNone'))).toBeNull()
+    expect(screen.queryByText(t('rulesUnavailable'))).toBeNull()
   })
 
   it('reports a rule file that did not parse, and the rules it skipped', async () => {
@@ -226,8 +245,9 @@ describe('the rules view on screen', () => {
         rules: RULES,
         error: { message: 'unexpected key "whenn"', line: 12 },
         source: 'file' as const,
-        path: 'C:/dsh/mail/triage/rules.yml',
+        path: 'C:/dsh/dsh-console/rules/rules.yml',
         dropped: ['规则 2：priority 不是数字'],
+        connector: true,
       }),
     })
     render(<RulesView t={t} triage={source} />)
@@ -269,7 +289,7 @@ describe('changing a rule', () => {
     await waitFor(() => { expect(clipboard.written.length).toBe(1) })
     const instruction = clipboard.written[0] as string
     // 指令要能独立读懂：改哪个文件、哪条规则、它现在长什么样。
-    expect(instruction).toContain('C:/dsh/mail/triage/rules.yml')
+    expect(instruction).toContain('C:/dsh/dsh-console/rules/rules.yml')
     expect(instruction).toContain('github')
     expect(instruction).toContain('"when"')
     expect(await screen.findByText(t('ruleCopyDone'))).toBeTruthy()
@@ -320,8 +340,9 @@ describe('changing a rule', () => {
       rules: async () => ({
         rules: RULES,
         source: 'file' as const,
-        path: 'C:/dsh/mail/triage/rules.yml',
+        path: 'C:/dsh/dsh-console/rules/rules.yml',
         dropped: [],
+        connector: true,
         raw: 'rules:\n  - id: github\n',
       }),
     })

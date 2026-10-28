@@ -67,10 +67,10 @@ declare module '@deepseek-ai/cordis' {
      * A new message arrived on a configured account.
      *
      * Emitted alongside the triage engine rather than instead of it: what rules
-     * exist and what they do is this plugin's own business now (`config.triage`),
-     * and the event is for anything else that wants to see a message arrive. The
-     * dedupe ledger is written **before** this is dispatched, so a listener that
-     * throws does not cause a replay.
+     * exist and what they do now belongs to the workbench's rule engine
+     * (`config.triage` feeds it), and the event is for anything else that wants
+     * to see a message arrive. The dedupe ledger is written **before** this is
+     * dispatched, so a listener that throws does not cause a replay.
      */
     'mail/received'(payload: MailReceivedPayload): void
   }
@@ -551,9 +551,10 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
       }
 
       if (!backfill) {
-        // 新邮件只有一个去处：分诊规则（`$DSH_HOME/mail/triage/rules.yml`）。没有规则
-        // 命中的邮件就留在面板里——「什么都不做」是一个明确的规则结果，不是一条没走通
-        // 的路。账号级 trigger 已经去掉：它与分诊重叠，而分诊开着时它根本不生效。
+        // 新邮件只有一个去处：分诊规则（`$DSH_HOME/dsh-console/rules/rules.yml`，规则
+        // 状态归工作台那一侧的引擎）。没有规则命中的邮件就留在面板里——「什么都不做」
+        // 是一个明确的规则结果，不是一条没走通的路。账号级 trigger 已经去掉：它与分诊
+        // 重叠，而分诊开着时它根本不生效。
         for (const message of outcome.messages) {
           await handOver(message, {
             accountId,
@@ -797,7 +798,12 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
   ctx.provide('mail', service)
 
   /**
-   * 规则分诊：规则文件、命中记录与撤销现在都归本插件。
+   * 规则分诊：本插件是**连接器**，规则状态归工作台持有的那台引擎。
+   *
+   * 规则文件、命中记录、待确认、撤销与到期执行都在 `@free-lzj/dsh-decision` 的
+   * `DecisionEngine` 里；工作台（`@free-lzj/dsh-console`）持有唯一一份并通过
+   * `ctx.console.decision` 露出来。装了就注册上去，没装就自己建一个同类的、写同一个
+   * 数据目录（`$DSH_HOME/dsh-console/rules`），所以两种装法都只有一份规则。
    *
    * 它拿到的邮件能力就是上面那个服务——同一个对象，所以面板里点的动作与规则打出的
    * 动作不会变成两套实现。
@@ -1072,7 +1078,7 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
       return { ok: true, added, exhausted }
     },
 
-    // 分诊的读与写：规则、命中记录、撤销、试跑。
+    // 分诊的读与写：规则、命中记录、撤销、试跑（同一份状态，工作台也读它）。
     triage: engine.routes,
   }
 

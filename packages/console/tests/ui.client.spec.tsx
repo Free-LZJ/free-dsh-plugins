@@ -190,9 +190,11 @@ function shellFace(
         return { ok: true }
       },
       liveNotices: () => [],
-      // 规则视图读的是另一个插件（mail）的引擎；这一层的用例只关心导航，所以给空引擎。
+      // 规则视图读的是工作台自己的引擎；这一层的用例只关心导航，所以给空引擎。
       triage: {
-        rules: async () => ({ rules: [], source: 'file' as const, path: 'C:/dsh/mail/triage/rules.yml', dropped: [] }),
+        rules: async () => ({
+          rules: [], source: 'file' as const, path: 'C:/dsh/dsh-console/rules/rules.yml', dropped: [], connector: true,
+        }),
         runs: async () => [],
         setEnabled: async () => ({ ok: true }),
         movePriority: async () => ({ ok: true }),

@@ -13,7 +13,6 @@ import { builtinActions, type ActionContext, type ActionOutcome } from '../../sr
 import { builtinConditions, type MatchContext } from '../../src/triage/conditions.ts'
 import { ActionRegistry, ConditionRegistry, registerAll } from '@free-lzj/dsh-decision'
 import { createMailPendingStore, createMailRunStore } from '../../src/triage/records.ts'
-import { normalizeConfig } from '../../src/triage/config.ts'
 import { applySuggestion } from '../../src/triage/suggest.ts'
 import type { TriagePorts } from '../../src/triage/triage.ts'
 import type { ActionKind, ActionSpec, ConditionKind, ConditionSpec, MailSummaryLike, Rule } from '../../src/triage/types.ts'
@@ -75,16 +74,8 @@ async function bench(options: { readonly actionFails?: boolean } = {}) {
     log: () => undefined,
   })
 
-  const ports: TriagePorts = {
-    rules: () => [],
-    config: () => normalizeConfig({ undoWindowSeconds: 0 }),
-    conditions,
-    actions,
-    runs,
-    pending,
-    context,
+  const ports: Pick<TriagePorts, 'replayContext'> = {
     replayContext: () => context(),
-    log: () => undefined,
   }
   await runs.load()
   await pending.load()

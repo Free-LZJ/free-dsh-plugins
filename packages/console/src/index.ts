@@ -27,11 +27,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 // Type-only: the `ctx.webServer` service merge the routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { DecisionEngine } from '@free-lzj/dsh-decision'
 import { registerBuiltinChannels, type PageSurfaces } from './builtin-channels.ts'
 import { STATE_DIR } from './store.ts'
 import { ConsoleHost } from './console-host.ts'
 import { BUILTIN_CHANNELS, type ConsoleLayout, type RunningSession } from './protocol.ts'
 import { registerRoutes, type RouteHost } from './routes.ts'
+import { registerRulesRoutes, rulesHome } from './rules/index.ts'
 import { registerAgentTools } from './tools.ts'
 import { WorkbenchBoard, type ExecutorNote } from './workbench/board.ts'
 import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
@@ -51,6 +53,8 @@ export { ChannelRegistry } from './channels.ts'
 export type { DispatchResult, NoticeDelivery, NotificationChannel } from './channels.ts'
 export { PresenceGate, registerBuiltinChannels } from './builtin-channels.ts'
 export type { BuiltinChannelWiring, PageSurfaces } from './builtin-channels.ts'
+export { registerRulesRoutes, rulesHome } from './rules/index.ts'
+export type { RulesEngine, RulesRouteHost } from './rules/index.ts'
 export * from './paths.ts'
 export * from './protocol.ts'
 export { STATE_DIR }
@@ -137,11 +141,26 @@ export const Config = Schema.object({
  */
 export function apply(ctx: Context, config: Config): void {
   const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  /**
+   * 规则引擎：规则文件、命中记录、待确认与撤销都归工作台持有。
+   *
+   * 它是库而不是插件的一半——没有连接器时它安静地什么都不做，`ctx.console.decision`
+   * 仍然在，连接器（邮件…）把自己的词表与动作注册进来。**只有这一个实例**：连接器
+   * 优先用它，这是「规则文件只有一份状态」的实现方式。
+   */
+  const decision = new DecisionEngine({
+    home: rulesHome(home),
+    log: (line) => { ctx.logger.info(line) },
+    warn: (line) => { ctx.logger.warn(line) },
+  })
+  void decision.start()
+  ctx.effect(() => () => { decision.stop() }, 'console: stop the rule engine')
   const host = new ConsoleHost(ctx, {
     homeDir: home,
     channels: () => config.channels,
     layout: () => config.layout,
     runningSessions: async () => await readRunningSessions(ctx),
+    decision,
   })
 
   /**
@@ -276,6 +295,7 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   registerRoutes(ctx, routeHost)
+  registerRulesRoutes(ctx, { engine: decision })
 
   // 工具注册表可能比本插件晚挂载（Loader 行的顺序由用户的 profile 决定），所以跟随它
   // 出现，而不是在 apply 时判断一次就放弃（`rules/design-patterns.md`）。

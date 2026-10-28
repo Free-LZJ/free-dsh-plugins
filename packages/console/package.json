@@ -73,7 +73,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.3"
+    "@deepseek-ai/schemastery": "^3.18.3",
+    "@free-lzj/dsh-decision": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.3",

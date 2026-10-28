@@ -27,6 +27,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { Service, type Context } from '@deepseek-ai/cordis'
+import type { DecisionEngine } from '@free-lzj/dsh-decision'
 import { PresenceGate } from './builtin-channels.ts'
 import { ChannelRegistry, type NoticeDelivery } from './channels.ts'
 import type {
@@ -89,6 +90,15 @@ export interface ConsoleHostOptions {
   readonly runningSessions?: () => Promise<readonly RunningSession[]>
   /** How often to refresh {@link runningSessions}. Defaults to 5s. */
   readonly runningRefreshMs?: number
+  /**
+   * The rule engine this workbench holds.
+   *
+   * Optional only so a spec can build the service without one; the plugin's own
+   * mount always passes it. A connector (mail, Jira, …) probes `ctx.console.decision`
+   * and registers its vocabulary there, which is what makes the rule state live
+   * in exactly one place.
+   */
+  readonly decision?: DecisionEngine
 }
 
 /** Normalize a caller-supplied tone, defaulting to `info`. */
@@ -161,6 +171,13 @@ export class ConsoleHost extends Service {
   private runningTimer: NodeJS.Timeout | undefined
   /** 自动化日志，最新在前，长度封顶 {@link LOG_LIMIT}。 */
   private readonly logEntries: ConsoleLogEntry[] = []
+  /**
+   * 规则引擎：规则文件、命中记录、待确认与撤销都归它。
+   *
+   * 连接器（邮件…）通过 `ctx.console.decision` 把自己的词表注册进来；没有连接器
+   * 时它仍然在，只是规则页会说「还没有连接器提供规则」。
+   */
+  readonly decision: DecisionEngine | undefined
 
   /**
    * @param ctx - the providing plugin's context (the service unloads with it).
@@ -169,6 +186,7 @@ export class ConsoleHost extends Service {
   constructor(ctx: Context, private readonly options: ConsoleHostOptions) {
     super(ctx, 'console')
     this.layout = options.layout()
+    this.decision = options.decision
     this.ready = readPrefs(options.homeDir).then((saved) => {
       this.prefs = saved
       this.bump()
