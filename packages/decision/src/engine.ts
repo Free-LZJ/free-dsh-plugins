@@ -23,7 +23,7 @@
  * @module @free-lzj/dsh-decision/engine
  */
 
-import { existsSync, readFileSync, watch, type FSWatcher } from 'node:fs'
+import { existsSync, readFileSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { runDueActions } from './actions/due.ts'
 import { undoRunById } from './actions/undo.ts'
@@ -472,22 +472,36 @@ export class DecisionEngine {
    *
    * 规则与记录属于用户，不是缓存：从一个以前的版本升级上来时，那几条规则不该凭空
    * 消失。**只搬不删**——旧目录留着，用户自己决定要不要清。
+   *
+   * 每份文件单独挑**修改时间最新**的那一份，而不是按目录清单的顺序先到先得：清单里
+   * 越靠前的目录不代表文件越新（`$DSH_HOME/mailflow` 这类更老的位置常常还在，里面
+   * 是几周前的默认规则）。先到先得会把旧的搬进去、把上一版真正在用的那份跳过——
+   * 那看起来就是「升级之后我的规则全变了」。
    * @param legacy - 旧目录清单。
    */
   private async adoptLegacy(legacy: readonly string[]): Promise<void> {
-    for (const directory of legacy) {
-      if (!existsSync(directory)) continue
-      for (const name of RULE_STATE_FILES) {
+    for (const name of RULE_STATE_FILES) {
+      const to = join(this.home, name)
+      if (existsSync(to)) continue
+      let newest: { readonly from: string; readonly at: number } | undefined
+      for (const directory of legacy) {
         const from = join(directory, name)
-        const to = join(this.home, name)
-        if (existsSync(to) || !existsSync(from)) continue
+        if (!existsSync(from)) continue
+        let at: number
         try {
-          // 走同一个原子写：目标目录可能还不存在，而 `copyFileSync` 不会替我们建。
-          await writeTextFile(to, readFileSync(from, 'utf8'))
-          this.warn(`规则引擎: 已把 ${name} 从 ${directory} 搬到 ${this.home}`)
-        } catch (error: unknown) {
-          this.warn(`规则引擎: 搬 ${name} 失败：${describe(error)}`)
+          at = statSync(from).mtimeMs
+        } catch {
+          continue
         }
+        if (newest === undefined || at > newest.at) newest = { from, at }
+      }
+      if (newest === undefined) continue
+      try {
+        // 走同一个原子写：目标目录可能还不存在，而 `copyFileSync` 不会替我们建。
+        await writeTextFile(to, readFileSync(newest.from, 'utf8'))
+        this.warn(`规则引擎: 已把 ${name} 从 ${newest.from} 搬到 ${this.home}`)
+      } catch (error: unknown) {
+        this.warn(`规则引擎: 搬 ${name} 失败：${describe(error)}`)
       }
     }
   }

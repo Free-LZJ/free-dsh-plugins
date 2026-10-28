@@ -9,7 +9,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -216,6 +216,36 @@ describe('旧目录迁移', () => {
     expect(engine.rules().map(rule => rule.id)).toEqual(['mine'])
     expect(engine.view().source).toBe('file')
     expect(existsSync(join(legacy, 'rules.yml'))).toBe(true)
+  })
+
+  it('两份旧目录都在时，搬修改时间新的那份，而不是清单里靠前的', async () => {
+    // 真实分布：`$DSH_HOME/mailflow`（上上版的默认规则）一直留着，真正在用的是
+    // `$DSH_HOME/mail/triage`。按清单顺序先到先得会把几周前的默认搬进去，看起来
+    // 就是「升级之后我的规则全变了」。
+    const { home, engine, connector } = await harness('legacy-newest', { legacyHomes: [] })
+    const older = join(home, '..', 'mailflow')
+    const newer = join(home, '..', 'mail', 'triage')
+    await mkdir(older, { recursive: true })
+    await mkdir(newer, { recursive: true })
+    const rules = (id: string): string => [
+      `- id: ${id}`,
+      '  name: 一条规则',
+      '  when:',
+      '    - kind: always',
+      '  then:',
+      '    - kind: mark',
+      '',
+    ].join('\n')
+    await writeFile(join(older, 'rules.yml'), rules('stale'), 'utf8')
+    await writeFile(join(newer, 'rules.yml'), rules('current'), 'utf8')
+    const past = new Date(Date.now() - 60_000)
+    await utimes(join(older, 'rules.yml'), past, past)
+
+    // 清单把更老的放在前面：结果仍应是较新的那份。
+    await engine.use({ ...connector, legacyHomes: [older, newer] })
+    await engine.start()
+
+    expect(engine.rules().map(rule => rule.id)).toEqual(['current'])
   })
 })
 
