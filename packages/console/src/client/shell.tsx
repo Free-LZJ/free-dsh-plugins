@@ -231,6 +231,7 @@ export function FocusShell(props: ConsoleShellProps): ReactNode {
           waitingOn={sessionId => notices
             .filter(notice => notice.state === 'new' && notice.sessionId === sessionId)
             .map(notice => notice.title)}
+          {...(props.workbench === undefined ? {} : { workbench: props.workbench })}
         />
       </div>
     </div>

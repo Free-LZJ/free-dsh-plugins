@@ -62,6 +62,15 @@ describe('the focus page', () => {
   })
 
 
+  it('lists the finished runs that are waiting for a human', () => {
+    // 第三档状态（已结束未读）来自看板的 `awaitingConfirmation`，不是自造的状态。
+    const face = {
+      useBoard: () => [{ id: 'c1', title: '看板重构', awaitingConfirmation: true }],
+    } as unknown as Parameters<typeof FocusPage>[0]['workbench']
+    render(<FocusPage t={t} running={() => []} waitingOn={() => []} {...(face === undefined ? {} : { workbench: face })} />)
+    expect(screen.getByText('看板重构')).toBeTruthy()
+    expect(screen.getByText('待确认')).toBeTruthy()
+  })
   it('says which running sessions are waiting on you', () => {
     // 「在跑」与「在等你」是两件事：一条会话跑着但等你确认时，该做的动作完全不同。
     render(<FocusPage t={t} running={() => [session({ sessionId: 's1', title: '看板' })]} waitingOn={(id) => (id === 's1' ? ['邮件分诊：限时优惠'] : [])} />)

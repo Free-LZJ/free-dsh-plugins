@@ -16,7 +16,8 @@
 
 import type { ReactNode } from 'react'
 import { StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { RunningSession } from '../protocol.ts'
+import type { RunningSession, WorkbenchCard } from '../protocol.ts'
+import type { WorkbenchFace } from './workbench/board.tsx'
 import type { Translate } from './locales.ts'
 import { CLS } from './styles.ts'
 
@@ -36,6 +37,8 @@ export function FocusPage(props: {
    * 它自己空转，需要的动作完全不同。数据来自工作台已有的条目，不依赖宿主暴露会话状态。
    */
   readonly waitingOn: (sessionId: string) => readonly string[]
+  /** 看板的面；有它才谈得上「做完等你确认」。 */
+  readonly workbench?: WorkbenchFace
 }): ReactNode {
   const { t } = props
   const sessions = props.running()
@@ -88,7 +91,50 @@ export function FocusPage(props: {
             })}
           </ul>
         )}
+      {props.workbench === undefined ? null : <AwaitingList face={props.workbench} t={t} />}
       <p className={CLS.viewMeta}>{t('focusLater')}</p>
     </section>
+  )
+}
+/**
+ * The third state tier: work finished and waiting for a human.
+ *
+ * It comes from the board, not from the harness: `awaitingConfirmation` already means
+ * "the run is over and its result has not been looked at yet". Reading it here keeps the
+ * promise that none of these tiers is invented state.
+ *
+ * The hook lives in this component so it only runs when a board exists — a conditional
+ * hook inside the page would break the rules of hooks.
+ * @param props.face - the board.
+ * @param props.t - the translate seat.
+ * @returns the section, or a line saying there is nothing waiting.
+ */
+function AwaitingList(props: { readonly face: WorkbenchFace; readonly t: Translate }): ReactNode {
+  // 看板快照在首帧是 undefined（数据还在路上），那时没有「等你确认」可言。
+  const awaiting: readonly WorkbenchCard[] =
+    props.face.useBoard(state => state?.cards.filter(card => card.awaitingConfirmation)) ?? []
+  return (
+    <>
+      <h3 className={CLS.viewSubheading}>
+        {props.t('focusAwaiting', { count: awaiting.length })}
+      </h3>
+      {awaiting.length === 0
+        ? <p className={CLS.emptyLine}>{props.t('focusAwaitingEmpty')}</p>
+        : (
+          <ul className={CLS.focusList}>
+            {awaiting.map(card => (
+              <li key={card.id} className={CLS.focusItem}>
+                <div className={CLS.focusMain}>
+                  <span className={CLS.focusTitle}>{card.title}</span>
+                </div>
+                <span className={CLS.focusState}>
+                  <StateDot state="done" />
+                  <Tag tone="quiet">{props.t('focusAwaitingTag')}</Tag>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+    </>
   )
 }
