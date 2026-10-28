@@ -498,7 +498,9 @@ export class WorkbenchBoard {
         if (current !== undefined && current.column === 'processing') {
           const finished: WorkbenchCard = {
             ...current,
-            column: status === 'done' ? 'done' : current.column,
+            // 失败退回待处理：留在 processing 会让这张卡**既不能派单也不能重试**
+            // （`dispatch` 对 processing 直接早退），而界面看起来「它还在跑」。
+            column: status === 'done' ? 'done' : 'todo',
             status: status === 'done' ? 'done' : 'failed',
             awaitingConfirmation: status === 'done',
             updatedAt: Date.now(),

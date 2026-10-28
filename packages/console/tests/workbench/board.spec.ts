@@ -236,10 +236,9 @@ describe('manual dispatch and session control', () => {
     expect(dispatched.ok).toBe(true)
     if (!dispatched.ok) return
     expect(board.state().cards[0]?.status).toBe('failed')
-    const todo = board.move(ingested.card.id, 'todo')
-    expect(todo.ok).toBe(true)
-    if (!todo.ok || todo.card === undefined) return
-    expect(todo.card.status).toBe('idle')
+    // 失败**自己退回待处理**：留在 processing 的话 `dispatch` 会直接早退，卡片既不能
+    // 重试也不能再派，界面还写着「进行中」。
+    expect(board.state().cards[0]?.column).toBe('todo')
     // 再派单能重来：先收掉那条死掉的会话，再开新的。
     const retried = board.dispatch(ingested.card.id, 'boom')
     expect(retried.ok).toBe(true)
