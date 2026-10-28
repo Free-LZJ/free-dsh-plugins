@@ -117,6 +117,7 @@ function face(state: WorkbenchState = board()) {
     move: [] as { cardId: string; column: WorkbenchColumn }[],
     interrupt: [] as { sessionId: string; text: string }[],
     confirm: [] as string[],
+    end: [] as string[],
   }
   const fake: WorkbenchFace = {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
@@ -139,7 +140,10 @@ function face(state: WorkbenchState = board()) {
     },
     pause: async () => true,
     resume: async () => true,
-    end: async () => true,
+    end: async (sessionId) => {
+      calls.end.push(sessionId)
+      return true
+    },
   }
   return { calls, face: fake }
 }
@@ -276,6 +280,9 @@ describe('the board on screen', () => {
     fireEvent.change(within(dialog).getByPlaceholderText(t('interruptPlaceholder')), { target: { value: '先别动那一行' } })
     fireEvent.click(within(dialog).getByRole('button', { name: t('interruptSend') }))
     expect(calls.interrupt).toEqual([{ sessionId: 'session-1', text: '先别动那一行' }])
+    // 停止是另一种意图：插话是催它，停止是拦它——两个按钮都在同一块里。
+    fireEvent.click(within(dialog).getByRole('button', { name: t('sessionStop') }))
+    expect(calls.end).toEqual(['session-1'])
   })
 
   it('offers "written back" on a finished card that still awaits it', () => {

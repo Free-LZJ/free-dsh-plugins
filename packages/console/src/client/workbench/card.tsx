@@ -283,6 +283,8 @@ export interface CardDetailProps {
   readonly onDispatch: () => void
   readonly onMove: (column: WorkbenchColumn) => void
   readonly onInterrupt: (text: string) => void
+  /** 停止这一轮：真实会话走 `cancel()`，卡片随后落到失败并带原因。 */
+  readonly onStop: () => void
   /** Mark the card written back; only shown on a finished card still awaiting it. */
   readonly onConfirm: () => void
 }
@@ -386,6 +388,8 @@ export function CardDetail(props: CardDetailProps): ReactNode {
               >
                 {t('interruptSend')}
               </Button>
+              {/* 停止是「这一轮不要了」，与插话是两种意图：一个催它、一个拦它。 */}
+              <Button onClick={props.onStop}>{t('sessionStop')}</Button>
             </div>
           </div>
         </>

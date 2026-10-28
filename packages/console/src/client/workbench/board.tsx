@@ -287,6 +287,10 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
             if (openSession === undefined) return
             run(face.interrupt(openSession.id, text))
           }}
+          onStop={() => {
+            if (openSession === undefined) return
+            run(face.end(openSession.id))
+          }}
         />
       )}
     </div>
