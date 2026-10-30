@@ -41,9 +41,11 @@ import { LlmClassifier, modelRoute, type LlmPortLike } from './workbench/llm-cla
 import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
 import { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
 import {
-  createHarnessRunner, runningSessionsOf, type HarnessAgentsLike, type HarnessSessionEventLike,
+  createHarnessRunner, runningSessionsOf, titleOfSession, type HarnessAgentLike, type HarnessAgentsLike,
+  type HarnessSessionEventLike, type SessionRecordLike, type SessionTitleReaderLike,
 } from './workbench/harness-session.ts'
 import { RealSessionExecutor } from './workbench/real-session.ts'
+import { createWorkbenchSessionPort, type SessionControllerLike } from './workbench/session-port.ts'
 import { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
 import { registerWorkbenchRoutes } from './workbench/routes.ts'
 
@@ -198,23 +200,35 @@ export function apply(ctx: Context, config: Config): void {
   // `dsh` 只有真实会话这一种实现：派给 DSH 就是把卡变成一条真实会话，没有模拟版。
   // （`codex` 仍是模拟，等它的真实接入单独做。）
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
-  // 真实会话执行器：等 `agents` 服务就位之后才注册。
+  // 真实会话执行器：等 `sessionController` 服务就位之后才注册。
   //
-  // 实测过的名字（见 `docs/workbench-session-api.md`）：宿主给的是 `agents` 与
-  // `sessions`，**没有** `sessionController` / `workspaceRegistry`——按后者写代码会
-  // 永远等不到服务、静默什么都不做。`agents.createSession({cwd})` 是唯一同时建出
-  // 代理与其会话的入口；`ctx.on('session/event')` 才是真正的事件源。
+  // 2026-10-30 真机复核（见 `docs/workbench-session-api.md`）：宿主里有
+  // `sessionController`，`create` / `resolveAgent` / `rename` / `followup` 可从 Host
+  // 调用；`agents.createSession` **不存在**。会话事件仍走 `ctx.on('session/event')`。
   let realRegistered = false
   /** 为什么没有真实执行器：给连接器页用，空串表示有。 */
   let note: ExecutorNote = 'no-session-api'
-  ctx.inject(['agents'], (inner) => {
+  // `sessionController` 是本机真正能建会话的服务（mail 的分类会话就是它建的）；
+  // `agents.createSession` 在这个宿主里不存在，按它写只会注册一个永远不触发的执行器。
+  ctx.inject(['sessionController'], (inner) => {
     if (realRegistered) return
-    const agents = inner.get('agents') as HarnessAgentsLike | undefined
-    if (agents === undefined) return
-    // 真实执行器关掉是正常部署，但要让界面能说出「还差哪一项」。
-    if (config.workbenchWorkspace === '') note = 'no-workspace'
-    else if (typeof (agents as { createSession?: unknown }).createSession !== 'function') note = 'no-session-api'
-    else note = ''
+    const controller = inner.get('sessionController') as SessionControllerLike | undefined
+    if (config.workbenchWorkspace === '') {
+      note = 'no-workspace'
+      return
+    }
+    if (controller === undefined) return
+    // 真实执行器只依赖「建会话 + 拿 agent」两个动词，二者都由 sessionController 提供。
+    const agents: HarnessAgentsLike = {
+      createSession: async (request) => {
+        const created = await controller.create(request)
+        const resolved = await controller.resolveAgent(created.sessionId)
+        if ('error' in resolved) {
+          throw new Error(`会话已建但取不到 agent：${describeError(resolved.error)}`)
+        }
+        return { agent: resolved.agent as unknown as HarnessAgentLike }
+      },
+    }
     const runner = createHarnessRunner({
       agents,
       cwd: config.workbenchWorkspace,
@@ -232,6 +246,7 @@ export function apply(ctx: Context, config: Config): void {
     }
     executors.register(new RealSessionExecutor(runner))
     realRegistered = true
+    note = ''
     inner.logger.info(`console: real executor on (workspace: ${config.workbenchWorkspace})`)
   })
   const connectors = new ConnectorRegistry()
@@ -256,6 +271,8 @@ export function apply(ctx: Context, config: Config): void {
     },
   })
   host.attachWorkbench(board)
+  // 会话能力由工作台提供：连接器只负责「说什么、在哪个目录说」。
+  host.attachSessions(createWorkbenchSessionPort(ctx, board))
   registerWorkbenchRoutes(ctx, { board })
   // 卸载时把最后一次写等完再走：写是合并的（一次写 + 一次补写），如果这一层不先生效，
   // 插件热重载/停用时最后那次改动就可能只留在内存里。
@@ -308,15 +325,36 @@ export function apply(ctx: Context, config: Config): void {
 }
 
 /**
- * 现在有哪些会话在干活。
+ * 现在有哪些会话在干活，以及它们叫什么。
  *
- * 从 **`agents`** 读，不是从 `sessionController` 读——后者是浏览器的 Remote 名字，
- * 宿主上下文里没有这个服务，所以这里以前永远返回空（`docs/workbench-session-api.md`）。
+ * 从 **`agents`** 注册表读「正在跑」；**创建**会话走 `sessionController`
+ * （2026-10-30 实测它在 Host 侧可用，`agents.createSession` 不存在）。
+ * 标题来自 `sessions` 里那条会话的标题投影，取不到时退到首条用户消息；两者都没有时
+ * 返回空串，页面把它显示成「未命名会话 · 短 id」，而不是一串 UUID。
  * 结构化声明而不是 import 宿主类型：那是**可选**依赖，没挂它的部署只是首页少一块。
  * @param ctx - Host 上下文。
  * @returns 正在运行的会话；读不到时给空数组。
  */
 function readRunningSessions(ctx: Context): readonly RunningSession[] {
+  const sessions = ctx.get('sessions') as { get?(id: string): SessionRecordLike | undefined } | undefined
+  const titles = ctx.get('sessionTitle') as SessionTitleReaderLike | undefined
   return runningSessionsOf(ctx.get('agents') as HarnessAgentsLike | undefined)
-    .map(agent => ({ sessionId: agent.sessionId, title: '', ...(agent.cwd === undefined ? {} : { cwd: agent.cwd }) }))
+    .map((agent) => {
+      const session = sessions?.get?.(agent.sessionId)
+      return {
+        sessionId: agent.sessionId,
+        title: titleOfSession(session, titles),
+        ...(agent.cwd === undefined ? {} : { cwd: agent.cwd }),
+      }
+    })
+}
+
+/** One error as a sentence (the controller reports errors as values, not throws). */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { readonly message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return String(error)
 }

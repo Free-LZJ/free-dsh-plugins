@@ -164,10 +164,13 @@ describe('the rules view on screen', () => {
     expect(screen.getByText(t('ruleDisabled'))).toBeTruthy()
   })
 
-  it('says where the rules came from and which file', async () => {
+  it('says where the rules came from without printing a local path', async () => {
     const { source } = engine()
     render(<RulesView t={t} triage={source} />)
-    expect(await screen.findByText(/C:\/dsh\/dsh-console\/rules\/rules\.yml/)).toBeTruthy()
+    // 抬头只说「来自文件」；本机绝对路径收进 title，点开原文时才在折叠区里看到。
+    const line = await screen.findByText(t('rulesSource', { source: t('rulesSourceFile') }))
+    expect(line.getAttribute('title')).toBe('C:/dsh/dsh-console/rules/rules.yml')
+    expect(screen.queryByText(/C:\/dsh\/dsh-console\/rules\/rules\.yml/)).toBeNull()
   })
 
   it('flips one rule on and off', async () => {

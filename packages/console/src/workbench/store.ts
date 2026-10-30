@@ -83,6 +83,7 @@ function normalize(value: unknown): WorkbenchDocument {
       ? (candidate.cards as WorkbenchCard[])
         .filter((card) => typeof card?.id === 'string')
         .map(withReadableReasons)
+        .map(withRoot)
       : [],
     sessions: Array.isArray(candidate.sessions)
       ? (candidate.sessions as WorkbenchSession[]).filter((session) => typeof session?.id === 'string')
@@ -119,4 +120,19 @@ function withReadableReasons(card: WorkbenchCard): WorkbenchCard {
 function readable(reasons: readonly (string | WorkbenchReason)[] | undefined): readonly WorkbenchReason[] {
   if (reasons === undefined) return []
   return reasons.map((reason) => (typeof reason === 'string' ? { code: 'legacy', text: reason } : reason))
+}
+
+/**
+ * Give a card from an older build its own chain.
+ *
+ * Chain grouping arrived after the first boards were written, so those cards have
+ * no `rootId`. A card that is its own root is exactly what the old board showed —
+ * one card per event — so nothing is silently merged on upgrade.
+ * @param card - a stored card.
+ * @returns the card with a root.
+ */
+function withRoot(card: WorkbenchCard): WorkbenchCard {
+  return typeof card.rootId === 'string' && card.rootId !== ''
+    ? card
+    : { ...card, rootId: card.id }
 }

@@ -77,7 +77,7 @@ interface Bench {
 }
 
 /** Stand in for `ctx`, keeping the handlers the plugin registered. */
-function bench(): Bench {
+function bench(boardOverride?: WorkbenchBoard): Bench {
   const routes = new Map<string, Handler>()
   const classifiers = new ClassifierRegistry()
   classifiers.register(new RuleClassifier())
@@ -86,7 +86,7 @@ function bench(): Bench {
   executors.register(new SimulatedExecutor('codex', 'Codex（模拟）', 0))
   const connectors = new ConnectorRegistry()
   for (const connector of builtinConnectors()) connectors.register(connector)
-  const board = new WorkbenchBoard({
+  const board = boardOverride ?? new WorkbenchBoard({
     classifiers,
     executors,
     connectors,
@@ -175,6 +175,64 @@ describe('workbench routes', () => {
     expect(stale.status).toBe(200)
     expect((stale.json as WorkbenchState).cards).toEqual([])
     expect(stale.json).not.toHaveProperty('unchanged')
+  })
+
+  it('sends only the new log lines when a running session printed more', async () => {
+    // 结构没变、只有日志在长：回整份文档会让「有会话在跑」时每两秒都在传全量。
+    const fake = {
+      state: () => ({
+        cards: [],
+        sessions: [{
+          id: 's-1',
+          cardId: 'c-1',
+          executor: 'dsh',
+          status: 'running',
+          createdAt: 1,
+          updatedAt: 30,
+          logs: [{ at: 10, text: 'a' }, { at: 20, text: 'b' }, { at: 30, text: 'c' }],
+        }],
+        connectors: [],
+        executors: [],
+        executorNote: '',
+        routingVersion: 'v1',
+        revision: 7,
+      }),
+    } as unknown as WorkbenchBoard
+    const route = bench(fake)
+    const res = await call(route, request({
+      url: `${WORKBENCH_STATE_PATH}?since=7&logsSince=20`,
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }))
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({ revision: 7, logs: [{ sessionId: 's-1', lines: [{ at: 30, text: 'c' }] }] })
+  })
+
+  it('answers "unchanged" once the log cursor is current too', async () => {
+    const fake = {
+      state: () => ({
+        cards: [],
+        sessions: [{
+          id: 's-1',
+          cardId: 'c-1',
+          executor: 'dsh',
+          status: 'running',
+          createdAt: 1,
+          updatedAt: 30,
+          logs: [{ at: 30, text: 'c' }],
+        }],
+        connectors: [],
+        executors: [],
+        executorNote: '',
+        routingVersion: 'v1',
+        revision: 7,
+      }),
+    } as unknown as WorkbenchBoard
+    const route = bench(fake)
+    const res = await call(route, request({
+      url: `${WORKBENCH_STATE_PATH}?since=7&logsSince=30`,
+      headers: { 'sec-fetch-site': 'same-origin' },
+    }))
+    expect(res.json).toMatchObject({ unchanged: true, revision: 7 })
   })
 
   it('refuses a method that is not a read', async () => {

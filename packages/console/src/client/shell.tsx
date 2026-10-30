@@ -92,6 +92,16 @@ export interface ShellInjected {
   /** Ask the Host to drop the notice list. */
   readonly clearNotices: () => void
   /**
+   * Open one session in the conversation page.
+   *
+   * Optional: it comes from the workspace page's client service, which a
+   * deployment may not compose. When absent the focus page draws no button at
+   * all rather than a button that cannot work.
+   */
+  readonly openSession?: (sessionId: string) => PanelOutcome
+  /** Whether {@link openSession} can reach a real service right now. */
+  readonly canOpenSession?: () => boolean
+  /**
    * Tell the Host the user picked an action on one item.
    *
    * The page does not know what the action means: it hands back the item id and the
@@ -140,6 +150,15 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
   const current = useView((view) => view)
   const rows = props.useRows((all) => all)
   const notices = mergeNotices(props.useNotices((all) => all), props.liveNotices())
+  /**
+   * Whether the attention queue has anything to say.
+   *
+   * When the board is mounted and completely empty, the board's own empty state
+   * is the one sentence the user should read; the queue's empty card above it
+   * would repeat it. Without a board the queue is the only content, so it keeps
+   * its empty state.
+   */
+  const hasAttention = notices.length > 0 || props.running().length > 0 || props.log().length > 0
   /** 上一次导航或打开失败的原因；空串表示没有。 */
   const [failure, setFailure] = useState('')
   /** 把一句失败原因显示出来：空串表示没事了。 */
@@ -171,14 +190,16 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
               注意力队列排在看板上方：它是「现在要你决定的事」里不能变成卡片的那一半
               （插件的 notice 与条目）。看板的三列回答的是另一半。
             */}
-            <AttentionQueue
-              t={t}
-              notices={notices}
-              running={props.running}
-              log={props.log}
-              actOnItem={props.actOnItem}
-              dismissItem={props.dismissItem}
-            />
+            {(workbench === undefined || hasAttention) && (
+              <AttentionQueue
+                t={t}
+                notices={notices}
+                running={props.running}
+                log={props.log}
+                actOnItem={props.actOnItem}
+                dismissItem={props.dismissItem}
+              />
+            )}
             {workbench === undefined ? <WorkbenchUnavailable t={t} /> : <BoardView face={workbench} t={t} />}
           </>
         )}
@@ -231,6 +252,8 @@ export function FocusShell(props: ConsoleShellProps): ReactNode {
           waitingOn={sessionId => notices
             .filter(notice => notice.state === 'new' && notice.sessionId === sessionId)
             .map(notice => notice.title)}
+          {...(props.openSession === undefined ? {} : { openSession: props.openSession })}
+          {...(props.canOpenSession === undefined ? {} : { canOpenSession: props.canOpenSession })}
           {...(props.workbench === undefined ? {} : { workbench: props.workbench })}
         />
       </div>
@@ -335,6 +358,7 @@ function NoticeButton({ t, notices, awaiting, onClear, actOnItem, dismissItem }:
         variant="ghost"
         size="sm"
         aria-label={awaiting === 0 ? t('noticeTitle') : t('noticeBadge', { count: awaiting })}
+        title={t('attentionItemsOnly')}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => { setOpen((value) => !value) }}

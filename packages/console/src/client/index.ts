@@ -90,20 +90,21 @@ export function apply(ctx: ClientContext): void {
   const face = createPageFace()
   const workbenchLink = new WorkbenchLink()
   const useBoard = bindSelector<WorkbenchState | undefined>(workbenchLink)
-  const workbenchFace: WorkbenchFace = {
-    useBoard,
-    dispatch: (cardId, executor) => workbenchLink.act({
-      action: 'dispatch',
-      cardId,
-      ...(executor === undefined ? {} : { executor }),
-    }),
-    move: (cardId, column) => workbenchLink.act({ action: 'move', cardId, column }),
-    interrupt: (sessionId, text) => workbenchLink.act({ action: 'interrupt', sessionId, text }),
-    pause: (sessionId) => workbenchLink.act({ action: 'pause', sessionId }),
-    resume: (sessionId) => workbenchLink.act({ action: 'resume', sessionId }),
-    end: (sessionId) => workbenchLink.act({ action: 'end', sessionId }),
-    confirm: (cardId) => workbenchLink.act({ action: 'confirm', cardId }),
-  }
+  /**
+   * 会话导航（可选）。
+   *
+   * 由工作区页提供：`openSession(sessionId)` 精确打开一条会话。没装它、或它比本页晚
+   * 挂载，都只意味着聚焦页少一个按钮——不是工作台起不来（同 `rules/design-patterns.md`
+   * 对可选依赖的要求）。
+   */
+  let sessionNavigation: { openSession?(target: string): void } | undefined
+  ctx.inject(['uiWorkspace'], (inner) => {
+    sessionNavigation = inner.get('uiWorkspace') as typeof sessionNavigation
+    inner.effect(() => () => {
+      sessionNavigation = undefined
+    }, 'console: session navigation')
+  })
+
   let liveNotices: readonly ConsoleNoticeRecord[] = []
 
   /**
@@ -141,6 +142,22 @@ export function apply(ctx: ClientContext): void {
     subscribe: (fn: () => void) => link.subscribe(fn),
   }
   const useNotices = bindSelector<readonly ConsoleNoticeRecord[]>(notices)
+  // 看板要读通知：一条链路的详情里，通知也是它的一步（同一件事别在两处各说一遍）。
+  const workbenchFace: WorkbenchFace = {
+    useBoard,
+    useNotices,
+    dispatch: (cardId, executor) => workbenchLink.act({
+      action: 'dispatch',
+      cardId,
+      ...(executor === undefined ? {} : { executor }),
+    }),
+    move: (cardId, column) => workbenchLink.act({ action: 'move', cardId, column }),
+    interrupt: (sessionId, text) => workbenchLink.act({ action: 'interrupt', sessionId, text }),
+    pause: (sessionId) => workbenchLink.act({ action: 'pause', sessionId }),
+    resume: (sessionId) => workbenchLink.act({ action: 'resume', sessionId }),
+    end: (sessionId) => workbenchLink.act({ action: 'end', sessionId }),
+    confirm: (cardId) => workbenchLink.act({ action: 'confirm', cardId }),
+  }
   const views = {
     getSnapshot: (): ConsoleView => link.viewPreference(),
     subscribe: (fn: () => void) => link.subscribe(fn),
@@ -278,6 +295,17 @@ export function apply(ctx: ClientContext): void {
     actOnItem: (id: string, actionId: string) => link.actOnItem({ op: 'act', id, actionId }),
     dismissItem: (id: string) => link.actOnItem({ op: 'dismiss', id }),
     liveNotices: () => liveNotices,
+    canOpenSession: () => typeof sessionNavigation?.openSession === 'function',
+    openSession: (sessionId: string) => {
+      const open = sessionNavigation?.openSession
+      if (open === undefined) return { ok: false as const, message: t('focusOpenFailed', { message: '' }) }
+      try {
+        open.call(sessionNavigation, sessionId)
+        return { ok: true as const }
+      } catch (error: unknown) {
+        return { ok: false as const, message: error instanceof Error ? error.message : String(error) }
+      }
+    },
     workbench: workbenchFace,
     triage,
   })

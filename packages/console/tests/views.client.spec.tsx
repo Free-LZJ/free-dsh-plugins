@@ -49,6 +49,7 @@ function board(): WorkbenchState {
 function face(state: WorkbenchState): WorkbenchFace {
   return {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
+    useNotices: <S,>(select: (current: readonly never[]) => S) => select([]),
     dispatch: async () => true,
     move: async () => true,
     interrupt: async () => true,
@@ -70,7 +71,7 @@ describe('ConnectorsView', () => {
   it('says which setting is missing instead of just showing no real executor', () => {
     // 静默缺席会让人以为功能坏了——上一轮我就是这么把 P2 判成「等宿主」的。
     render(<ConnectorsView t={t} face={face({ ...board(), executorNote: 'no-workspace' })} />)
-    expect(screen.getByRole('status').textContent).toContain('workbenchWorkspace')
+    expect(screen.getByRole('status').textContent).toBe(t('executorOffNoWorkspace'))
   })
 
   it('says nothing extra when the real executor is registered', () => {

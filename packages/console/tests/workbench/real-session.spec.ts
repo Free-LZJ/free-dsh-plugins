@@ -19,6 +19,7 @@ import type { WorkbenchCard } from '../../src/protocol.ts'
 function card(overrides: Partial<WorkbenchCard> = {}): WorkbenchCard {
   return {
     id: 'card-1',
+    rootId: 'card-1',
     source: 'mail',
     dedupeKey: 'mail:card-1',
     title: '页面报错',

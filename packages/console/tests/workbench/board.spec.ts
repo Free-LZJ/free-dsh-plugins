@@ -81,6 +81,36 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
   }
 }
 
+describe('chains', () => {
+  it('keeps a child session on the chain that dispatched it', async () => {
+    const { board } = bench()
+    const root = await board.ingest({ source: 'mail', title: 'DSH E2E 派单' })
+    if (!root.ok) throw new Error(root.error)
+    // 真实时序：会话先建出来（工具/规则动作），卡要等第一条消息投递才建。
+    board.linkSession('child-session', root.card.id)
+    expect(board.rootOfSession('child-session')).toBe(root.card.id)
+
+    const child = board.recordSessionCard({ sessionId: 'child-session', title: '子会话', source: 'manual' })
+    expect(child.rootId).toBe(root.card.id)
+    // 一张链路上的两张卡，根是同一张：看板据此显示成一张卡、详情里两行步骤。
+    expect(board.state().cards.map(card => card.rootId)).toEqual([root.card.id, root.card.id])
+  })
+
+  it('gives an event without a root its own chain, and one with a root the parent chain', async () => {
+    const { board } = bench()
+    const first = await board.ingest({ source: 'mail', title: '邮件一' })
+    const second = await board.ingest({ source: 'mail', title: '邮件二' })
+    if (!first.ok || !second.ok) throw new Error('ingest failed')
+    // 没有根的自成一链：升级不会把两件无关的事并到一起。
+    expect(first.card.rootId).toBe(first.card.id)
+    expect(second.card.rootId).toBe(second.card.id)
+
+    const child = await board.ingest({ source: 'jira', externalId: 'EXEPD-1', title: 'Jira 单', rootId: first.card.id })
+    if (!child.ok) throw new Error(child.error)
+    expect(child.card.rootId).toBe(first.card.id)
+  })
+})
+
 describe('ingest', () => {
   it('dispatches a confident bug and finishes it awaiting confirmation', async () => {
     const { board } = bench()
@@ -97,6 +127,42 @@ describe('ingest', () => {
     const session = board.state().sessions[0]
     expect(session?.status).toBe('done')
     expect(session?.logs.map((line) => line.text).join('\n')).toContain('处理完成，结果待用户确认')
+  })
+
+  it('adopts a rule-created session as a card and finishes it', () => {
+    // 规则动作通过工作台的会话端口建出会话后，看板必须显示它——否则工作台只是
+    // 「规则页 + 一个永远没卡的空看板」。
+    const { board } = bench()
+    const card = board.recordSessionCard({
+      sessionId: 's-real',
+      title: 'Jira 派单：EXEPD-1',
+      source: 'mail',
+      ruleName: 'jira-bugfix',
+    })
+    expect(card.column).toBe('processing')
+    expect(card.sessionId).toBe('s-real')
+    expect(board.state().sessions.find(session => session.id === 's-real')?.status).toBe('running')
+
+    board.appendSessionLog('s-real', '正在读单')
+    expect(board.state().sessions[0]?.logs.map(line => line.text)).toEqual(['正在读单'])
+
+    board.finishSession('s-real', 'done')
+    const finished = board.state().cards[0]
+    expect(finished?.column).toBe('done')
+    expect(finished?.awaitingConfirmation).toBe(true)
+  })
+
+  it('stamps every log line strictly later than the previous one', async () => {
+    // 页面用「最后一条日志的时间」当游标，同一个毫秒里写的两行也必须能分开：
+    // 脚本执行器一次会连写好几行。
+    const { board } = bench()
+    await board.ingest({ source: 'webhook', title: '线上服务崩溃，无法打开' })
+    await waitFor(() => board.state().sessions[0]?.status === 'done', 'the card to finish')
+    const logs = board.state().sessions.flatMap((session) => session.logs)
+    expect(logs.length).toBeGreaterThan(1)
+    for (let index = 1; index < logs.length; index += 1) {
+      expect(logs[index]?.at).toBeGreaterThan(logs[index - 1]?.at as number)
+    }
   })
 
   it('holds an unclassifiable event in todo, with no session', async () => {

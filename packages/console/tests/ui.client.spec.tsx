@@ -20,6 +20,7 @@ import type {
   ChannelInfo, ConsoleLogEntry, ConsoleNoticeRecord, ConsoleView, RunningSession,
 } from '../src/protocol.ts'
 import { ConsoleShell, mergeNotices } from '../src/client/shell.tsx'
+import type { WorkbenchFace } from '../src/client/workbench/board.tsx'
 import { ConsoleSettingsRow } from '../src/client/settings-row.tsx'
 import { PanelRegistry, filterPanels, panelRows, type PanelRow } from '../src/client/registry.ts'
 import type { ConsolePanelDescriptor } from '../src/client/contract.ts'
@@ -419,6 +420,60 @@ describe('the workbench on screen', () => {
     render(<ConsoleShell {...face} />)
     expect(screen.getByText(t('attentionClear'))).toBeTruthy()
     expect(screen.getByText(t('attentionEmpty'))).toBeTruthy()
+  })
+
+  it('says an empty board once, not once per layer', () => {
+    // 空看板：注意力队列的空卡与看板的统计条/三列空框会重复同一句话。
+    const { face } = shellFace([])
+    const emptyBoard = {
+      useBoard: <S,>(select: (state: { cards: readonly unknown[] } | undefined) => S) => select({ cards: [] }),
+      useNotices: <S,>(select: (notices: readonly never[]) => S) => select([]),
+    } as unknown as WorkbenchFace
+    render(<ConsoleShell {...face} workbench={emptyBoard} />)
+    expect(screen.getByText(t('boardEmpty'))).toBeTruthy()
+    expect(screen.queryByText(t('attentionEmpty'))).toBeNull()
+  })
+
+  it('never shows a bare session id in the running list', () => {
+    const session: RunningSession = { sessionId: '12345678-aaaa-bbbb-cccc-000000000000', title: '' }
+    const { face } = shellFace([row('mail', '邮件')], [], [session])
+    render(<ConsoleShell {...face} />)
+    expect(screen.getByText(t('unnamedSession', { id: '12345678' }))).toBeTruthy()
+    expect(screen.queryByText('12345678-aaaa-bbbb-cccc-000000000000')).toBeNull()
+  })
+
+  it('renders a snoozed item as snoozed, never as dismissed', () => {
+    const snoozed: ConsoleNoticeRecord = {
+      id: 'later',
+      title: '下午再看',
+      createdAt: 10,
+      delivered: [],
+      state: 'seen',
+      snoozedUntil: Date.now() + 60_000,
+    }
+    const { face } = shellFace([row('mail', '邮件')], [snoozed])
+    render(<ConsoleShell {...face} />)
+    expect(screen.getByText(t('noticeSnoozed'))).toBeTruthy()
+    expect(screen.queryByText(t('noticeDismissed'))).toBeNull()
+  })
+
+  it('keeps a failed item and says why next to it', async () => {
+    const item: ConsoleNoticeRecord = {
+      id: 'run-fail',
+      title: '建议归档这封推广邮件',
+      createdAt: 10,
+      delivered: [],
+      state: 'new',
+      kind: 'mail',
+      actions: [{ id: 'apply', label: '执行' }],
+    }
+    const { face } = shellFace([row('mail', '邮件')], [item])
+    face.actOnItem = async () => ({ ok: false, message: '插件当前没有加载' })
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: '执行' }))
+    expect(await screen.findByText('插件当前没有加载')).toBeTruthy()
+    // 失败不吞掉条目。
+    expect(screen.getByText('建议归档这封推广邮件')).toBeTruthy()
   })
 
   it('draws an item\'s actions and hands the click back by id', async () => {

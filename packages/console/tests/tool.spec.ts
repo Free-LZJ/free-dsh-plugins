@@ -123,86 +123,124 @@ describe('console_notify', () => {
 })
 
 describe('open_session', () => {
-  /** 造一套记账的会话与工作区服务，工具注册结果收进 `opened`。 */
-  function sessionServices(calls: string[], opened: RegisteredTool[] = []): Map<string, unknown> {
-    const services = new Map<string, unknown>()
-    services.set('tools', {
-      register: (definition: unknown) => { opened.push(definition as RegisteredTool); return () => undefined },
-    })
-    services.set('sessionController', {
-      async create(request: { readonly cwd: string; readonly agentPreset?: string }) {
-        calls.push(`create:${request.cwd}:${request.agentPreset ?? ''}`)
-        return { sessionId: 'session-9' }
+  /** 造一套记账的会话端口（工作台提供），工具注册结果收进 `opened`。 */
+  function sessionHost(calls: string[]): ConsoleHost {
+    return {
+      notify: async () => ({}),
+      sessions: {
+        async createSession(request: { readonly cwd: string; readonly agentPreset?: string }) {
+          calls.push(`create:${request.cwd}:${request.agentPreset ?? ''}`)
+          return { sessionId: 'session-9' }
+        },
+        async attachSession() {},
+        async rename(sessionId: string, title: string) {
+          calls.push(`rename:${sessionId}:${title}`)
+        },
+        setPermission() {},
+        async followup(sessionId: string, text: string) {
+          calls.push(`followup:${sessionId}:${text}`)
+        },
       },
-      async rename(request: { readonly sessionId: string; readonly title: string }) {
-        calls.push(`rename:${request.sessionId}:${request.title}`)
-      },
-      async resolveAgent() {
-        return {
-          agent: {
-            followup(message: unknown) {
-              const text = (message as { readonly content?: readonly { readonly text?: string }[] }).content?.[0]?.text ?? ''
-              calls.push(`followup:${text}`)
-            },
-          },
-        }
-      },
-    })
-    services.set('workspaceRegistry', {
-      async create(path: string) {
-        calls.push(`workspace:${path}`)
-        return {
-          async attachSession(id: string) {
-            calls.push(`attach:${id}`)
-          },
-        }
-      },
-    })
-    return services
+    } as unknown as ConsoleHost
   }
 
   /** 用一个服务表造上下文。 */
   function contextOf(services: Map<string, unknown>): Context {
-    return { get: (name: string) => services.get(name), logger: { info: () => undefined } } as unknown as Context
+    return {
+      get: (name: string) => services.get(name),
+      logger: { info: () => undefined, warn: () => undefined },
+    } as unknown as Context
   }
 
-  it('按「建会话 → 挂工作区 → 改名 → 投递」的顺序做完', async () => {
+  /** 只带工具注册表的上下文。 */
+  function toolsOnly(opened: RegisteredTool[]): Map<string, unknown> {
+    return new Map([['tools', {
+      register: (definition: unknown) => { opened.push(definition as RegisteredTool); return () => undefined },
+    }]])
+  }
+
+  /** 一个记账的工作区表：`create` 记一行，`attachSession` 记一行。 */
+  function workspaceTable(calls: string[]): Map<string, unknown> {
+    return new Map([['workspaceRegistry', {
+      async create(path: string) {
+        calls.push(`workspace:${path}`)
+        return {
+          title: 'EXEPD-229676',
+          async attachSession(sessionId: string) {
+            calls.push(`attach:${sessionId}`)
+          },
+        }
+      },
+    }]])
+  }
+
+  it('按「建工作区 → 建会话 → 挂工作区 → 起标题 → 投递」的顺序做完', async () => {
     const calls: string[] = []
     const opened: RegisteredTool[] = []
-    const services = sessionServices(calls, opened)
     const cwd = await tempDir()
-    registerAgentTools(contextOf(services), { notify: async () => ({}) } as unknown as ConsoleHost)
+    const services = toolsOnly(opened)
+    for (const [name, service] of workspaceTable(calls)) services.set(name, service)
+    registerAgentTools(contextOf(services), sessionHost(calls))
 
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
-    const value = await tool.execute({ cwd, title: 'Jira EXEPD-227893', prompt: '加载 skill jira-bugfix' })
+    const value = await tool.execute({ cwd, title: 'Jira EXEPD-229676', prompt: '加载 skill jira-bugfix' })
 
-    expect(value).toEqual({ sessionId: 'session-9', cwd })
+    expect(value).toEqual({ sessionId: 'session-9', cwd, workspace: 'EXEPD-229676' })
     expect(calls).toEqual([
-      `create:${cwd}:`,
       `workspace:${cwd}`,
+      `create:${cwd}:`,
       'attach:session-9',
-      'rename:session-9:Jira EXEPD-227893',
-      'followup:加载 skill jira-bugfix',
+      'rename:session-9:Jira EXEPD-229676',
+      'followup:session-9:加载 skill jira-bugfix',
     ])
   })
 
   it('目录不存在时直接失败，不建半成品会话', async () => {
     const calls: string[] = []
     const opened: RegisteredTool[] = []
-    registerAgentTools(contextOf(sessionServices(calls, opened)), { notify: async () => ({}) } as unknown as ConsoleHost)
+    const services = toolsOnly(opened)
+    for (const [name, service] of workspaceTable(calls)) services.set(name, service)
+    registerAgentTools(contextOf(services), sessionHost(calls))
 
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
     await expect(tool.execute({ cwd: join(tmpdir(), 'dsh-console-missing-dir'), title: 'x', prompt: 'y' })).rejects.toThrow('工作目录不存在')
     expect(calls).toEqual([])
   })
 
-  it('没有会话服务时说清缺什么', async () => {
+  it('没有建会话能力时说清缺什么', async () => {
     const opened: RegisteredTool[] = []
-    const ctx = contextOf(new Map([['tools', { register: (definition: unknown) => { opened.push(definition as RegisteredTool); return () => undefined } }]]))
-    registerAgentTools(ctx, { notify: async () => ({}) } as unknown as ConsoleHost)
+    registerAgentTools(contextOf(toolsOnly(opened)), { notify: async () => ({}) } as unknown as ConsoleHost)
 
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
     const cwd = await tempDir()
-    await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('未挂载会话服务')
+    await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('没有提供建会话的能力')
+  })
+
+  it('没有工作区表时先失败，不建出掉进「未分组」的会话', async () => {
+    const calls: string[] = []
+    const opened: RegisteredTool[] = []
+    const cwd = await tempDir()
+    registerAgentTools(contextOf(toolsOnly(opened)), sessionHost(calls))
+
+    const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
+    await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('没有工作区表')
+    expect(calls).toEqual([])
+  })
+
+  it('建工作区失败时也不建会话，错误照实抛出去', async () => {
+    const calls: string[] = []
+    const opened: RegisteredTool[] = []
+    const cwd = await tempDir()
+    const services = toolsOnly(opened)
+    services.set('workspaceRegistry', {
+      async create() {
+        throw new Error('工作区表说这个目录不是目录')
+      },
+    })
+    registerAgentTools(contextOf(services), sessionHost(calls))
+
+    const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
+    await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('不是目录')
+    expect(calls).toEqual([])
   })
 })

@@ -110,8 +110,22 @@ export function registerWorkbenchRoutes(ctx: Context, host: WorkbenchRouteHost):
         return
       }
       const state = host.board.state()
-      const since = queryOf(req).get('since')
+      const query = queryOf(req)
+      const since = query.get('since')
       if (since !== null && since === String(state.revision)) {
+        // 结构没变：只回页面还没见过的日志行。没有新行时仍是 `{unchanged:true}`。
+        const cursor = Number(query.get('logsSince') ?? '')
+        const floor = Number.isFinite(cursor) ? cursor : 0
+        const logs = state.sessions
+          .map(session => ({
+            sessionId: session.id,
+            lines: session.logs.filter(line => line.at > floor),
+          }))
+          .filter(entry => entry.lines.length > 0)
+        if (logs.length > 0) {
+          respond(res, 200, { revision: state.revision, logs })
+          return
+        }
         respond(res, 200, { unchanged: true, revision: state.revision })
         return
       }
@@ -141,11 +155,16 @@ export function registerWorkbenchRoutes(ctx: Context, host: WorkbenchRouteHost):
         respond(res, 400, { error: 'body must be a string' })
         return
       }
+      if (value.rootId !== undefined && typeof value.rootId !== 'string') {
+        respond(res, 400, { error: 'rootId must be a string' })
+        return
+      }
       const result = await host.board.ingest({
         source: value.source,
         ...(value.externalId === undefined ? {} : { externalId: value.externalId as string }),
         title: value.title as string,
         ...(value.body === undefined ? {} : { body: value.body as string }),
+        ...(value.rootId === undefined || value.rootId === '' ? {} : { rootId: value.rootId }),
       })
       if (!result.ok) {
         respond(res, 400, { error: result.error })

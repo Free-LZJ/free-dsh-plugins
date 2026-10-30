@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
-  Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, Menu, MenuItemButton, StateDot, Tag,
+  Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, Input, Menu, MenuItemButton, StateDot, Tag,
   type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from './locales.ts'
@@ -278,16 +278,18 @@ function ConditionValues(props: {
   const [draft, setDraft] = useState<string | undefined>(undefined)
   if (draft === undefined) {
     return (
-      <button
-        type="button"
-        className={CLS.ruleWhenValue}
+      <Button
+        variant="ghost"
+        size="sm"
+        className={CLS.ruleWhenValueButton}
         title={props.t('ruleEditValuesHint')}
+        aria-label={`${props.t('ruleEditValues')}：${props.values.join(', ')}`}
         onClick={() => { setDraft(props.values.join(', ')) }}
       >
         {props.label === undefined
           ? props.values.join(' · ')
           : `${props.label}: ${props.values.join(' · ')}`}
-      </button>
+      </Button>
     )
   }
   const save = (): void => {
@@ -296,11 +298,13 @@ function ConditionValues(props: {
     props.onSubmit(values)
   }
   return (
-    <input
+    <Input
       className={CLS.ruleValueInput}
       aria-label={props.t('ruleEditValues')}
       value={draft}
       autoFocus
+      // 光标停在全选上：长值一打开就能看到开头，也不会在不经意间只删掉最后一个字符。
+      onFocus={(event) => { event.currentTarget.select() }}
       onChange={(event) => { setDraft(event.target.value) }}
       onBlur={save}
       onKeyDown={(event) => {
@@ -386,13 +390,13 @@ export function RulesView({ t, triage }: {
       </header>
       {failure === '' ? null : <p className={CLS.boardFailure} role="status">{failure}</p>}
       {unavailable !== ''
-        ? <p className={CLS.viewEmpty}>{unavailable}</p>
+        ? <p className={CLS.empty}>{unavailable}</p>
         : data === undefined
-          ? <p className={CLS.viewEmpty}>{t('boardLoading')}</p>
+          ? <p className={CLS.empty}>{t('boardLoading')}</p>
           : data.rules.connector
             ? <TriageBody t={t} data={data} triage={triage} act={act} />
             // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把规则喂给它。
-            : <p className={CLS.viewEmpty}>{t('rulesNoConnector')}</p>}
+            : <p className={CLS.empty}>{t('rulesNoConnector')}</p>}
     </section>
   )
 }
@@ -465,10 +469,8 @@ function TriageBody({ t, data, triage, act }: {
     <>
       {/* 复制回执放在顶部：按钮在每条规则上，回执跟在列表后面就等于没有。 */}
       {notice === '' ? null : <p className={CLS.ruleNotice} role="status">{notice}</p>}
-      <p className={CLS.viewMeta}>
+      <p className={CLS.viewMeta} title={rules.path}>
         {t('rulesSource', { source: rules.source === 'file' ? t('rulesSourceFile') : t('rulesSourceDefault') })}
-        {' · '}
-        {rules.path}
       </p>
       {rules.error !== undefined && (
         <p className={CLS.boardFailure} role="status">
@@ -484,7 +486,7 @@ function TriageBody({ t, data, triage, act }: {
 
       <h3 className={CLS.viewSubheading}>{t('rulesList', { count: rules.rules.length })}</h3>
       {rules.rules.length === 0
-        ? <p className={CLS.emptyLine}>{t('rulesNone')}</p>
+        ? <p className={CLS.empty}>{t('rulesNone')}</p>
         : (
           <ul className={CLS.ruleList} aria-label={t('rulesList', { count: rules.rules.length })}>
             {rules.rules.map((rule, index) => (
@@ -566,13 +568,15 @@ function TriageBody({ t, data, triage, act }: {
         : (
           <details className={CLS.ruleRawBlock}>
             <summary className={CLS.ruleRawTitle}>{t('ruleRawTitle')}</summary>
+            {/* 本机路径只在这个折叠区里出现：想看文件真身的人点开就能看到，不占抬头。 */}
+            <p className={CLS.viewMeta} title={rules.path}>{rules.path}</p>
             <pre className={CLS.ruleRaw}>{rules.raw}</pre>
           </details>
         )}
 
       <h3 className={CLS.viewSubheading}>{t('rulesRuns', { count: runs.length })}</h3>
       {runs.length === 0
-        ? <p className={CLS.emptyLine}>{t('rulesRunsNone')}</p>
+        ? <p className={CLS.empty}>{t('rulesRunsNone')}</p>
         : (
           <>
           <ul className={CLS.runList}>

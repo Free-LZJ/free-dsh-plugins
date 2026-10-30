@@ -1,25 +1,39 @@
 /**
  * The focus page — the workbench's second main panel.
  *
- * P0 scope: this lists the sessions the platform already knows about (the Host's
- * `sessionController.list()` projection, which reaches the page through the
- * snapshot's `running` list), with a title, a working directory and "running".
- * The three state tiers the design settled on — 等你回答 / 当前 / 已结束未读 —
- * come from `ctx.uiSession.sessionStatus` in P2, and this page says so instead
- * of pretending the data is there.
- *
- * So it is deliberately thin: no session UI on a second screen, no "open
- * session" button that would need `uiWorkspace` injected, no fake statuses.
+ * It lists the sessions the platform already knows are working right now, with a
+ * title, a working directory, and a way into the conversation. The other two
+ * questions a work desk asks — who is waiting on you, and what finished without
+ * being looked at — are answered where they are owned: the attention queue on
+ * the board, and the board cards that still await write-back.
  *
  * @module @free-lzj/dsh-console/client/focus
  */
 
-import type { ReactNode } from 'react'
-import { StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useState, type ReactNode } from 'react'
+import { Button, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { RunningSession, WorkbenchCard } from '../protocol.ts'
 import type { WorkbenchFace } from './workbench/board.tsx'
 import type { Translate } from './locales.ts'
 import { CLS } from './styles.ts'
+
+/** One navigation attempt: succeeded, or why not. */
+interface OpenOutcome {
+  readonly ok: boolean
+  readonly message?: string
+}
+
+/**
+ * Name one session without ever showing a bare UUID.
+ * @param session - the session row.
+ * @param t - the translate seat.
+ * @returns the stored title, or a short id inside a sentence.
+ */
+export function sessionLabel(session: RunningSession, t: Translate): string {
+  const title = session.title.trim()
+  if (title !== '') return title
+  return t('unnamedSession', { id: session.sessionId.slice(0, 8) })
+}
 
 /**
  * Draw the focus page.
@@ -39,20 +53,37 @@ export function FocusPage(props: {
   readonly waitingOn: (sessionId: string) => readonly string[]
   /** 看板的面；有它才谈得上「做完等你确认」。 */
   readonly workbench?: WorkbenchFace
+  /** Open one session in the conversation page; absent means no button. */
+  readonly openSession?: (sessionId: string) => OpenOutcome
+  /** Whether that action can reach a real service right now. */
+  readonly canOpenSession?: () => boolean
 }): ReactNode {
   const { t } = props
   const sessions = props.running()
+  const [failure, setFailure] = useState('')
+  const canOpen = props.openSession !== undefined && props.canOpenSession?.() === true
+  /**
+   * Open one session. A failure is said next to the list rather than swallowed:
+   * a click that does nothing reads as a broken page.
+   * @param sessionId - the session to open.
+   */
+  const open = (sessionId: string): void => {
+    const outcome = props.openSession?.(sessionId)
+    if (outcome === undefined) return
+    setFailure(outcome.ok ? '' : t('focusOpenFailed', { message: outcome.message ?? '' }))
+  }
   return (
     <section className={CLS.focus}>
       <header className={CLS.viewHead}>
         <h2 className={CLS.viewHeading}>{t('focusTitle')}</h2>
         <p className={CLS.viewHint}>{t('focusHint')}</p>
       </header>
+      {failure === '' ? null : <p className={CLS.openError} role="status">{failure}</p>}
       <h3 className={CLS.viewSubheading}>
         {t('focusCurrent', { count: sessions.length })}
       </h3>
       {sessions.length === 0
-        ? <p className={CLS.emptyLine}>{t('focusEmpty')}</p>
+        ? <p className={CLS.empty}>{t('focusEmpty')}</p>
         : (
           <ul className={CLS.focusList}>
             {sessions.map((session) => {
@@ -60,13 +91,11 @@ export function FocusPage(props: {
               return (
                 <li key={session.sessionId} className={CLS.focusItem}>
                   <div className={CLS.focusMain}>
-                    <span className={CLS.focusTitle}>
-                      {session.title === '' ? session.sessionId : session.title}
-                    </span>
+                    <span className={CLS.focusTitle}>{sessionLabel(session, t)}</span>
                     {session.cwd !== undefined && (
                       <span className={CLS.focusMeta}>{t('focusCwd')}：{session.cwd}</span>
                     )}
-                    {/* 等的是什么：只说「等你处置」等于让人再点两下去找。 */}
+                    {/* 等的是什么：只说「待处理」等于让人再点两下去找。 */}
                     {waiting.map((title, index) => (
                       <span key={`${title}-${String(index)}`} className={CLS.focusMeta}>
                         {t('focusWaitingFor')}：{title}
@@ -85,14 +114,23 @@ export function FocusPage(props: {
                         <Tag tone="info">{t('statusRunning')}</Tag>
                       </>
                     )}
+                    {canOpen && (
+                      <Button size="sm" onClick={() => { open(session.sessionId) }}>{t('focusOpen')}</Button>
+                    )}
                   </span>
                 </li>
               )
             })}
           </ul>
         )}
-      {props.workbench === undefined ? null : <AwaitingList face={props.workbench} t={t} />}
-      <p className={CLS.viewMeta}>{t('focusLater')}</p>
+      {props.workbench === undefined ? null : (
+        <AwaitingList
+          face={props.workbench}
+          t={t}
+          {...(props.openSession === undefined ? {} : { openSession: props.openSession })}
+          canOpen={canOpen}
+        />
+      )}
     </section>
   )
 }
@@ -109,8 +147,13 @@ export function FocusPage(props: {
  * @param props.t - the translate seat.
  * @returns the section, or a line saying there is nothing waiting.
  */
-function AwaitingList(props: { readonly face: WorkbenchFace; readonly t: Translate }): ReactNode {
-  // 看板快照在首帧是 undefined（数据还在路上），那时没有「等你确认」可言。
+function AwaitingList(props: {
+  readonly face: WorkbenchFace
+  readonly t: Translate
+  readonly openSession?: (sessionId: string) => OpenOutcome
+  readonly canOpen: boolean
+}): ReactNode {
+  // 看板快照在首帧是 undefined（数据还在路上），那时没有「待回写」可言。
   const awaiting: readonly WorkbenchCard[] =
     props.face.useBoard(state => state?.cards.filter(card => card.awaitingConfirmation)) ?? []
   return (
@@ -119,7 +162,7 @@ function AwaitingList(props: { readonly face: WorkbenchFace; readonly t: Transla
         {props.t('focusAwaiting', { count: awaiting.length })}
       </h3>
       {awaiting.length === 0
-        ? <p className={CLS.emptyLine}>{props.t('focusAwaitingEmpty')}</p>
+        ? <p className={CLS.empty}>{props.t('focusAwaitingEmpty')}</p>
         : (
           <ul className={CLS.focusList}>
             {awaiting.map(card => (
@@ -130,6 +173,11 @@ function AwaitingList(props: { readonly face: WorkbenchFace; readonly t: Transla
                 <span className={CLS.focusState}>
                   <StateDot state="done" />
                   <Tag tone="quiet">{props.t('focusAwaitingTag')}</Tag>
+                  {props.canOpen && props.openSession !== undefined && card.sessionId !== undefined && (
+                    <Button size="sm" onClick={() => { props.openSession?.(card.sessionId as string) }}>
+                      {props.t('focusOpen')}
+                    </Button>
+                  )}
                 </span>
               </li>
             ))}

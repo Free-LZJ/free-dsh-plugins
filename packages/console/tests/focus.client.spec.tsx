@@ -10,7 +10,7 @@
  * @module @free-lzj/dsh-console/tests/focus
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RunningSession } from '../src/protocol.ts'
 import { FocusPage } from '../src/client/focus.tsx'
@@ -41,8 +41,8 @@ describe('the focus page', () => {
     expect(screen.getByText(t('focusCurrent', { count: 2 }))).toBeTruthy()
     expect(screen.getByText('修 FormSubmit 的回归测试')).toBeTruthy()
     expect(screen.getByText(`D:\\open\\free-dsh-plugins`, { exact: false })).toBeTruthy()
-    // A session with no title still gets identified by its id.
-    expect(screen.getByText('s-2')).toBeTruthy()
+    // A session with no title is still identified, and never by a bare UUID.
+    expect(screen.getByText(t('unnamedSession', { id: 's-2' }))).toBeTruthy()
     // Status is text, not only a dot.
     expect(screen.getAllByText(t('statusRunning')).length).toBe(2)
   })
@@ -53,12 +53,25 @@ describe('the focus page', () => {
     expect(screen.getByText(t('focusEmpty'))).toBeTruthy()
   })
 
-  it('says which parts wait for P2 rather than showing dead controls', () => {
+  it('says nothing about a phase this page no longer waits for', () => {
     render(<FocusPage t={t} running={() => []} waitingOn={() => []} />)
     expect(screen.getByText(t('focusHint'))).toBeTruthy()
-    expect(screen.getByText(t('focusLater'))).toBeTruthy()
-    // 没有假按钮：这一版不给「进入会话」，因为它需要一个还没注入的服务。
+    // 没有导航服务时不给假按钮。
     expect(screen.queryAllByRole('button')).toEqual([])
+  })
+
+  it('offers "open session" only when the navigation service is there, and reports a failure', () => {
+    const calls: string[] = []
+    render(<FocusPage
+      t={t}
+      running={() => [session({ sessionId: 's-1', title: '看板' })]}
+      waitingOn={() => []}
+      canOpenSession={() => true}
+      openSession={(id) => { calls.push(id); return { ok: false, message: 'nav down' } }}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: t('focusOpen') }))
+    expect(calls).toEqual(['s-1'])
+    expect(screen.getByText(t('focusOpenFailed', { message: 'nav down' }))).toBeTruthy()
   })
 
 
@@ -69,12 +82,12 @@ describe('the focus page', () => {
     } as unknown as Parameters<typeof FocusPage>[0]['workbench']
     render(<FocusPage t={t} running={() => []} waitingOn={() => []} {...(face === undefined ? {} : { workbench: face })} />)
     expect(screen.getByText('看板重构')).toBeTruthy()
-    expect(screen.getByText('待确认')).toBeTruthy()
+    expect(screen.getByText(t('focusAwaitingTag'))).toBeTruthy()
   })
   it('says which running sessions are waiting on you', () => {
     // 「在跑」与「在等你」是两件事：一条会话跑着但等你确认时，该做的动作完全不同。
     render(<FocusPage t={t} running={() => [session({ sessionId: 's1', title: '看板' })]} waitingOn={(id) => (id === 's1' ? ['邮件分诊：限时优惠'] : [])} />)
-    expect(screen.getByText('等你处置')).toBeTruthy()
+    expect(screen.getByText('待处理')).toBeTruthy()
     // 还要说清等的是哪一件，否则等于让人再去找一遍。
     expect(screen.getByText(/限时优惠/)).toBeTruthy()
   })})

@@ -43,6 +43,33 @@ export class SessionStore {
     return this.sessions.get(id)
   }
 
+  /**
+   * Adopt a session that was created outside the board (a rule action or a tool).
+   *
+   * Its id is the host's session id, so the card and the conversation page point
+   * at the same thing; re-adopting an existing id leaves it untouched.
+   * @param id - the host session id.
+   * @param cardId - the card this session works.
+   * @param executor - the executor id recorded on the session.
+   * @returns the session.
+   */
+  adopt(id: string, cardId: string, executor: string): WorkbenchSession {
+    const existing = this.sessions.get(id)
+    if (existing !== undefined) return existing
+    const now = Date.now()
+    const session: WorkbenchSession = {
+      id,
+      cardId,
+      executor,
+      status: 'running',
+      logs: [],
+      createdAt: now,
+      updatedAt: now,
+    }
+    this.sessions.set(id, session)
+    return session
+  }
+
   /** @returns every session, oldest first. */
   list(): WorkbenchSession[] {
     return [...this.sessions.values()].sort((a, b) => a.createdAt - b.createdAt)
@@ -52,16 +79,17 @@ export class SessionStore {
    * Append one log line.
    * @param id - session id.
    * @param text - the line.
+   * @param at - the line's timestamp, supplied by the board so lines stay strictly ordered.
    * @returns the updated session, or undefined.
    */
-  appendLog(id: string, text: string): WorkbenchSession | undefined {
+  appendLog(id: string, text: string, at: number = Date.now()): WorkbenchSession | undefined {
     const session = this.sessions.get(id)
     if (session === undefined) return undefined
-    const line: WorkbenchLogLine = { at: Date.now(), text }
+    const line: WorkbenchLogLine = { at, text }
     const next: WorkbenchSession = {
       ...session,
       logs: [...session.logs, line].slice(-200),
-      updatedAt: Date.now(),
+      updatedAt: at,
     }
     this.sessions.set(id, next)
     return next

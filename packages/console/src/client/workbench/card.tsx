@@ -18,9 +18,11 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, Input, Menu, MenuItemButton, Modal, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { WorkbenchCard, WorkbenchColumn, WorkbenchReason, WorkbenchSession } from '../../protocol.ts'
-import { REASON_KEYS, type Translate } from '../locales.ts'
+import { Button, Input, Menu, MenuItemButton, Modal, RiskConfirmation, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import type {
+  ConsoleNoticeRecord, WorkbenchCard, WorkbenchColumn, WorkbenchReason, WorkbenchSession,
+} from '../../protocol.ts'
+import { REASON_KEYS, kindLabel, sourceLabel, type Translate } from '../locales.ts'
 import { CLS } from '../styles.ts'
 
 /** The columns, in board order. */
@@ -66,17 +68,6 @@ function statusDot(status: WorkbenchCard['status']): 'idle' | 'ongoing' | 'warni
     case 'done': return 'done'
     case 'failed': return 'error'
     default: return 'idle'
-  }
-}
-
-/** Locale key naming one source. */
-function sourceKey(source: WorkbenchCard['source']): Parameters<Translate>[0] {
-  switch (source) {
-    case 'mail': return 'sourceMail'
-    case 'webhook': return 'sourceWebhook'
-    case 'dingtalk': return 'sourceDingtalk'
-    case 'jira': return 'sourceJira'
-    default: return 'sourceManual'
   }
 }
 
@@ -179,6 +170,8 @@ function MoveMenu(props: {
 /** What one card needs to draw itself and to act. */
 export interface BoardCardProps {
   readonly card: WorkbenchCard
+  /** 这条链路有几张卡；1 表示它就是一件事的全部，不显示步数。 */
+  readonly stepCount: number
   readonly t: Translate
   /** The single "now" of this render, so every relative time agrees. */
   readonly now: number
@@ -194,11 +187,10 @@ export interface BoardCardProps {
  * @param props - the card, the translate seat, and what the actions do.
  * @returns the card.
  */
-export function BoardCard({ card, t, now, onOpen, onDispatch, onMove, onDragEnd }: BoardCardProps): ReactNode {
+export function BoardCard({ card, stepCount, t, now, onOpen, onDispatch, onMove, onDragEnd }: BoardCardProps): ReactNode {
   const confidence = Math.round(card.confidence * 100)
   const executor = card.executor ?? t('cardNoExecutor')
-  return (
-    <article
+  return (    <article
       className={CLS.boardCard}
       aria-label={card.title}
       data-card-id={card.id}
@@ -218,7 +210,7 @@ export function BoardCard({ card, t, now, onOpen, onDispatch, onMove, onDragEnd 
       }}
     >
       <div className={CLS.cardFrom}>
-        <Tag tone="outline">{t(sourceKey(card.source))}</Tag>
+        <Tag tone="outline">{sourceLabel(card.source, t)}</Tag>
         {card.externalId !== undefined && <span className={CLS.cardRef}>{card.externalId}</span>}
         <span className={CLS.cardPriority}>
           <Tag tone={priorityTone(card.priority)}>{t(priorityKey(card.priority))}</Tag>
@@ -227,16 +219,15 @@ export function BoardCard({ card, t, now, onOpen, onDispatch, onMove, onDragEnd 
       <h4 className={CLS.boardCardTitle}>{card.title}</h4>
       {card.body !== undefined && card.body !== '' && <p className={CLS.boardCardBody}>{card.body}</p>}
       <div className={CLS.cardFacts}>
-        <Tag tone="neutral">{card.kind}</Tag>
+        <Tag tone="neutral">{kindLabel(card.kind, t)}</Tag>
         <Tag tone={confidenceTone(card.confidence)}>{t('cardConfidence', { value: confidence })}</Tag>
-        <span className={CLS.cardVersion}>{t('cardRuleVersion', { version: card.decision.ruleVersion })}</span>
+        {stepCount > 1 && <Tag tone="info">{t('chainSteps', { count: stepCount })}</Tag>}
       </div>
       {card.confidence < HOLD_THRESHOLD && <p className={CLS.cardNote}>{t('cardLowConfidence')}</p>}
       <div className={CLS.cardFoot}>
-        <span className={CLS.cardAvatar} aria-hidden="true">{executor.slice(0, 1).toUpperCase()}</span>
         <span className={CLS.cardExecutor}>{executor}</span>
         <StateDot state={statusDot(card.status)} />
-        <span>{t(statusKey(card.status))}</span>
+        <span className={CLS.cardStatus}>{t(statusKey(card.status))}</span>
         <span className={CLS.cardWhen}>{relativeTime(card.updatedAt, now, t)}</span>
       </div>
       {/*
@@ -275,6 +266,14 @@ export function reasonText(reason: WorkbenchReason, t: Translate): string {
 /** What the detail dialog reads and does. */
 export interface CardDetailProps {
   readonly card: WorkbenchCard
+  /**
+   * 同一件事的全部步骤（含 `card` 自己），按发生顺序。
+   *
+   * 看板上一张链路卡，详情里就是这一列——这就是「同一件事别再拆成好几张卡」的落点。
+   */
+  readonly steps: readonly WorkbenchCard[]
+  /** 挂在这条链路上的通知；它们不是卡，但也是这件事的一步。 */
+  readonly notices?: readonly ConsoleNoticeRecord[]
   /** The session this card dispatched, when it has one. */
   readonly session?: WorkbenchSession
   readonly t: Translate
@@ -294,28 +293,39 @@ export interface CardDetailProps {
  * done about it.
  *
  * DSH has no drawer primitive, so this is the shared `Modal` with the card's
- * facts laid out inside it. The timeline is the one place a card can be
- * audited from, which is why it is here and not on the card.
- * @param props - the card, its session, and the actions.
+ * facts laid out inside it. The chain is the one place a piece of work can be
+ * audited from, which is why it is here and not on the card: on the board the
+ * whole thing has to fit in one card.
+ * @param props - the card, its chain, and the actions.
  * @returns the dialog.
  */
 export function CardDetail(props: CardDetailProps): ReactNode {
-  const { card, session, t, now } = props
+  const { card, steps, t, now } = props
   const [draft, setDraft] = useState('')
+  /** 停止确认的开合与勾选：中断一轮对话不是一次随手可撤销的点击。 */
+  const [stopOpen, setStopOpen] = useState(false)
+  const [stopAcknowledged, setStopAcknowledged] = useState(false)
+  /**
+   * 重播计数。
+   *
+   * 动画靠重挂载重放（`key`），而不是靠一个「正在播放」的布尔：重挂载天然从
+   * 第一帧重来，也不需要清定时器。
+   */
+  const [replay, setReplay] = useState(0)
   const reasons = [...card.decision.reasons, ...card.decision.classification.reasons]
-  const status = t(statusKey(card.status))
+  const notices = props.notices ?? []
   return (
     <Modal
       open
       onClose={props.onClose}
       title={card.title}
-      description={`${t('detailSource')}: ${t(sourceKey(card.source))}${card.externalId === undefined ? '' : ` · ${card.externalId}`}`}
+      description={`${t('detailSource')}: ${sourceLabel(card.source, t)}${card.externalId === undefined ? '' : ` · ${card.externalId}`}`}
       closeLabel={t('close')}
       footer={(
         <>
           {card.column === 'todo' && <Button variant="primary" onClick={props.onDispatch}>{t('cardDispatch')}</Button>}
           {card.column === 'done' && card.awaitingConfirmation && (
-            <Button variant="primary" onClick={props.onConfirm}>{t('cardConfirm')}</Button>
+            <Button variant="outline" onClick={props.onConfirm}>{t('cardConfirm')}</Button>
           )}
           <Button onClick={props.onClose}>{t('close')}</Button>
         </>
@@ -324,7 +334,7 @@ export function CardDetail(props: CardDetailProps): ReactNode {
       <h3 className={CLS.detailHeading}>{t('detailTitle')}</h3>
       <dl className={CLS.detailList}>
         <dt>{t('detailKind')}</dt>
-        <dd>{card.kind}</dd>
+        <dd>{kindLabel(card.kind, t)}</dd>
         <dt>{t('detailPriority')}</dt>
         <dd>{t(priorityKey(card.priority))}</dd>
         <dt>{t('detailConfidence')}</dt>
@@ -344,30 +354,63 @@ export function CardDetail(props: CardDetailProps): ReactNode {
             ))}
           </ul>
         )}
-      <h3 className={CLS.detailHeading}>{t('detailTimeline')}</h3>
-      <ol className={CLS.timeline}>
-        <li className={CLS.timelineItem}>
-          {t('timelineCreated')} · {new Date(card.createdAt).toLocaleString()} · {relativeTime(card.createdAt, now, t)}
-        </li>
-        <li className={CLS.timelineItem}>
-          {t('timelineClassified', { kind: card.kind, route: card.decision.routeId })} · {card.decision.ruleVersion}
-        </li>
-        <li className={CLS.timelineItem}>
-          {t('timelineLast', { status })} · {new Date(card.updatedAt).toLocaleString()}
-        </li>
+      <h3 className={CLS.detailHeading}>{t('detailChain')}</h3>
+      {/*
+        一条链路一列：步骤按发生顺序，CSS 依次点亮（`animation-delay`），点「重播」
+        重挂载再走一遍。不用动画库、不用定时器——播放完毕就是静态可读的一列。
+      */}
+      <ol className={CLS.steps} key={replay}>
+        {steps.map((step, index) => (
+          <li
+            key={step.id}
+            className={CLS.step}
+            style={{ animationDelay: `${String(index * 110)}ms` }}
+          >
+            <span className={CLS.stepIndex}>{index + 1}</span>
+            <span className={CLS.stepBody}>
+              <span className={CLS.stepTitle}>{step.title}</span>
+              <span className={CLS.stepMeta}>
+                <Tag tone="outline">{sourceLabel(step.source, t)}</Tag>
+                <StateDot state={statusDot(step.status)} />
+                <span>{t(statusKey(step.status))}</span>
+                <span className={CLS.stepWhen}>{relativeTime(step.createdAt, now, t)}</span>
+              </span>
+            </span>
+          </li>
+        ))}
+        {notices.map((notice, index) => (
+          <li
+            key={notice.id}
+            className={`${CLS.step} ${CLS.stepNotice}`}
+            style={{ animationDelay: `${String((steps.length + index) * 110)}ms` }}
+          >
+            <span className={CLS.stepIndex}>{steps.length + index + 1}</span>
+            <span className={CLS.stepBody}>
+              <span className={CLS.stepTitle}>{notice.title}</span>
+              <span className={CLS.stepMeta}>
+                <Tag tone="outline">{t('detailNoticeStep')}</Tag>
+                <span>{t(notice.state === 'resolved' ? 'noticeDone' : notice.state === 'dismissed' ? 'noticeDismissed' : 'noticeSnoozed')}</span>
+                <span className={CLS.stepWhen}>{relativeTime(notice.createdAt, now, t)}</span>
+              </span>
+            </span>
+          </li>
+        ))}
       </ol>
-      <p className={CLS.detailNote}>{t('detailTimelineSource')}</p>
-      {session !== undefined && (
+      <p className={CLS.detailNote}>{t('detailChainHint')}</p>
+      <div className={CLS.detailActions}>
+        <Button size="sm" onClick={() => { setReplay((value) => value + 1) }}>{t('detailReplay')}</Button>
+      </div>
+      {props.session !== undefined && (
         <>
           <h3 className={CLS.detailHeading}>{t('sessionTitle')}</h3>
           <div className={CLS.sessionBox}>
             <div className={CLS.cardFoot}>
               <StateDot state={statusDot(card.status)} />
               <span>{t(statusKey(card.status))}</span>
-              <span className={CLS.cardWhen}>{relativeTime(session.updatedAt, now, t)}</span>
+              <span className={CLS.cardWhen}>{relativeTime(props.session.updatedAt, now, t)}</span>
             </div>
             <h4 className={CLS.sessionLogTitle}>{t('sessionLog')}</h4>
-            <SessionLog t={t} lines={session.logs} />
+            <SessionLog t={t} lines={props.session.logs} />
             {/*
               Q5: the focus depth is read + interrupt only. Pause and end need the
               interrupt semantics settled first, so they stay off the page.
@@ -389,7 +432,7 @@ export function CardDetail(props: CardDetailProps): ReactNode {
                 {t('interruptSend')}
               </Button>
               {/* 停止是「这一轮不要了」，与插话是两种意图：一个催它、一个拦它。 */}
-              <Button onClick={props.onStop}>{t('sessionStop')}</Button>
+              <Button variant="outline" onClick={() => { setStopOpen(true) }}>{t('sessionStop')}</Button>
             </div>
           </div>
         </>
@@ -402,6 +445,26 @@ export function CardDetail(props: CardDetailProps): ReactNode {
           </Button>
         ))}
       </div>
+      <RiskConfirmation
+        open={stopOpen}
+        title={t('stopConfirmTitle')}
+        description={t('stopConfirmBody')}
+        acknowledgeLabel={t('stopConfirmAcknowledge')}
+        cancelLabel={t('cancel')}
+        closeLabel={t('close')}
+        confirmLabel={t('sessionStop')}
+        acknowledged={stopAcknowledged}
+        onAcknowledgedChange={setStopAcknowledged}
+        onCancel={() => {
+          setStopOpen(false)
+          setStopAcknowledged(false)
+        }}
+        onConfirm={() => {
+          setStopOpen(false)
+          setStopAcknowledged(false)
+          props.onStop()
+        }}
+      />
     </Modal>
   )
 }

@@ -13,7 +13,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { WorkbenchCard, WorkbenchColumn, WorkbenchState } from '../../src/protocol.ts'
+import type { ConsoleNoticeRecord, WorkbenchCard, WorkbenchColumn, WorkbenchState } from '../../src/protocol.ts'
 import { en as enDictionary, zh, type Translate } from '../../src/client/locales.ts'
 import { BoardView, type WorkbenchFace } from '../../src/client/workbench/board.tsx'
 import { reasonText } from '../../src/client/workbench/card.tsx'
@@ -35,6 +35,7 @@ function card(overrides: Partial<WorkbenchCard> & Pick<WorkbenchCard, 'id' | 'co
   return {
     source: 'mail',
     dedupeKey: `mail:${overrides.id}`,
+    rootId: overrides.id,
     title: '卡片',
     status: 'idle',
     priority: 'normal',
@@ -111,7 +112,7 @@ function board(overrides: Partial<WorkbenchState> = {}): WorkbenchState {
 }
 
 /** The face, recording what it was asked to do. */
-function face(state: WorkbenchState = board()) {
+function face(state: WorkbenchState = board(), issued: readonly ConsoleNoticeRecord[] = []) {
   const calls = {
     dispatch: [] as string[],
     move: [] as { cardId: string; column: WorkbenchColumn }[],
@@ -121,6 +122,7 @@ function face(state: WorkbenchState = board()) {
   }
   const fake: WorkbenchFace = {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
+    useNotices: <S,>(select: (current: readonly ConsoleNoticeRecord[]) => S) => select(issued),
     dispatch: async (cardId) => {
       calls.dispatch.push(cardId)
       return true
@@ -154,7 +156,8 @@ function cardOf(title: string): HTMLElement {
 
 /** The number inside one status-strip figure. */
 function stat(label: string): string {
-  const node = screen.getByText(label).parentElement
+  const strip = screen.getByRole('group', { name: t('boardTitle') })
+  const node = within(strip).getByText(label).parentElement
   return node?.textContent?.replace(label, '').trim() ?? ''
 }
 
@@ -170,6 +173,34 @@ function transfer(cardId: string): Record<string, unknown> {
 }
 
 describe('the board on screen', () => {
+  it('draws one card for a whole chain, with every step inside its detail', () => {
+    // 同一件事派生出来的卡共用一个 rootId：板上一张，详情里按顺序一排。
+    const root = card({ id: 'root-1', column: 'done', title: 'DSH E2E 派单' })
+    const child = card({ id: 'child-2', column: 'done', rootId: 'root-1', title: '子会话' })
+    const notice: ConsoleNoticeRecord = {
+      id: 'notice-1',
+      rootId: 'root-1',
+      title: '已完成',
+      createdAt: NOW - 30_000,
+      delivered: ['inapp'],
+      state: 'new',
+    }
+    const { face: fake } = face(board({ cards: [root, child] }), [notice])
+    render(<BoardView face={fake} t={t} />)
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+    const article = cardOf('DSH E2E 派单')
+    expect(within(article).getByText(t('chainSteps', { count: 2 }))).toBeTruthy()
+
+    fireEvent.click(within(article).getByRole('button', { name: t('cardDetail') }))
+    const dialog = screen.getByRole('dialog', { name: 'DSH E2E 派单' })
+    expect(within(dialog).getByText('子会话')).toBeTruthy()
+    // 通知也是这件事的一步，不是并列的另一条。
+    expect(within(dialog).getByText('已完成')).toBeTruthy()
+    // 重播是重挂载：点一下不该把步骤弄丢。
+    fireEvent.click(within(dialog).getByRole('button', { name: t('detailReplay') }))
+    expect(within(dialog).getByText('子会话')).toBeTruthy()
+  })
+
   it('counts the four figures from the snapshot', () => {
     const { face: fake } = face()
     render(<BoardView face={fake} t={t} />)
@@ -189,12 +220,13 @@ describe('the board on screen', () => {
     expect(screen.getByRole('region', { name: t('boardDone') })).toBeTruthy()
   })
 
-  it('explains an empty column instead of leaving a hole', () => {
+  it('explains an empty board once, not once per column', () => {
+    // 空看板不再画统计条与三个空框：一句话就够，重复三次比「没活」更响。
     const { face: fake } = face(board({ cards: [] }))
     render(<BoardView face={fake} t={t} />)
-    expect(screen.getByText(t('boardTodoEmpty'))).toBeTruthy()
-    expect(screen.getByText(t('boardProcessingEmpty'))).toBeTruthy()
-    expect(screen.getByText(t('boardDoneEmpty'))).toBeTruthy()
+    expect(screen.getByText(t('boardEmpty'))).toBeTruthy()
+    expect(screen.queryByRole('group', { name: t('boardTitle') })).toBeNull()
+    expect(screen.queryByRole('region', { name: t('boardTodo') })).toBeNull()
   })
 
   it('answers the five card questions without opening anything', () => {
@@ -209,7 +241,9 @@ describe('the board on screen', () => {
     expect(within(article).getByText('一封来源不明的邮件，没有足够线索自动派单。')).toBeTruthy()
     // How sure, and which rule decided.
     expect(within(article).getByText(t('cardConfidence', { value: 30 }))).toBeTruthy()
-    expect(within(article).getByText(t('cardRuleVersion', { version: 'workbench-routes-v1' }))).toBeTruthy()
+    // 规则版本是审计信息，收进详情；卡面只回答「哪来的、多急、谁在干、干到哪」。
+    expect(within(article).queryByText(/workbench-routes-v1/)).toBeNull()
+    expect(within(article).getByText(t('kindUnknown'))).toBeTruthy()
     // Who has it, how far along, and when it last moved.
     expect(within(article).getByText(t('cardNoExecutor'))).toBeTruthy()
     expect(within(article).getByText(t('statusIdle'))).toBeTruthy()
@@ -264,8 +298,10 @@ describe('the board on screen', () => {
     expect(within(dialog).getByText(t('detailReasons'))).toBeTruthy()
     // 判据在 Host 那边是代码，文字由这一页按 locales 渲染。
     expect(within(dialog).getByText(t('reasonClassifyKeywordHit', { kind: 'bug', count: 1 }))).toBeTruthy()
-    expect(within(dialog).getByText(t('detailTimeline'))).toBeTruthy()
-    expect(within(dialog).getByText(t('timelineCreated'), { exact: false })).toBeTruthy()
+    expect(within(dialog).getByText(t('detailChain'))).toBeTruthy()
+    // 链路的第一步就是这张卡自己：步骤条至少要能读出它在哪一步、什么时候。
+    expect(within(dialog).getByText(t('detailReplay'))).toBeTruthy()
+    expect(within(dialog).getAllByText('今天天气不错').length).toBeGreaterThan(0)
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: '今天天气不错' })).toBeNull()
   })
@@ -279,8 +315,14 @@ describe('the board on screen', () => {
     fireEvent.change(within(dialog).getByPlaceholderText(t('interruptPlaceholder')), { target: { value: '先别动那一行' } })
     fireEvent.click(within(dialog).getByRole('button', { name: t('interruptSend') }))
     expect(calls.interrupt).toEqual([{ sessionId: 'session-1', text: '先别动那一行' }])
-    // 停止是另一种意图：插话是催它，停止是拦它——两个按钮都在同一块里。
+    // 停止是另一种意图：插话是催它，停止是拦它——但拦之前必须显式确认。
     fireEvent.click(within(dialog).getByRole('button', { name: t('sessionStop') }))
+    expect(calls.end).toEqual([])
+    const confirm = screen.getByRole('dialog', { name: t('stopConfirmTitle') })
+    const confirmButton = within(confirm).getByRole('button', { name: t('sessionStop') }) as HTMLButtonElement
+    expect(confirmButton.disabled).toBe(true)
+    fireEvent.click(within(confirm).getByRole('checkbox', { name: t('stopConfirmAcknowledge') }))
+    fireEvent.click(confirmButton)
     expect(calls.end).toEqual(['session-1'])
   })
 
@@ -304,6 +346,7 @@ describe('the board on screen', () => {
   it('says the board is loading before the first snapshot', () => {
     const fake: WorkbenchFace = {
       useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(undefined),
+      useNotices: <S,>(select: (current: readonly ConsoleNoticeRecord[]) => S) => select([]),
       dispatch: async () => true,
       move: async () => true,
       interrupt: async () => true,

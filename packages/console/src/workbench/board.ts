@@ -92,6 +92,21 @@ export class WorkbenchBoard {
   private readonly inFlight = new Map<string, Promise<IngestResult>>()
   private readonly sessions = new SessionStore()
   private readonly handles = new Map<string, ExecutorHandle>()
+  /**
+   * Host session id → the card that shows it.
+   *
+   * A rule action (or a tool) creates the session through the workbench's session
+   * port; the board learns about it here so the workbench shows the work instead
+   * of only the rules page.
+   */
+  private readonly sessionCards = new Map<string, string>()
+  /**
+   * 会话 → 它所属链路的根卡 id。
+   *
+   * 会话还没建卡时就要先登记（工具建会话 → 投递第一条消息才建卡），否则
+   * 那条卡会自成一条链，同一件事又被拆成两张。
+   */
+  private readonly sessionRoots = new Map<string, string>()
   private readonly listeners = new Set<(state: WorkbenchState) => void>()
   private readonly warnedUnknownConnectors = new Set<string>()
   private routingVersion = defaultRoutingTable().version
@@ -104,6 +119,15 @@ export class WorkbenchBoard {
   private saveAgain = false
   /** Settles once the saved document was read (or found absent). */
   readonly ready: Promise<void>
+  /**
+   * The last log timestamp handed out.
+   *
+   * Logs are the one thing the page polls with a timestamp cursor, so two lines
+   * written in the same millisecond (a scripted executor does exactly that) must
+   * still be distinguishable. The board hands out strictly increasing stamps
+   * instead of trusting `Date.now()` alone.
+   */
+  private lastLogAt = 0
 
   /**
    * @param options - the registries, the routing store, and the live configuration readers.
@@ -130,6 +154,7 @@ export class WorkbenchBoard {
       ...(event.externalId === undefined ? {} : { externalId: event.externalId }),
       title,
       ...(event.body === undefined ? {} : { body: event.body }),
+      ...(event.rootId === undefined || event.rootId === '' ? {} : { rootId: event.rootId }),
     }
     const dedupeKey = normalized.externalId !== undefined
       ? `${source}:${normalized.externalId}`
@@ -177,8 +202,11 @@ export class WorkbenchBoard {
     let decision = routeEvent(classification, table, source)
 
     const now = Date.now()
+    const cardId = randomUUID()
     let card: WorkbenchCard = {
-      id: randomUUID(),
+      id: cardId,
+      // 派生事件带 rootId 时归到那条链；不带就自成一链。
+      rootId: normalized.rootId ?? cardId,
       source,
       ...(normalized.externalId === undefined ? {} : { externalId: normalized.externalId }),
       dedupeKey,
@@ -461,8 +489,16 @@ export class WorkbenchBoard {
     for (const card of document.cards) {
       this.cards.set(card.id, card)
       this.dedupe.set(card.dedupeKey, card.id)
+      // 重启后会话 → 链路的登记只能从卡上还原：handle 没了，但归属还在。
+      if (card.sessionId !== undefined && card.sessionId !== '') {
+        this.sessionRoots.set(card.sessionId, card.rootId)
+      }
     }
     this.sessions.restore(document.sessions)
+    for (const session of this.sessions.list()) {
+      const last = session.logs.at(-1)
+      if (last !== undefined) this.lastLogAt = Math.max(this.lastLogAt, last.at)
+    }
     // 重启之后没有任何运行还活着（handle 随进程没了），所以停在进行中的卡片是在
     // 说谎：把它们放回待办，能恢复的标「已暂停」、其余标 idle。留着 processing 的
     // 后果是卡片卡死——派单对 processing 直接早退，而界面看起来「它在跑」。
@@ -495,8 +531,10 @@ export class WorkbenchBoard {
     const session = this.sessions.create(card.id, executorId)
     const handle = executor.dispatch(card, {
       log: (text) => {
-        this.sessions.appendLog(session.id, text)
-        this.bump()
+        this.sessions.appendLog(session.id, text, this.nextLogAt())
+        // 日志不是看板结构：不推进 `revision`，页面带 `logsSince` 只取新增行。
+        // 之前每写一行就把整份看板判「变了」，有会话在跑时增量轮询等于没有。
+        this.ensureSaved()
       },
       finish: (status) => {
         this.handles.delete(session.id)
@@ -519,6 +557,18 @@ export class WorkbenchBoard {
     })
     this.handles.set(session.id, handle)
     return { ...card, sessionId: session.id }
+  }
+
+  /**
+   * Hand out the next log timestamp.
+   *
+   * Strictly increasing, even within one millisecond: the page's `logsSince`
+   * cursor is an exact `>` comparison, so a stamp it never saw must never repeat.
+   * @returns epoch ms, at least one greater than the previous line's.
+   */
+  private nextLogAt(): number {
+    this.lastLogAt = Math.max(Date.now(), this.lastLogAt + 1)
+    return this.lastLogAt
   }
 
   /**
@@ -563,6 +613,141 @@ export class WorkbenchBoard {
     if (card !== undefined && card.column === 'processing') {
       this.cards.set(card.id, { ...card, column: 'todo', status: 'idle', updatedAt: Date.now() })
     }
+  }
+
+  /**
+   * Adopt one host session as a board card.
+   *
+   * The workbench's session port calls this when a rule (or a tool) creates a
+   * session, so the board is the visible result of the decision engine rather
+   * than a second pipeline nothing feeds.
+   * @param input - the session, its title, and where it came from.
+   * @returns the card that shows it.
+   */
+  recordSessionCard(input: {
+    readonly sessionId: string
+    readonly title: string
+    readonly body?: string
+    readonly source: WorkbenchCard['source']
+    readonly ruleName?: string
+    /** 这条会话属于哪条链；不给时按会话登记找，再找不到就自成一链。 */
+    readonly rootId?: string
+  }): WorkbenchCard {
+    const known = this.sessionCards.get(input.sessionId)
+    if (known !== undefined) {
+      const existing = this.cards.get(known)
+      if (existing !== undefined) return existing
+    }
+    for (const card of this.cards.values()) {
+      if (card.sessionId !== input.sessionId) continue
+      this.sessionCards.set(input.sessionId, card.id)
+      return card
+    }
+    const now = Date.now()
+    const cardId = randomUUID()
+    const rootId = input.rootId ?? this.sessionRoots.get(input.sessionId) ?? cardId
+    const card: WorkbenchCard = {
+      id: cardId,
+      rootId,
+      source: input.source,
+      dedupeKey: `session:${input.sessionId}`,
+      title: input.title,
+      ...(input.body === undefined ? {} : { body: input.body }),
+      column: 'processing',
+      status: 'running',
+      priority: 'normal',
+      kind: 'unknown',
+      confidence: 1,
+      executor: 'dsh',
+      sessionId: input.sessionId,
+      awaitingConfirmation: false,
+      createdAt: now,
+      updatedAt: now,
+      decision: {
+        action: 'dispatch',
+        executor: 'dsh',
+        routeId: 'rule-session',
+        ruleVersion: this.routingVersion,
+        classification: { kind: 'unknown', priority: 'normal', confidence: 1, reasons: [] },
+        reasons: [{ code: 'legacy', text: input.ruleName === undefined ? '规则动作创建的会话' : `规则「${input.ruleName}」创建的会话` }],
+      },
+    }
+    this.cards.set(card.id, card)
+    this.sessionCards.set(input.sessionId, card.id)
+    this.sessions.adopt(input.sessionId, card.id, 'dsh')
+    this.bump()
+    return card
+  }
+
+  /**
+   * 把一条会话登记到某条链路下。
+   *
+   * 调用点在「会话已建、卡还没建」之间（工具的 `open_session` 就是这个时序）：
+   * 先登记，建卡时 {@link recordSessionCard} 才找得到根。卡已经在了就顺手改过去。
+   * @param sessionId - 宿主会话 id。
+   * @param rootId - 链路根卡 id；给空串表示不归任何链（等价于没登记）。
+   */
+  linkSession(sessionId: string, rootId: string): void {
+    if (sessionId === '' || rootId === '') return
+    this.sessionRoots.set(sessionId, rootId)
+    const cardId = this.sessionCards.get(sessionId)
+    const card = cardId === undefined ? undefined : this.cards.get(cardId)
+    if (card === undefined || card.rootId === rootId) return
+    this.cards.set(card.id, { ...card, rootId, updatedAt: Date.now() })
+    this.bump()
+  }
+
+  /**
+   * 这条会话属于哪条链路。
+   *
+   * 先看显式登记，再按板上已挂该会话的卡找——工具和通知都靠它把自己挂到
+   * 触发它的那件事上，不需要调用方自己知道根是谁。
+   * @param sessionId - 宿主会话 id。
+   * @returns 根卡 id；这条会话不属于任何链时 undefined。
+   */
+  rootOfSession(sessionId: string): string | undefined {
+    const linked = this.sessionRoots.get(sessionId)
+    if (linked !== undefined) return linked
+    for (const card of this.cards.values()) {
+      if (card.sessionId === sessionId) return card.rootId
+    }
+    return undefined
+  }
+
+  /**
+   * Append one line to an adopted session's log.
+   *
+   * Log lines are not structure: no revision bump, so the page's poll stays a
+   * log-delta read. A session this board does not know is ignored.
+   * @param sessionId - the host session id.
+   * @param text - the line.
+   */
+  appendSessionLog(sessionId: string, text: string): void {
+    if (this.sessions.get(sessionId) === undefined) return
+    this.sessions.appendLog(sessionId, text, this.nextLogAt())
+    this.ensureSaved()
+  }
+
+  /**
+   * Mark an adopted session finished and move its card to `done`.
+   * @param sessionId - the host session id.
+   * @param status - `done` for a completed turn, `failed` otherwise.
+   */
+  finishSession(sessionId: string, status: 'done' | 'failed'): void {
+    const session = this.sessions.get(sessionId)
+    if (session === undefined) return
+    this.sessions.setStatus(sessionId, status)
+    const card = this.cards.get(session.cardId)
+    if (card !== undefined) {
+      this.cards.set(card.id, {
+        ...card,
+        column: 'done',
+        status,
+        awaitingConfirmation: status === 'done',
+        updatedAt: Date.now(),
+      })
+    }
+    this.bump()
   }
 
   /**

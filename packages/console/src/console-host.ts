@@ -36,6 +36,7 @@ import type {
 } from './protocol.ts'
 import { emptyPrefs, readPrefs, writePrefs, type ConsolePrefs } from './store.ts'
 import type { IngestResult, WorkbenchBoard } from './workbench/board.ts'
+import type { WorkbenchSessionPort } from './workbench/session-port.ts'
 
 /** The most notices kept for one browser session. */
 export const NOTICE_LIMIT = 50
@@ -151,6 +152,14 @@ export class ConsoleHost extends Service {
   /** The board this service fronts for companion plugins; set by the plugin's mount. */
   private board: WorkbenchBoard | undefined
   /**
+   * The session capability connectors may use.
+   *
+   * Exposed on the service so a connector never implements its own host port:
+   * the workbench owns "how this host creates a session", the connector owns the
+   * prompt and the workspace.
+   */
+  private sessionPort: WorkbenchSessionPort | undefined
+  /**
    * Settles once the saved preferences were read (or found absent).
    *
    * Published because the read is asynchronous while the first request is not:
@@ -169,6 +178,8 @@ export class ConsoleHost extends Service {
    */
   private running: readonly RunningSession[] = []
   private runningTimer: NodeJS.Timeout | undefined
+  /** 下一次「snooze 到点」的唤醒；到点把条目放回队列。 */
+  private snoozeTimer: NodeJS.Timeout | undefined
   /** 自动化日志，最新在前，长度封顶 {@link LOG_LIMIT}。 */
   private readonly logEntries: ConsoleLogEntry[] = []
   /**
@@ -192,6 +203,11 @@ export class ConsoleHost extends Service {
       this.bump()
     })
     this.watchRunning()
+    // 两个定时器都为了「首页数字」而存在，随服务一起卸载，别留在已经死掉的服务上打转。
+    this.ctx.effect(() => () => {
+      if (this.runningTimer !== undefined) clearInterval(this.runningTimer)
+      if (this.snoozeTimer !== undefined) clearTimeout(this.snoozeTimer)
+    }, 'console: stop the running and snooze timers')
   }
 
   /**
@@ -285,6 +301,10 @@ export class ConsoleHost extends Service {
     const actions = Array.isArray(notice.actions) && notice.actions.length > 0
       ? notice.actions.filter(action => typeof action.id === 'string' && action.id !== '' && typeof action.label === 'string')
       : undefined
+    // 没显式给根就按会话找：通知是它所属链路的一步，而不是并列的第二个东西。
+    const rootId = typeof notice.rootId === 'string' && notice.rootId !== ''
+      ? notice.rootId
+      : notice.sessionId === undefined ? undefined : this.board?.rootOfSession(notice.sessionId)
     const record: ConsoleNoticeRecord = {
       ...envelope,
       delivered,
@@ -292,6 +312,7 @@ export class ConsoleHost extends Service {
       ...(notice.kind === undefined ? {} : { kind: notice.kind }),
       ...(actions === undefined ? {} : { actions }),
       ...(notice.sessionId === undefined ? {} : { sessionId: notice.sessionId }),
+      ...(rootId === undefined ? {} : { rootId }),
     }
     this.notices.unshift(record)
     if (this.notices.length > NOTICE_LIMIT) this.notices.length = NOTICE_LIMIT
@@ -351,7 +372,56 @@ export class ConsoleHost extends Service {
   snooze(id: string, until: number): ItemResult {
     if (!Number.isFinite(until) || until <= Date.now()) return { ok: false, message: 'snooze 需要一个将来的时间' }
     if (!this.replace(id, { state: 'seen', snoozedUntil: until })) return { ok: false, message: '这个条目已经不在了' }
+    this.scheduleWake()
     return { ok: true }
+  }
+
+  /**
+   * Put every item whose snooze has run out back in the queue.
+   *
+   * A snooze is a delay, not a verdict: leaving the record in `seen` forever
+   * would both hide it from `awaiting` and render it as "dismissed", which is a
+   * different decision the user never made.
+   * @returns whether any record moved back to `new`.
+   */
+  private wakeSnoozed(): boolean {
+    const now = Date.now()
+    let changed = false
+    for (let index = 0; index < this.notices.length; index += 1) {
+      const record = this.notices[index]
+      if (record === undefined || record.state !== 'seen') continue
+      if (record.snoozedUntil === undefined || record.snoozedUntil > now) continue
+      const { snoozedUntil: _expired, ...rest } = record
+      this.notices[index] = { ...rest, state: 'new' }
+      changed = true
+    }
+    return changed
+  }
+
+  /**
+   * Arm one timer for the earliest snooze still in the future.
+   *
+   * A timer is required rather than "wake on next read": the page listens to
+   * pushes and does not poll the workbench state, so without a push at the due
+   * moment the item would sit invisible until something else happened.
+   */
+  private scheduleWake(): void {
+    if (this.snoozeTimer !== undefined) clearTimeout(this.snoozeTimer)
+    const now = Date.now()
+    const due = this.notices
+      .filter(record => record.state === 'seen' && record.snoozedUntil !== undefined && record.snoozedUntil > now)
+      .map(record => record.snoozedUntil as number)
+      .sort((left, right) => left - right)[0]
+    if (due === undefined) {
+      this.snoozeTimer = undefined
+      return
+    }
+    this.snoozeTimer = setTimeout(() => {
+      this.snoozeTimer = undefined
+      if (this.wakeSnoozed()) this.bump()
+      this.scheduleWake()
+    }, due - now)
+    this.snoozeTimer.unref?.()
   }
 
   /**
@@ -415,6 +485,19 @@ export class ConsoleHost extends Service {
   }
 
   /**
+   * Attach the session port built over the host's session controller.
+   * @param port - the port connectors call.
+   */
+  attachSessions(port: WorkbenchSessionPort): void {
+    this.sessionPort = port
+  }
+
+  /** @returns the session port, or undefined before mount / in a deployment without one. */
+  get sessions(): WorkbenchSessionPort | undefined {
+    return this.sessionPort
+  }
+
+  /**
    * Hand one inbound work event to the board — the mail connector's entrance
    * for a companion plugin, and the shape the webhook entrance normalizes to.
    *
@@ -429,6 +512,26 @@ export class ConsoleHost extends Service {
     return this.board.ingest(event)
   }
 
+  /**
+   * 这条会话属于哪条链路。
+   *
+   * 工具与连接器据此把新会话、通知挂到触发它的那件事上，而不必自己知道根是谁。
+   * @param sessionId - 宿主会话 id。
+   * @returns 根卡 id；没有看板或不属于任何链时 undefined。
+   */
+  rootOfSession(sessionId: string): string | undefined {
+    return this.board?.rootOfSession(sessionId)
+  }
+
+  /**
+   * 把一条会话登记到某条链路下（会话已建、卡还没建时用）。
+   * @param sessionId - 宿主会话 id。
+   * @param rootId - 链路根卡 id。
+   */
+  linkSession(sessionId: string, rootId: string): void {
+    this.board?.linkSession(sessionId, rootId)
+  }
+
   /** Forget the notices of this session (the user dismissed the list). */
   clearNotices(): void {
     if (this.notices.length === 0) return
@@ -441,6 +544,8 @@ export class ConsoleHost extends Service {
    * @returns the state the browser's home list and notice centre render from.
    */
   state(): ConsoleState {
+    // 读的时候顺手放回已经到点的 snooze：定时器是正常路径，这里兜底。
+    this.wakeSnoozed()
     return {
       notices: this.notices,
       awaiting: this.awaiting(),

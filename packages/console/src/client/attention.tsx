@@ -11,10 +11,12 @@
  * @module @free-dshzlj/dsh-console/client/attention
  */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConsoleLogEntry, ConsoleNoticeRecord, RunningSession } from '../protocol.ts'
 import type { Translate } from './locales.ts'
+import { sourceLabel } from './locales.ts'
+import { sessionLabel } from './focus.tsx'
 import { CLS } from './styles.ts'
 
 /** 这一块要读和要调的东西。 */
@@ -36,30 +38,47 @@ function isWaiting(notice: ConsoleNoticeRecord): boolean {
 
 /**
  * 一条要人处理的事。
+ *
+ * 动作失败时把原因留在这条旁边、条目**不消失**：把失败吞掉等于告诉用户「处理了」，
+ * 而事情还在。与通知面板里的失败处理是同一套做法。
  * @param props - 这一块的整体 props。
  * @param notice - 这一条。
  * @returns the row.
  */
-function waitingRow(props: AttentionProps, notice: ConsoleNoticeRecord): ReactNode {
+function WaitingRow(props: AttentionProps & { readonly notice: ConsoleNoticeRecord }): ReactNode {
+  const { notice, t } = props
+  /** 上一次点击没生效的原因；空串表示没有。 */
+  const [failure, setFailure] = useState('')
+  /**
+   * 跑一次点击，失败就说出来。
+   * @param work - the Host's answer.
+   */
+  const run = (work: Promise<{ ok: boolean; message?: string }>): void => {
+    setFailure('')
+    void work.then((result) => {
+      if (!result.ok) setFailure(result.message ?? t('noticeFailed'))
+    })
+  }
   return (
-    <li key={notice.id} className={CLS.attentionItem}>
+    <li className={CLS.attentionItem}>
       <div className={CLS.attentionMain}>
         <span className={CLS.attentionTitle}>{notice.title}</span>
         {notice.body !== undefined && <span className={CLS.attentionBody}>{notice.body}</span>}
         <span className={CLS.attentionMeta}>
-          {notice.source !== undefined && <Tag tone="outline">{notice.source}</Tag>}
+          {notice.source !== undefined && <Tag tone="outline">{sourceLabel(notice.source, t)}</Tag>}
           <span className={CLS.noticeTime}>{new Date(notice.createdAt).toLocaleTimeString()}</span>
         </span>
       </div>
       <div className={CLS.attentionActions}>
         {(notice.actions ?? []).map((action) => (
-          <Button key={action.id} size="sm" onClick={() => { void props.actOnItem(notice.id, action.id) }}>
+          <Button key={action.id} size="sm" onClick={() => { run(props.actOnItem(notice.id, action.id)) }}>
             {action.label}
           </Button>
         ))}
-        <Button variant="ghost" size="sm" onClick={() => { void props.dismissItem(notice.id) }}>
-          {props.t('noticeDismiss')}
+        <Button variant="ghost" size="sm" onClick={() => { run(props.dismissItem(notice.id)) }}>
+          {t('noticeDismiss')}
         </Button>
+        {failure !== '' && <p className={CLS.attentionFailure} role="status">{failure}</p>}
       </div>
     </li>
   )
@@ -79,9 +98,15 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
       <div className={CLS.attentionHead}>
         <h2 className={CLS.attentionHeading}>{props.t('attentionTitle')}</h2>
         {waiting.length === 0
-          ? <Tag tone="success">{props.t('attentionClear')}</Tag>
-          : <Tag tone="info">{props.t('attentionCount', { count: waiting.length })}</Tag>}
+          ? <span className={CLS.viewMeta}>{props.t('attentionClear')}</span>
+          : (
+            <span title={props.t('attentionItemsOnly')}>
+              <Tag tone="info">{props.t('attentionCount', { count: waiting.length })}</Tag>
+            </span>
+          )}
       </div>
+      {/* 口径写在界面上：这里只数工作台条目，会话层面的「等你回答」不在其中。 */}
+      <p className={CLS.viewMeta}>{props.t('attentionItemsOnly')}</p>
       {/*
         「它现在在替我干什么」和「它要我干什么」并列：一个替你干活的系统如果不可见，
         人就不敢放手。这一块只列标题与目录，不做会话浏览——那是另一个屏。
@@ -92,7 +117,7 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
           <ul className={CLS.runningList}>
             {running.slice(0, 5).map(session => (
               <li key={session.sessionId} className={CLS.runningItem}>
-                <span className={CLS.attentionTitle}>{session.title === '' ? session.sessionId : session.title}</span>
+                <span className={CLS.attentionTitle}>{sessionLabel(session, props.t)}</span>
                 {session.cwd !== undefined && <span className={CLS.attentionBody}>{session.cwd}</span>}
               </li>
             ))}
@@ -100,8 +125,12 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
         </div>
       )}
       {waiting.length === 0
-        ? <p className={CLS.emptyLine}>{props.t('attentionEmpty')}</p>
-        : <ul className={CLS.attentionList}>{waiting.map(notice => waitingRow(props, notice))}</ul>}
+        ? <p className={CLS.empty}>{props.t('attentionEmpty')}</p>
+        : (
+          <ul className={CLS.attentionList}>
+            {waiting.map(notice => <WaitingRow key={notice.id} {...props} notice={notice} />)}
+          </ul>
+        )}
       {settled.length > 0 && (
         <>
           <h3 className={CLS.attentionSubheading}>{props.t('attentionSettled')}</h3>
@@ -112,7 +141,9 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
                   <span className={CLS.attentionTitle}>{notice.title}</span>
                 </div>
                 <Tag tone={notice.state === 'resolved' ? 'success' : 'outline'}>
-                  {notice.state === 'resolved' ? props.t('noticeDone') : props.t('noticeDismissed')}
+                  {notice.state === 'resolved'
+                    ? props.t('noticeDone')
+                    : notice.state === 'seen' ? props.t('noticeSnoozed') : props.t('noticeDismissed')}
                 </Tag>
               </li>
             ))}
@@ -134,7 +165,7 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
                   {entry.detail !== undefined && <span className={CLS.attentionBody}>{entry.detail}</span>}
                 </div>
                 <span className={CLS.attentionMeta}>
-                  <Tag tone={entry.ok ? 'outline' : 'warning'}>{entry.source}</Tag>
+                  <Tag tone={entry.ok ? 'outline' : 'warning'}>{sourceLabel(entry.source, props.t)}</Tag>
                   <span className={CLS.noticeTime}>{new Date(entry.at).toLocaleTimeString()}</span>
                 </span>
               </li>

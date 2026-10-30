@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createHarnessRunner,
   runningSessionsOf,
+  titleOfSession,
   type HarnessAgentLike,
   type HarnessAgentsLike,
   type HarnessSessionEventLike,
@@ -179,6 +180,45 @@ describe('createHarnessRunner', () => {
   it('refuses a follow-up into a session it did not start', async () => {
     const { runner: port } = runner()
     await expect(port?.send('elsewhere', '喂')).rejects.toThrow('was not started here')
+  })
+})
+
+describe('titleOfSession', () => {
+  /** One persisted session carrying these events. */
+  function session(events: readonly { readonly type?: string; readonly data?: unknown }[]) {
+    return { id: 's-1', snapshotEvents: () => events }
+  }
+
+  it('prefers the title projection', () => {
+    const titles = { get: () => ({ title: '修 FormSubmit 的回归测试' }) }
+    expect(titleOfSession(session([]), titles)).toBe('修 FormSubmit 的回归测试')
+  })
+
+  it('falls back to the first human message, as one short line', () => {
+    const titles = { get: () => ({ title: '   ' }) }
+    const events = [
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '你好' }] } },
+      {
+        type: 'user/message',
+        data: {
+          source: { kind: 'system' },
+          content: [{ type: 'text', text: '不是人写的' }],
+        },
+      },
+      {
+        type: 'user/message',
+        data: {
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: '帮我看一下首页\n顺便修个 bug' }],
+        },
+      },
+    ]
+    expect(titleOfSession(session(events), titles)).toBe('帮我看一下首页')
+  })
+
+  it('answers empty when neither source has anything, so the page can say "unnamed"', () => {
+    expect(titleOfSession(session([]), undefined)).toBe('')
+    expect(titleOfSession(undefined, { get: () => ({ title: 'x' }) })).toBe('')
   })
 })
 

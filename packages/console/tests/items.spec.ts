@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConsoleHost, LOG_LIMIT } from '../src/console-host.ts'
+import type { WorkbenchBoard } from '../src/workbench/board.ts'
 
 /** 一个测试创建的临时目录，用完删掉。 */
 const homes: string[] = []
@@ -68,6 +69,22 @@ describe('raise：比 notify 多的那两样东西', () => {
     const record = await host.raise({ title: '新邮件' })
     expect(record.actions).toBeUndefined()
     expect(record.state).toBe('new')
+  })
+
+  it('挂到会话所属的链路上，而不是在队列里另起一件事', async () => {
+    const host = await bench()
+    // 只演「这条会话属于哪条链」这一个回答：条目要的正是它。
+    host.attachWorkbench({
+      rootOfSession: (sessionId: string) => (sessionId === 'session-1' ? 'root-1' : undefined),
+    } as unknown as WorkbenchBoard)
+    const inherited = await host.raise({ title: '建议处理：DSH E2E', kind: 'mail', sessionId: 'session-1' })
+    expect(inherited.rootId).toBe('root-1')
+    // 显式给了根就用它，不去猜。
+    const explicit = await host.raise({ title: '另一件事', rootId: 'root-9', sessionId: 'session-1' })
+    expect(explicit.rootId).toBe('root-9')
+    // 既没有根也没有会话：自成一件事，不硬塞进别人的链路。
+    const alone = await host.raise({ title: '纯提醒' })
+    expect(alone.rootId).toBeUndefined()
   })
 
   it('notify 仍然可用，并且和 raise 落进同一个列表', async () => {
@@ -243,6 +260,19 @@ describe('dismiss / snooze / awaiting', () => {
     expect(host.snooze(record.id, Date.now() + 60_000)).toEqual({ ok: true })
     // 被 snooze 的不算「现在要处理」。
     expect(host.state().awaiting).toBe(0)
+  })
+
+  it('snooze 到点后自己回到待处理，而不是一直算已忽略', async () => {
+    const host = await bench()
+    const record = await host.raise({ title: 'x' })
+    expect(host.snooze(record.id, Date.now() + 500)).toEqual({ ok: true })
+    expect(host.state().notices[0]?.state).toBe('seen')
+    expect(host.state().awaiting).toBe(0)
+    await vi.waitFor(() => {
+      expect(host.state().notices[0]?.state).toBe('new')
+    }, { timeout: 2000 })
+    expect(host.state().notices[0]?.snoozedUntil).toBeUndefined()
+    expect(host.state().awaiting).toBe(1)
   })
 
   it('一条通知也算待处理——它同样占着人的注意力', async () => {

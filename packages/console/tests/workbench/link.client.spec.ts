@@ -46,7 +46,36 @@ describe('WorkbenchLink', () => {
     expect(urls[0]).toBe(WORKBENCH_STATE_PATH)
     expect(link.getSnapshot()?.revision).toBe(3)
     await link.refresh()
-    expect(urls[1]).toBe(`${WORKBENCH_STATE_PATH}?since=3`)
+    expect(urls[1]).toBe(`${WORKBENCH_STATE_PATH}?since=3&logsSince=0`)
+  })
+
+  it('folds log-only updates into the snapshot and repaints', async () => {
+    const first = state(3)
+    const withSession = {
+      ...first,
+      sessions: [{
+        id: 's-1',
+        cardId: 'c-1',
+        executor: 'dsh',
+        status: 'running' as const,
+        logs: [{ at: 10, text: 'a' }],
+        createdAt: 1,
+        updatedAt: 10,
+      }],
+    }
+    const urls = stubFetch([
+      withSession,
+      { revision: 3, logs: [{ sessionId: 's-1', lines: [{ at: 20, text: 'b' }] }] },
+    ])
+    const link = new WorkbenchLink()
+    const seen: number[] = []
+    link.subscribe(() => seen.push(1))
+    await link.refresh()
+    await link.refresh()
+    expect(urls[1]).toBe(`${WORKBENCH_STATE_PATH}?since=3&logsSince=10`)
+    expect(link.getSnapshot()?.sessions[0]?.logs.map(line => line.text)).toEqual(['a', 'b'])
+    expect(link.getSnapshot()?.revision).toBe(3)
+    expect(seen).toHaveLength(2)
   })
 
   it('does not notify readers when the board did not move', async () => {

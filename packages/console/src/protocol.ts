@@ -69,6 +69,13 @@ export interface ConsoleNotice {
   readonly actions?: readonly NoticeAction[]
   /** Session this item is about, so a UI can point at where the work happens. */
   readonly sessionId?: string
+  /**
+   * 这条通知属于哪条链路（同一件事的根卡 id）。
+   *
+   * 工作台把一次派生出来的卡片和通知按这个键收成一条链，详情里按顺序展示。
+   * 不给时 Host 会按 `sessionId` 自己找；找不到就自成一链。
+   */
+  readonly rootId?: string
 }
 
 /** One delivered notice, with the identity and instant the workbench gave it. */
@@ -242,6 +249,11 @@ export interface WorkbenchEvent {
   readonly title: string
   /** Supporting text, used by the classifier. */
   readonly body?: string
+  /**
+   * 这件事的根卡 id：同一件事派生出来的后续事件（子会话、子派单）带上它，
+   * 看板就把它们合并成一张卡。不给时这张卡自成一链。
+   */
+  readonly rootId?: string
 }
 
 /**
@@ -300,6 +312,13 @@ export interface WorkbenchCard {
   readonly externalId?: string
   /** `source:externalId`, or `source:title:…` when the source has no id. */
   readonly dedupeKey: string
+  /**
+   * 同一件事的根卡 id；等于自己的 `id` 时这张卡就是链路的起点。
+   *
+   * 看板按它分组：一张链路卡展开是「创建 → 派单 → 子会话 → 子派单 → 完成」，
+   * 而不是五张互不相干的卡。
+   */
+  readonly rootId: string
   readonly title: string
   readonly body?: string
   readonly column: WorkbenchColumn
@@ -321,6 +340,21 @@ export interface WorkbenchCard {
 export interface WorkbenchLogLine {
   readonly at: number
   readonly text: string
+}
+
+/**
+ * New session log lines since the page's cursor.
+ *
+ * Sent when the board's structure did not move but a running session printed
+ * more: the poll then costs the new lines only, not the whole document. The page
+ * sends the newest `at` it already has as `logsSince`.
+ */
+export interface WorkbenchLogDelta {
+  readonly revision: number
+  readonly logs: readonly {
+    readonly sessionId: string
+    readonly lines: readonly WorkbenchLogLine[]
+  }[]
 }
 
 /** One agent session, focused in the session view. */

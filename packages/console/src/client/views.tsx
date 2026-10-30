@@ -39,7 +39,7 @@ export function ConnectorsView({ t, face }: {
         <p className={CLS.viewHint}>{t('connectorsHint')}</p>
       </header>
       {state === undefined
-        ? <p className={CLS.viewEmpty}>{t('boardLoading')}</p>
+        ? <p className={CLS.empty}>{t('boardLoading')}</p>
         : (
           <>
             <ul className={CLS.connectorList}>
@@ -82,7 +82,9 @@ export function ConnectorsView({ t, face }: {
                 </li>
               ))}
             </ul>
-            <p className={CLS.viewMeta}>{t('routingVersion', { version: state.routingVersion })}</p>
+            <p className={CLS.viewMeta}>
+              {t('routingVersion', { version: state.routingVersion })}
+            </p>
           </>
         )}
     </section>
