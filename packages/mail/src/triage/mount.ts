@@ -103,6 +103,13 @@ interface ConsoleLike {
    * undefined，本插件自己建一个同类的引擎。
    */
   readonly decision?: DecisionEngine
+  /**
+   * 工作台提供的会话能力。
+   *
+   * 建会话是宿主能力，不是邮件能力：本插件只负责「说什么、在哪个目录说」。工作台版本
+   * 没有这一项时才退回自己的 `agents` 端口（旧版宿主），两者都缺就如实失败。
+   */
+  readonly sessions?: SessionPort
 }
 
 /** 子进程能力。 */
@@ -229,7 +236,9 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
     }
   }
 
-  const sessionPort = (): SessionPort | undefined => buildSessionPort(ctx.get('agents') as AgentsLike | undefined)
+  const sessionPort = (): SessionPort | undefined =>
+    (consoleService()?.sessions as SessionPort | undefined)
+    ?? buildSessionPort(ctx.get('agents') as AgentsLike | undefined)
 
   /** 工具端口：宿主的 tools 服务可能只给 list/invoke 之一。 */
   function toolsPort(): ActionContext['tools'] | undefined {
@@ -305,6 +314,10 @@ export function createTriage(ctx: Context, deps: TriageDeps): TriageEngine {
     if (Array.isArray(value)) return value.map(collectText).filter(part => part !== '').join('\n')
     if (typeof value !== 'object' || value === null) return ''
     const record = value as Record<string, unknown>
+    // 宿主的事件是 `{ turn, step, message: { role, content } }`；旧形状才是 `data.content`。
+    // 之前只认后者，于是模型答得再对，读回来的也是空串（分类全落 uncertain）。
+    const message = record['message']
+    if (typeof message === 'object' && message !== null) return collectText(message)
     if (typeof record['text'] === 'string') return record['text']
     return collectText(record['content'])
   }

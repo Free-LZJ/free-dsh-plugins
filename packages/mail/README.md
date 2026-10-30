@@ -285,7 +285,7 @@ Host 半边用 `imapflow`（连接、SEARCH、FETCH）与 `mailparser`（正文�
 - **接入工作台后不能「只隐藏侧边栏图标」**：一张开关都没有——接入与否由工作台在不在决定。想回到独立模式就禁用工作台那一行。也不做「面板放进工作台页面内部」：工作台是切 `main` 的键，邮件面板仍是布局渲染的同一个面板。
 - **只监听 `INBOX`**：其他文件夹可以在面板里浏览，但不参与「新邮件处理」，也不进分诊。要给某个文件夹单独配规则，得先改这里的发送面。
 - **状态文件不走 `ctx.storageDomain`**（跟随仓内既有做法，少一个 `zod` 依赖和一套 domain 生命周期）：代价是桌面端与 Web 若共用同一个 `$DSH_HOME` 并同时运行，两份状态可能互相覆盖。窗口很小（扫描后写一次），账号配置几乎不变。真要修的话，读写全在 `src/store.ts` 一个文件里。
-- **`session` 模式用的是 dsh 内部服务**（`agents` / `workspaceRegistry` / `agentPresets` / `permissionPresets` / `sessionTitle`），跨 dsh 版本可能漂移。服务缺失时该动作在命中记录里给出**失败原因**，不会静默跳过。
+- **`session` 模式用的是宿主会话服务**：优先用工作台提供的 `ctx.console.sessions`（本机由 `sessionController` 实现），旧宿主才退回自己的 `agents` 端口；`workspaceRegistry` / `permissionPresets` 不存在。服务缺失时该动作在命中记录里给出**失败原因**，不会静默跳过。
 - **`ctx.mail` 只给动词，不给连接**：别的插件能列文件夹、建文件夹、执行动作、读正文（`MailService`），拿不到 IMAP 会话本身。`ctx.get('mail')` 在插件没挂载时是 `undefined`，这是正常状态而不是错误。
 - **HTML 正文一次取全，不做长度裁剪**：正文按段取，只有单段上限（16 MiB，见下）；安全靠面板的沙箱 iframe，不靠内容过滤。
 - **首次接入不触发历史邮件**：第一次连上一个账号只建立游标，不会把几百封旧邮件一次性变成几百个会话。
@@ -327,14 +327,12 @@ pnpm exec vitest run packages/mail
 
 ## 会话动作现在接的是实测过的服务
 
-`session` 动作（含 `followup` 投递）以前按 `sessionController` / `workspaceRegistry` 拼端口，而宿主里没有这两个服务——所以它在真实部署里**从未真正跑过**，每次都只是报「拿不到会话服务」。
+`session` 动作（含 `followup` 投递）以前按 `sessionController` / `workspaceRegistry` 拼端口，后来一度以为宿主只有 `agents.createSession`——两个结论都不完整。2026-10-30 真机复核的结论是：
 
-现在改成宿主真实提供的 `agents`：
+- **`sessionController` 在 Host 侧可用**：`create({cwd, agentPreset?})` → `{sessionId}`、`resolveAgent(id)` → `{agent}`、`rename({sessionId,title})`、`agent.followup(...)`；mail 的分类会话和真实 Jira 派单都走它。
+- **`agents.createSession` 不存在**：按它写的端口只会返回 `undefined`，动作层报「没有会话服务」。
+- 现在 mail **优先**用工作台提供的 `ctx.console.sessions`（工作台自己用 `sessionController` 实现，并把会话登记成看板卡片）；旧宿主才退回自己的 `agents` 端口。
+- 改名走 `session/title` 事件；投话走 `agent.followup`；**挂工作区 / 挂权限**没有对应动词（目录在建会话时就进了 header，权限是会话上的 `permission/*` 事件而动作层只有 id），按**空实现**处理，不假装做过了。
+- 宿主没给会话端口时端口返回 `undefined`，动作层照旧回答「没有会话服务」。
 
-- 建会话 + 起代理：`agents.createSession({ cwd, agentPreset? })`（唯一同时建出代理与会话的入口）
-- 改名：往会话追加 `session/title` 事件（`{ title, messageSeqs: [], source: { kind: 'user' } }`）
-- 投话：`agent.followup({ role: 'user', content: [{ type: 'text', text }], source })`
-- **挂工作区 / 挂权限**：这一版没有对应动词（目录在建会话时就进了 header，权限是会话上的 `permission/*` 事件而动作层只有 id），所以按**空实现**处理，不假装做过了
-- 宿主没给 `createSession` 能力时端口返回 `undefined`，动作层照旧回答「没有会话服务」
-
-实测记录与判断依据见 [`docs/workbench-session-api.md`](../../docs/workbench-session-api.md)。
+证据：2026-10-30 的一封 `[DSH-E2E]` 测试邮件与真实 `EXEPD-229676` Jira 通知都跑通了「邮件 → 规则 → 派单会话 → `open_session` 项目会话 → 看板卡片」。实测记录与判断依据见 [`docs/workbench-session-api.md`](../../docs/workbench-session-api.md)。
