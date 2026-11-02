@@ -13,8 +13,9 @@
  */
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { CONSOLE_VIEWS, type ConsoleView } from './protocol.ts'
+import { CONSOLE_VIEWS, type ConsoleLogEntry, type ConsoleNoticeRecord, type ConsoleView } from './protocol.ts'
 
 /** The directory below `$DSH_HOME` these files live in. */
 export const STATE_DIR = 'dsh-console'
@@ -62,12 +63,102 @@ export async function readPrefs(home: string): Promise<ConsolePrefs> {
  * @param prefs - the document to persist.
  */
 export async function writePrefs(home: string, prefs: ConsolePrefs): Promise<void> {
+  await writeJson(home, 'prefs.json', prefs)
+}
+
+/**
+ * The records the workbench accumulates: the attention queue and the automation log.
+ *
+ * Both are what the user reads *after* the fact — "what was waiting for me", "what
+ * did it do while I was away" — so losing them on a restart turns the workbench
+ * into a page that only ever shows the last few minutes. They live in one file
+ * because one write keeps them consistent: a notice and the log line about it
+ * belong to the same moment.
+ */
+export interface ConsoleRecords {
+  readonly notices: readonly ConsoleNoticeRecord[]
+  readonly log: readonly ConsoleLogEntry[]
+}
+
+/** An empty record document: what a missing or unreadable file resolves to. */
+export function emptyRecords(): ConsoleRecords {
+  return { notices: [], log: [] }
+}
+
+/**
+ * Read the record document.
+ * @param home - the harness home directory (`$DSH_HOME`).
+ * @returns the saved records, or an empty document when it is missing or malformed.
+ */
+export async function readRecords(home: string): Promise<ConsoleRecords> {
+  let text: string
+  try {
+    text = await readFile(join(home, STATE_DIR, 'records.json'), 'utf8')
+  } catch {
+    return emptyRecords()
+  }
+  try {
+    const document = (JSON.parse(text) as unknown ?? {}) as Record<string, unknown>
+    return {
+      notices: entries<ConsoleNoticeRecord>(document.notices, isRecordShape),
+      log: entries<ConsoleLogEntry>(document.log, isLogShape),
+    }
+  } catch {
+    return emptyRecords()
+  }
+}
+
+/**
+ * Replace the record document.
+ *
+ * The temporary name carries a uuid, not just the pid: a busy mailbox raises a
+ * notice while a log line is being written, and two writers sharing one temp
+ * name means the loser's rename fails and its snapshot is lost.
+ * @param home - the harness home directory (`$DSH_HOME`).
+ * @param records - the document to persist.
+ */
+export async function writeRecords(home: string, records: ConsoleRecords): Promise<void> {
+  await writeJson(home, 'records.json', records)
+}
+
+/**
+ * Write one JSON document below {@link STATE_DIR}.
+ * @param home - the harness home directory.
+ * @param name - the file name inside the directory.
+ * @param value - what to serialize.
+ */
+async function writeJson(home: string, name: string, value: unknown): Promise<void> {
   const directory = join(home, STATE_DIR)
-  const target = join(directory, 'prefs.json')
-  const temporary = `${target}.${process.pid}.tmp`
+  const target = join(directory, name)
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`
   await mkdir(directory, { recursive: true })
-  await writeFile(temporary, `${JSON.stringify(prefs, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
   await rename(temporary, target)
+}
+
+/**
+ * Keep the array elements this build can render.
+ *
+ * Only the identity fields are checked: everything else was written by this
+ * module, and a strict schema here would silently drop a record whose shape grew
+ * in a newer build instead of showing what it can.
+ * @param value - the parsed array.
+ * @param accept - whether one element is usable.
+ * @returns the usable elements, or an empty array.
+ */
+function entries<T>(value: unknown, accept: (item: Record<string, unknown>) => boolean): T[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is T => typeof item === 'object' && item !== null && accept(item as Record<string, unknown>))
+}
+
+/** A record needs an id and a title to be drawn. */
+function isRecordShape(item: Record<string, unknown>): boolean {
+  return typeof item['id'] === 'string' && typeof item['title'] === 'string'
+}
+
+/** A log line needs an id and a title to be drawn. */
+function isLogShape(item: Record<string, unknown>): boolean {
+  return isRecordShape(item)
 }
 
 /**

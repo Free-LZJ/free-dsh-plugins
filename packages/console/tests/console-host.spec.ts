@@ -15,7 +15,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConsoleHost } from '../src/console-host.ts'
 import { STATE_DIR } from '../src/store.ts'
 
@@ -30,7 +30,7 @@ async function home(): Promise<string> {
 }
 
 afterEach(async () => {
-  for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true })
+  for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 })
 
 /**
@@ -171,5 +171,49 @@ describe('preferences on disk', () => {
     const host = bench(root)
     await host.ready
     expect(host.state().currentView).toBe('board')
+  })
+})
+
+describe('records across a restart', () => {
+  it('brings the waiting items and the automation log back', async () => {
+    // 这两样是「我不在的时候发生过什么」的全部证据：重启后清空，工作台就只剩最近几分钟。
+    const root = await home()
+    const first = bench(root)
+    await first.ready
+    await first.raise({ title: 'GitHub 待办：有人回复了 #951', tone: 'info', kind: 'mail' })
+    first.log({ source: 'mail', title: '已归档到 GitHub', detail: '其他文件夹/GitHub' })
+
+    // 写是串行的：等链上最后一次快照落盘，再看文件。
+    await vi.waitFor(async () => {
+      const saved = JSON.parse(await readFile(join(root, STATE_DIR, 'records.json'), 'utf8')) as {
+        notices: { title: string }[]
+        log: { title: string }[]
+      }
+      expect(saved.log.map(entry => entry.title)).toEqual(['已归档到 GitHub'])
+    })
+
+    const second = bench(root)
+    await second.ready
+    expect(second.state().notices.map(notice => notice.title)).toEqual(['GitHub 待办：有人回复了 #951'])
+    expect(second.state().log.map(entry => entry.title)).toEqual(['已归档到 GitHub'])
+    // 恢复的条目仍然算「在等你」——这是重启后角标要对得上的那一半。
+    expect(second.state().awaiting).toBe(1)
+  })
+
+  it('does not resurrect items the user cleared', async () => {
+    const root = await home()
+    const first = bench(root)
+    await first.ready
+    await first.raise({ title: '看过就算了的' })
+    first.clearNotices()
+
+    await vi.waitFor(async () => {
+      const saved = JSON.parse(await readFile(join(root, STATE_DIR, 'records.json'), 'utf8')) as { notices: unknown[] }
+      expect(saved.notices).toEqual([])
+    })
+
+    const second = bench(root)
+    await second.ready
+    expect(second.state().notices).toEqual([])
   })
 })

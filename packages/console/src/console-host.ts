@@ -34,7 +34,7 @@ import type {
   ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, ConsoleView, NoticeTone,
   RunningSession, WorkbenchEvent,
 } from './protocol.ts'
-import { emptyPrefs, readPrefs, writePrefs, type ConsolePrefs } from './store.ts'
+import { emptyPrefs, readPrefs, readRecords, writePrefs, writeRecords, type ConsolePrefs, type ConsoleRecords } from './store.ts'
 import type { IngestResult, WorkbenchBoard } from './workbench/board.ts'
 import type { WorkbenchSessionPort } from './workbench/session-port.ts'
 
@@ -183,6 +183,13 @@ export class ConsoleHost extends Service {
   /** 自动化日志，最新在前，长度封顶 {@link LOG_LIMIT}。 */
   private readonly logEntries: ConsoleLogEntry[] = []
   /**
+   * 串行化的记录写入。
+   *
+   * 一次只落一个快照，且按发起顺序：两封邮件同时到达时，后一个快照必须覆盖前一个
+   * （它包含前一个里的条目），否则重启读回来的是一份缺了几条的旧文档。
+   */
+  private writing: Promise<void> = Promise.resolve()
+  /**
    * 规则引擎：规则文件、命中记录、待确认与撤销都归它。
    *
    * 连接器（邮件…）通过 `ctx.console.decision` 把自己的词表注册进来；没有连接器
@@ -198,15 +205,20 @@ export class ConsoleHost extends Service {
     super(ctx, 'console')
     this.layout = options.layout()
     this.decision = options.decision
-    this.ready = readPrefs(options.homeDir).then((saved) => {
+    // 偏好与记录一起读：重启后的第一次 `state()` 就该是完整的那一屏，而不是先
+    // 显示空队列、再被异步读回来的条目替换一次。
+    this.ready = Promise.all([readPrefs(options.homeDir), readRecords(options.homeDir)]).then(([saved, records]) => {
       this.prefs = saved
+      this.restore(records)
       this.bump()
     })
     this.watchRunning()
     // 两个定时器都为了「首页数字」而存在，随服务一起卸载，别留在已经死掉的服务上打转。
+    // 返回值是还在飞的那次记录写：卸载（重启）时等它落地，最后一条通知不该因为退出而丢。
     this.ctx.effect(() => () => {
       if (this.runningTimer !== undefined) clearInterval(this.runningTimer)
       if (this.snoozeTimer !== undefined) clearTimeout(this.snoozeTimer)
+      return this.writing
     }, 'console: stop the running and snooze timers')
   }
 
@@ -317,6 +329,8 @@ export class ConsoleHost extends Service {
     this.notices.unshift(record)
     if (this.notices.length > NOTICE_LIMIT) this.notices.length = NOTICE_LIMIT
     this.bump({ type: 'notice', notice: record, delivered })
+    // 先落盘再回答：调用方（分诊）把「已经提醒过」当成事实，重跑一次不该多出一条。
+    await this.saveRecords()
     return record
   }
 
@@ -395,6 +409,8 @@ export class ConsoleHost extends Service {
       this.notices[index] = { ...rest, state: 'new' }
       changed = true
     }
+    // 放回队列也是一次状态变更：不落盘的话，重启读回来的仍是「还在睡」。
+    if (changed) void this.saveRecords()
     return changed
   }
 
@@ -435,6 +451,7 @@ export class ConsoleHost extends Service {
     const current = this.notices[index]
     if (current === undefined) return false
     this.notices[index] = { ...current, ...change }
+    void this.saveRecords()
     this.bump()
     return true
   }
@@ -464,6 +481,7 @@ export class ConsoleHost extends Service {
       ok: entry.ok !== false,
     })
     if (this.logEntries.length > LOG_LIMIT) this.logEntries.length = LOG_LIMIT
+    void this.saveRecords()
     this.bump()
   }
 
@@ -536,6 +554,8 @@ export class ConsoleHost extends Service {
   clearNotices(): void {
     if (this.notices.length === 0) return
     this.notices.length = 0
+    // 「我清过了」也要落盘，否则重启后清掉的那一批又回来了。
+    void this.saveRecords()
     this.bump()
   }
 
@@ -635,6 +655,37 @@ export class ConsoleHost extends Service {
       id: channel.id,
       enabled: enabled.includes(channel.id),
     }))
+  }
+
+  /**
+   * 把上次进程留下的条目与日志接回来。
+   *
+   * 条目原样恢复，包括 `resolved` / `dismissed` 与还没到点的 snooze：队列本来就
+   * 按状态决定显示还是折叠，这里不做二次判断。到点的 snooze 当场放回队列并重新
+   * 计时，否则它会一直停在 `seen`，直到有人恰好打开页面。
+   * @param records - 读回来的文档。
+   */
+  private restore(records: ConsoleRecords): void {
+    if (records.notices.length > 0) this.notices.push(...records.notices.slice(0, NOTICE_LIMIT))
+    if (records.log.length > 0) this.logEntries.push(...records.log.slice(0, LOG_LIMIT))
+    this.wakeSnoozed()
+    this.scheduleWake()
+  }
+
+  /**
+   * 把当前的条目与日志落盘，一次一个快照。
+   *
+   * 写失败只记日志：工作台不能因为写不了文件而停止接收通知。
+   * @returns 这个快照写完（或写失败）时 settle 的 promise。
+   */
+  private saveRecords(): Promise<void> {
+    const snapshot: ConsoleRecords = { notices: [...this.notices], log: [...this.logEntries] }
+    this.writing = this.writing
+      .then(() => writeRecords(this.options.homeDir, snapshot))
+      .catch((error: unknown) => {
+        this.ctx.logger.warn(`console: saving records failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    return this.writing
   }
 
   /**
