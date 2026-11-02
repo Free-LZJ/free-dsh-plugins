@@ -21,7 +21,7 @@ import { registerAgentTools } from '../src/tools.ts'
 const dirs: string[] = []
 
 afterEach(async () => {
-  for (const directory of dirs.splice(0)) await rm(directory, { recursive: true, force: true })
+  for (const directory of dirs.splice(0)) await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 })
 
 /** @returns 一个这条测试独占的临时目录。 */

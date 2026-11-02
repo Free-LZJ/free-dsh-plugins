@@ -23,7 +23,7 @@ import type { WorkbenchBoard } from '../src/workbench/board.ts'
 const homes: string[] = []
 
 afterEach(async () => {
-  for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true })
+  for (const directory of homes.splice(0)) await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
 })
 
 /**
