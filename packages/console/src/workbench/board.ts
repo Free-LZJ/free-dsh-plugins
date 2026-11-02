@@ -33,6 +33,7 @@ import { ExecutorRegistry, type ExecutorHandle } from './executors.ts'
 import { ConnectorRegistry } from './connectors.ts'
 import { SessionStore } from './sessions.ts'
 import { readWorkbench, writeWorkbench } from './store.ts'
+import { inferChains } from './chain.ts'
 
 /** What ingesting one event produced. */
 export type IngestResult =
@@ -489,7 +490,20 @@ export class WorkbenchBoard {
     for (const card of document.cards) {
       this.cards.set(card.id, card)
       this.dedupe.set(card.dedupeKey, card.id)
-      // 重启后会话 → 链路的登记只能从卡上还原：handle 没了，但归属还在。
+    }
+    // 存量卡没有根（rootId 是后加的字段，老卡读盘时被补成自己）：按标题与时间
+    // 推断一次，让同一件事的几张先合起来。拆开过的成员不参与——用户说过「别合」。
+    for (const chain of inferChains([...this.cards.values()].filter(card => card.chainDetached !== true))) {
+      const root = this.cards.get(chain.rootId)
+      if (root !== undefined) this.cards.set(root.id, { ...root, chainInferred: true })
+      for (const cardId of chain.cardIds) {
+        const member = this.cards.get(cardId)
+        if (member === undefined) continue
+        this.cards.set(cardId, { ...member, rootId: chain.rootId, chainInferred: true })
+      }
+    }
+    // 会话 → 链路的登记从卡上还原：要在推断之后做，否则登记的是推断前的根。
+    for (const card of this.cards.values()) {
       if (card.sessionId !== undefined && card.sessionId !== '') {
         this.sessionRoots.set(card.sessionId, card.rootId)
       }
@@ -712,6 +726,52 @@ export class WorkbenchBoard {
       if (card.sessionId === sessionId) return card.rootId
     }
     return undefined
+  }
+
+  /**
+   * 这封邮件所在的链路。
+   *
+   * 邮件规则建会话时会话卡自成一链，只要邮件卡把邮件 id 写进了 `externalId`，
+   * 这里就认得出两者是同一件事——不需要连接器额外传根。
+   * @param uid - 邮件服务器上的 uid（字符串形式）。
+   * @returns 那封邮件对应卡的根；板上没有这封邮件时 undefined。
+   */
+  rootOfMailUid(uid: string): string | undefined {
+    if (uid === '') return undefined
+    for (const card of this.cards.values()) {
+      if (card.source !== 'mail' || card.externalId === undefined) continue
+      if (card.externalId === uid) return card.rootId
+    }
+    return undefined
+  }
+
+  /**
+   * 把一个成员从推断出来的链里拆开。
+   *
+   * 推断会合错，拆开必须有用而且**持久**：给这张卡记上 `chainDetached`，下次启动
+   * 它就不再被推回同一条链（否则重启一次白拆）。
+   * @param cardId - 要拆开的卡。
+   * @returns 拆开后的卡，或不能拆的原因。
+   */
+  detach(cardId: string): ActionResult {
+    const card = this.cards.get(cardId)
+    if (card === undefined) return { ok: false, error: `unknown card "${cardId}"` }
+    if (card.rootId === card.id) return { ok: true, card }
+    const detached: WorkbenchCard = {
+      ...card,
+      rootId: card.id,
+      chainDetached: true,
+      chainInferred: false,
+      updatedAt: Date.now(),
+    }
+    this.cards.set(detached.id, detached)
+    // 原根上若已经没有别的成员，那条「推断」的痕迹也该消掉。
+    const root = this.cards.get(card.rootId)
+    if (root !== undefined && ![...this.cards.values()].some(other => other.rootId === root.id && other.id !== root.id)) {
+      this.cards.set(root.id, { ...root, chainInferred: false })
+    }
+    this.bump()
+    return { ok: true, card: detached }
   }
 
   /**

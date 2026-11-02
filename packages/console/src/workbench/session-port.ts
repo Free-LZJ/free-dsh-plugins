@@ -143,6 +143,21 @@ export function createWorkbenchSessionPort(ctx: Context, board: WorkbenchBoard):
     return 'manual'
   }
 
+  /**
+   * 这次派生来自哪封邮件。
+   *
+   * 邮件的会话动作会把 `accountId/folder/uid` 放进 source（`mail/src/triage/actions/
+   * session.ts`）；以前这里只取了 `form`，邮件身份就丢了，会话卡只能自成一链。
+   * @param source - the source record the action passed.
+   * @returns 邮件的 uid，字符串形式；不是邮件来源时 undefined。
+   */
+  const mailUidOf = (source: Readonly<Record<string, unknown>>): string | undefined => {
+    const uid = source['uid']
+    if (typeof uid === 'string' && uid !== '') return uid
+    if (typeof uid === 'number' && Number.isFinite(uid)) return String(uid)
+    return undefined
+  }
+
   return {
     async createSession(request) {
       const service = controller()
@@ -192,8 +207,14 @@ export function createWorkbenchSessionPort(ctx: Context, board: WorkbenchBoard):
       // else's standing session keeps its own row and does not get a new card.
       if (!createdIds.has(sessionId)) return
       const title = titles.get(sessionId) ?? `会话 ${sessionId.slice(0, 8)}`
-      // 调用方带了 `rootId` 就归到那条链；没带时 board 按 sessionId 自己找登记。
-      const rootId = typeof source['rootId'] === 'string' && source['rootId'] !== '' ? source['rootId'] : undefined
+      // 调用方带了 `rootId` 就归到那条链；没带时：先按邮件 uid 找那封邮件的卡
+      // （邮件动作的 source 里有 accountId/folder/uid，只是从前被丢掉了），
+      // 再按 sessionId 找已经登记过的会长。
+      const explicit = typeof source['rootId'] === 'string' && source['rootId'] !== '' ? source['rootId'] : undefined
+      const uid = mailUidOf(source)
+      const rootId = explicit
+        ?? (uid === undefined ? undefined : board.rootOfMailUid(uid))
+        ?? board.rootOfSession(sessionId)
       board.recordSessionCard({
         sessionId,
         title,

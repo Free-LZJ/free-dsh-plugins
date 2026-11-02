@@ -319,6 +319,14 @@ export interface WorkbenchCard {
    * 而不是五张互不相干的卡。
    */
   readonly rootId: string
+  /**
+   * 这条链是**推断**出来的（标题相似 + 时间相近），不是调用方声明的。
+   *
+   * 存量卡没有根，不推断就永远是散卡；推断就可能合错，所以界面要说清并给「拆开」。
+   */
+  readonly chainInferred?: boolean
+  /** 用户把这个成员从推断出来的链里拆开过：下次启动别再把它推回去。 */
+  readonly chainDetached?: boolean
   readonly title: string
   readonly body?: string
   readonly column: WorkbenchColumn

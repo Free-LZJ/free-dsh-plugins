@@ -62,6 +62,9 @@ function harness(options: { withController?: boolean } = {}): {
     recordSessionCard: vi.fn(),
     appendSessionLog: vi.fn(),
     finishSession: vi.fn(),
+    /** 这封邮件已经在板上：它的卡就是这条链的根。 */
+    rootOfMailUid: vi.fn((uid: string) => (uid === '4242' ? 'root-of-mail' : undefined)),
+    rootOfSession: vi.fn(() => undefined),
   } as unknown as WorkbenchBoard
   return { ctx, board, listener: () => listeners[0] as EventListener, calls }
 }
@@ -88,8 +91,7 @@ describe('createWorkbenchSessionPort', () => {
     }))
   })
 
-  it('sends assistant output and the turn result to the card', async () => {
-    const { ctx, board, listener } = harness()
+  it('sends assistant output and the turn result to the card', async () => {    const { ctx, board, listener } = harness()
     const port = createWorkbenchSessionPort(ctx, board)
     const created = await port.createSession({ cwd: 'D:/dsh-work' })
     await port.rename(created.sessionId, '会话')
@@ -109,6 +111,28 @@ describe('createWorkbenchSessionPort', () => {
     const port = createWorkbenchSessionPort(ctx, board)
     await port.followup('elsewhere', '喂', { plugin: 'dsh-mail', form: 'mail' })
     expect(board.recordSessionCard).not.toHaveBeenCalled()
+  })
+
+  it('puts the session on the mail card that shares its uid', async () => {
+    // 邮件动作的 source 里本来就有 uid，以前被 cardSource() 取 form 时丢掉了：
+    // 会话卡因此只能自成一链，同一件事在板上变成两张。
+    const { ctx, board } = harness()
+    const port = createWorkbenchSessionPort(ctx, board)
+    const created = await port.createSession({ cwd: 'D:/dsh-work' })
+    await port.rename(created.sessionId, 'Jira 派单：EXEPD-229676')
+    await port.followup(created.sessionId, '读单', {
+      plugin: 'dsh-mail',
+      form: 'mail',
+      accountId: 'a',
+      folder: 'INBOX',
+      uid: 4242,
+    })
+
+    expect(board.rootOfMailUid).toHaveBeenCalledWith('4242')
+    expect(board.recordSessionCard).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's-1',
+      rootId: 'root-of-mail',
+    }))
   })
 
   it('says the deployment has no session service instead of half-working', async () => {

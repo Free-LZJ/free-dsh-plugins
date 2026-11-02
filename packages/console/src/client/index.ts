@@ -157,6 +157,7 @@ export function apply(ctx: ClientContext): void {
     resume: (sessionId) => workbenchLink.act({ action: 'resume', sessionId }),
     end: (sessionId) => workbenchLink.act({ action: 'end', sessionId }),
     confirm: (cardId) => workbenchLink.act({ action: 'confirm', cardId }),
+    detach: (cardId) => workbenchLink.act({ action: 'detach', cardId }),
   }
   const views = {
     getSnapshot: (): ConsoleView => link.viewPreference(),

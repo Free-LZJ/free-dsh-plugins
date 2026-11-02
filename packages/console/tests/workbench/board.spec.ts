@@ -111,6 +111,66 @@ describe('chains', () => {
   })
 })
 
+describe('inferred chains', () => {
+  it('merges loose cards on the next start, and says so', async () => {
+    const directory = await home()
+    const first = bench({ homeDir: directory })
+    await first.board.ingest({ source: 'mail', title: 'DSH E2E 派单：全链路测试' })
+    await first.board.ingest({ source: 'manual', title: 'DSH E2E 子会话' })
+    await first.board.flush()
+    // 写入时没人带根：两张各自成链，这就是升级前那批数据的样子。
+    expect(new Set(first.board.state().cards.map(card => card.rootId)).size).toBe(2)
+
+    const second = bench({ homeDir: directory })
+    await second.board.ready
+    const cards = second.board.state().cards
+    expect(new Set(cards.map(card => card.rootId)).size).toBe(1)
+    // 推断出来的必须自报家门，界面才有话可说。
+    expect(cards.every(card => card.chainInferred === true)).toBe(true)
+  })
+
+  it('keeps a detached member apart across restarts', async () => {
+    const directory = await home()
+    const first = bench({ homeDir: directory })
+    await first.board.ingest({ source: 'mail', title: 'DSH E2E 派单：全链路测试' })
+    await first.board.ingest({ source: 'manual', title: 'DSH E2E 子会话' })
+    await first.board.flush()
+
+    const second = bench({ homeDir: directory })
+    await second.board.ready
+    const member = second.board.state().cards.find(card => card.rootId !== card.id)
+    expect(member).toBeDefined()
+    const detached = second.board.detach(member?.id ?? '')
+    expect(detached.ok).toBe(true)
+    expect(detached.card?.rootId).toBe(detached.card?.id)
+    await second.board.flush()
+
+    // 拆开要持久：否则重启一次又合回去，这个按钮等于骗人。
+    const third = bench({ homeDir: directory })
+    await third.board.ready
+    const after = third.board.state().cards.find(card => card.id === detached.card?.id)
+    expect(after?.rootId).toBe(after?.id)
+  })
+
+  it('puts a rule-created session on the mail card that shares its uid', async () => {
+    const { board } = bench()
+    const mail = await board.ingest({ source: 'mail', externalId: '4242', title: '[邮件] Jira 派单' })
+    if (!mail.ok) throw new Error(mail.error)
+    expect(board.rootOfMailUid('4242')).toBe(mail.card.id)
+
+    // 会话动作的 source 里带着 uid，会话卡据此归到那封邮件的链上。
+    const mailRoot = board.rootOfMailUid('4242')
+    expect(mailRoot).toBe(mail.card.id)
+    const card = board.recordSessionCard({
+      sessionId: 'session-of-mail',
+      title: 'Jira 派单：EXEPD-229676',
+      source: 'mail',
+      ...(mailRoot === undefined ? {} : { rootId: mailRoot }),
+    })
+    expect(card.rootId).toBe(mail.card.id)
+  })
+})
+
 describe('ingest', () => {
   it('dispatches a confident bug and finishes it awaiting confirmation', async () => {
     const { board } = bench()

@@ -124,7 +124,13 @@ export const CLS = {
   detailReasons: 'dshc-detail-reasons',
   detailReason: 'dshc-detail-reason',
   detailNote: 'dshc-detail-note',
-  detailActions: 'dshc-detail-actions',
+  detailChainFoot: 'dshc-detail-chain-foot',
+  cardDetailDialog: 'dshc-card-detail-dialog',
+  cardDetailScroll: 'dshc-card-detail-scroll',
+  cardDetailColumns: 'dshc-card-detail-columns',
+  cardDetailSide: 'dshc-card-detail-side',
+  cardDetailMain: 'dshc-card-detail-main',
+  cardDetailFooterStart: 'dshc-card-detail-footer-start',
   steps: 'dshc-steps',
   step: 'dshc-step',
   stepIndex: 'dshc-step-index',
@@ -132,6 +138,7 @@ export const CLS = {
   stepTitle: 'dshc-step-title',
   stepMeta: 'dshc-step-meta',
   stepWhen: 'dshc-step-when',
+  stepTail: 'dshc-step-tail',
   stepNotice: 'dshc-step-notice',
   sessionBox: 'dshc-session-box',
   sessionLogTitle: 'dshc-session-log-title',
@@ -258,18 +265,32 @@ const CSS = `
 .${CLS.detailReasons}{display:flex;flex-direction:column;gap:2px;margin:0;padding:0 0 0 16px}
 .${CLS.detailReason}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .${CLS.detailNote}{margin:4px 0 0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
-.${CLS.detailActions}{display:flex;flex-wrap:wrap;gap:6px}
+/* 详情是产品页，不是确认框：Modal 的默认 380px 只够确认用，链路与会话放不下。
+   宽度与高度都相对 Modal 的 padding box 定（不写 vh —— 主面板比 100vh 矮一个标题栏）。
+   类名重复一次是为了把特异性抬到 CSS Module 之上：插件样式表与模块样式的注入顺序
+   不可依赖，同优先级会看运气。 */
+.${CLS.cardDetailDialog}.${CLS.cardDetailDialog}{width:min(960px,100%);max-height:100%}
+.${CLS.cardDetailDialog} .${CLS.cardDetailScroll}{overflow-y:auto;min-height:0;flex:1 1 auto}
+.${CLS.cardDetailColumns}{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:24px;align-items:start}
+.${CLS.cardDetailSide},.${CLS.cardDetailMain}{display:flex;min-width:0;flex-direction:column}
+.${CLS.cardDetailFooterStart}{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-right:auto}
+.${CLS.detailChainFoot}{display:flex;align-items:flex-start;gap:12px;margin-top:8px}
+.${CLS.detailChainFoot} .${CLS.detailNote}{flex:1;margin:0}
+@media (max-width:760px){
+  .${CLS.cardDetailColumns}{grid-template-columns:minmax(0,1fr)}
+}
 /* 链路详情：一条竖列，步骤按发生顺序依次点亮（animation-delay 由行内样式给）。
    动画只是把顺序走一遍——播完就是一列静态可读的字，reduced-motion 下直接不播。 */
 @keyframes dshc-step-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .${CLS.steps}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
-.${CLS.step}{display:flex;align-items:flex-start;gap:8px;animation:dshc-step-in .3s ease-out both}
+.${CLS.step}{display:grid;grid-template-columns:18px minmax(0,1fr) max-content;align-items:start;gap:8px;animation:dshc-step-in .3s ease-out both}
 .${CLS.stepNotice}{opacity:.9}
 .${CLS.stepIndex}{display:inline-flex;flex:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--dsw-alias-bg-layer-3);font-size:11px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .${CLS.stepBody}{display:flex;min-width:0;flex:1;flex-direction:column;gap:2px}
 .${CLS.stepTitle}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}
 .${CLS.stepMeta}{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
-.${CLS.stepWhen}{margin-left:auto;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.stepWhen}{font-size:11px;line-height:24px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.${CLS.stepTail}{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px}
 @media (prefers-reduced-motion:reduce){
   .${CLS.step}{animation:none}
 }

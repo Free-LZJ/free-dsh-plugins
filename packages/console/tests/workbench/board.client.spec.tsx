@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ConsoleNoticeRecord, WorkbenchCard, WorkbenchColumn, WorkbenchState } from '../../src/protocol.ts'
 import { en as enDictionary, zh, type Translate } from '../../src/client/locales.ts'
 import { BoardView, type WorkbenchFace } from '../../src/client/workbench/board.tsx'
-import { reasonText } from '../../src/client/workbench/card.tsx'
+import { dedupeReasons, reasonText } from '../../src/client/workbench/card.tsx'
 
 afterEach(cleanup)
 
@@ -119,6 +119,7 @@ function face(state: WorkbenchState = board(), issued: readonly ConsoleNoticeRec
     interrupt: [] as { sessionId: string; text: string }[],
     confirm: [] as string[],
     end: [] as string[],
+    detach: [] as string[],
   }
   const fake: WorkbenchFace = {
     useBoard: <S,>(select: (current: WorkbenchState | undefined) => S) => select(state),
@@ -129,6 +130,10 @@ function face(state: WorkbenchState = board(), issued: readonly ConsoleNoticeRec
     },
     move: async (cardId, column) => {
       calls.move.push({ cardId, column })
+      return true
+    },
+    detach: async (cardId) => {
+      calls.detach.push(cardId)
       return true
     },
     confirm: async (cardId) => {
@@ -193,12 +198,32 @@ describe('the board on screen', () => {
 
     fireEvent.click(within(article).getByRole('button', { name: t('cardDetail') }))
     const dialog = screen.getByRole('dialog', { name: 'DSH E2E 派单' })
+    // 宽弹窗靠两栏把「是什么」与「怎么走到现在」分开：单列时链路标题只能折行。
+    expect(dialog.querySelector('.dshc-card-detail-columns')).toBeTruthy()
     expect(within(dialog).getByText('子会话')).toBeTruthy()
     // 通知也是这件事的一步，不是并列的另一条。
     expect(within(dialog).getByText('已完成')).toBeTruthy()
     // 重播是重挂载：点一下不该把步骤弄丢。
     fireEvent.click(within(dialog).getByRole('button', { name: t('detailReplay') }))
     expect(within(dialog).getByText('子会话')).toBeTruthy()
+  })
+
+  it('says an inferred chain may be wrong, and takes a step back out', () => {
+    // 推断会合错：界面必须说出来，并且给一个真正生效的撤销。
+    const cards = [
+      card({ id: 'root-1', column: 'done', title: 'DSH E2E 派单', chainInferred: true, createdAt: NOW - 600_000 }),
+      card({ id: 'child-2', column: 'done', title: 'DSH E2E 子会话', rootId: 'root-1', chainInferred: true, createdAt: NOW - 300_000 }),
+    ]
+    const { calls, face: fake } = face(board({ cards }))
+    render(<BoardView face={fake} t={t} />)
+    fireEvent.click(within(cardOf('DSH E2E 派单')).getByRole('button', { name: t('cardDetail') }))
+    const dialog = screen.getByRole('dialog', { name: 'DSH E2E 派单' })
+    expect(within(dialog).getByText(t('chainInferredHint'))).toBeTruthy()
+    // 只给「推断进来的成员」撤销入口，根自己不给——拆根没有意义。
+    const detachButtons = within(dialog).getAllByRole('button', { name: t('chainDetach') })
+    expect(detachButtons).toHaveLength(1)
+    fireEvent.click(detachButtons[0] as HTMLElement)
+    expect(calls.detach).toEqual(['child-2'])
   })
 
   it('counts the four figures from the snapshot', () => {
@@ -354,6 +379,7 @@ describe('the board on screen', () => {
       resume: async () => true,
       end: async () => true,
       confirm: async () => true,
+      detach: async () => true,
     }
     render(<BoardView face={fake} t={t} />)
     expect(screen.getByText(t('boardLoading'))).toBeTruthy()
@@ -390,6 +416,21 @@ describe('reason wording', () => {
     const shown = reasonText({ code: 'from-a-newer-build' }, t)
     expect(shown).toBe(t('reasonUnknown'))
     expect(shown).not.toContain('from-a-newer-build')
+  })
+
+  it('shows one copy of a line both routing and classification recorded', () => {
+    // 两处各记一遍同一条理由，拼起来就是同一句话连出现两次——看第二遍没有新信息。
+    expect(dedupeReasons([{ code: 'classify-none' }, { code: 'classify-none' }])).toHaveLength(1)
+    // 参数不同就是两条：按 code 合并会把两条不同的判断吞掉。
+    expect(dedupeReasons([
+      { code: 'route-matched', params: { route: 'a' } },
+      { code: 'route-matched', params: { route: 'b' } },
+    ])).toHaveLength(2)
+    // 参数键的书写顺序不同也还是同一条。
+    expect(dedupeReasons([
+      { code: 'route-low-confidence', params: { confidence: 0.3, threshold: 0.6 } },
+      { code: 'route-low-confidence', params: { threshold: 0.6, confidence: 0.3 } },
+    ])).toHaveLength(1)
   })
 })
 
@@ -475,3 +516,4 @@ describe('the keyboard cursor', () => {
     expect(document.activeElement).toBe(cardOf('已回写的工单'))
   })
 })
+

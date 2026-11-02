@@ -49,6 +49,8 @@ export interface WorkbenchFace {
   readonly end: (sessionId: string) => Promise<boolean>
   /** Mark a finished card as written back (clears the confirmation flag). */
   readonly confirm: (cardId: string) => Promise<boolean>
+  /** 把推断进来的成员拆开（推断会合错）。 */
+  readonly detach: (cardId: string) => Promise<boolean>
 }
 
 /**
@@ -344,6 +346,7 @@ export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly 
           onDispatch={() => { run(face.dispatch(openItem.card.id, openItem.card.executor)) }}
           onMove={(column) => { run(face.move(openItem.card.id, column)) }}
           onConfirm={() => { run(face.confirm(openItem.card.id)) }}
+          onDetach={(cardId) => { run(face.detach(cardId)) }}
           onInterrupt={(text) => {
             if (openSession === undefined) return
             run(face.interrupt(openSession.id, text))

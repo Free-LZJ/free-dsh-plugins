@@ -57,6 +57,7 @@ function face(state: WorkbenchState): WorkbenchFace {
     resume: async () => true,
     end: async () => true,
     confirm: async () => true,
+    detach: async () => true,
   }
 }
 
@@ -84,3 +85,4 @@ describe('ConnectorsView', () => {
     expect(screen.getByText(t('connectorEnabled'))).toBeTruthy()
   })
 })
+

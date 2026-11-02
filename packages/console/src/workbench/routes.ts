@@ -221,6 +221,10 @@ function runAction(board: WorkbenchBoard, value: unknown): ActionResult {
       if (typeof body.cardId !== 'string') return { ok: false, error: 'confirm needs a cardId' }
       return board.confirm(body.cardId)
     }
+    case 'detach': {
+      if (typeof body.cardId !== 'string') return { ok: false, error: 'detach needs a cardId' }
+      return board.detach(body.cardId)
+    }
     case 'interrupt': {
       if (typeof body.sessionId !== 'string') return { ok: false, error: 'interrupt needs a sessionId' }
       if (typeof body.text !== 'string') return { ok: false, error: 'interrupt needs text' }
