@@ -125,6 +125,28 @@ describe('toSummary', () => {
     expect(summary.headers['list-id']).toBe('owner/repo <repo.owner.github.com>')
   })
 
+  it('prefers the separately fetched header block over the capped head', () => {
+    // The shape a real GitHub notification arrives in: the head is cut at two
+    // kilobytes, so `List-Id` is not in it at all; `HEADER.FIELDS` is what
+    // carries it, and the row must read that block instead.
+    const summary = toSummary({
+      accountId: 'acct',
+      folder: 'INBOX',
+      uid: 7,
+      uidValidity: 9,
+      flags: new Set(['\\Seen']),
+      envelope: { subject: 'Run failed', from: [{ address: 'notifications@github.com' }] },
+      internalDate: new Date('2026-02-03T04:05:06Z'),
+      size: 9000,
+      hasAttachments: false,
+      preview: '',
+      source: 'Received: a very long chain\r\nDKIM-Signature: …truncated before List-Id…\r\n',
+      headers: 'List-Id: metasequoiaime/msime-windows\n <msime-windows.metasequoiaime.github.com>\r\nX-GitHub-Reason: author\r\n',
+    })
+    expect(summary.headers['list-id']).toBe('metasequoiaime/msime-windows <msime-windows.metasequoiaime.github.com>')
+    expect(summary.headers['x-github-reason']).toBe('author')
+  })
+
   it('falls back on a missing subject, sender and date', () => {
     const summary = toSummary({
       accountId: 'acct',

@@ -104,6 +104,9 @@ function fetched(uid: number): FetchedMessage {
     internalDate: new Date('2026-01-01T00:00:00Z'),
     size: 100,
     source: Buffer.from(`Subject: Message ${String(uid)}\n\nHello   mail ${String(uid)}\n`),
+    // What `HEADER.FIELDS` answers: the whitelist arrives apart from the head,
+    // folded the way GitHub sends it, and `List-Id` sits past the preview slice.
+    headers: Buffer.from(`List-Id: acme/widgets\n <widgets.acme.github.com>\nPrecedence: list\n`),
     bodyStructure: { type: 'text/plain' },
   }
 }
@@ -294,6 +297,10 @@ describe('scanFolder', () => {
     expect(fetches[0]?.args[2]).toEqual({ uid: true })
     // The range is a UID list, never a sequence range.
     expect(fetches[0]?.args[0]).toEqual([1, 2, 3, 4, 5])
+    // The triage headers are asked for by name as well as by the capped source:
+    // `List-Id` sits past the preview slice in a real notification.
+    expect(fetches[0]?.args[1]).toMatchObject({ headers: expect.arrayContaining(['list-id', 'x-github-reason']) })
+    expect(outcome.messages[0]?.summary.headers['list-id']).toBe('acme/widgets <widgets.acme.github.com>')
 
     expect(outcome.uidValidity).toBe(7)
     expect(outcome.maxUid).toBe(5)

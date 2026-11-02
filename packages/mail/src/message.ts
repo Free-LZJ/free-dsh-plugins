@@ -218,8 +218,11 @@ function isoDate(...candidates: readonly unknown[]): string {
  * The two expensive answers — whether there are attachments and what the
  * preview says — are the caller's to produce, because a scan reads them from
  * the body structure and a capped slice of the source rather than from the
- * full message. The headers are not expensive: the scan already fetched them
- * inside `source`, and parsing them costs one walk over a couple of kilobytes.
+ * full message. The headers are not expensive when they are fetched on their
+ * own: `HEADER.FIELDS` over the triage whitelist is a few hundred bytes, and
+ * parsing it is one walk over that block. Reading them out of `source` instead
+ * only works for messages whose header block is short enough to fit the
+ * preview slice — a real GitHub notification puts `List-Id` at offset 4193.
  * @param input - the fields one FETCH reported. `size` is accepted for callers
  *   that already have it; the list shape has no column for it.
  * @returns the list row.
@@ -237,6 +240,14 @@ export function toSummary(input: {
   preview: string
   /** The fetched head, whose header section carries the triage headers. */
   source: string | Buffer | undefined
+  /**
+   * The whitelisted header block, when it was fetched on its own.
+   *
+   * Preferred over {@link source}: the head is only the first couple of
+   * kilobytes, so a `List-Id` past that point would otherwise be invisible to
+   * every rule that turns it into `{repo}`.
+   */
+  headers?: string | Buffer | undefined
 }): MailSummary {
   return {
     accountId: input.accountId,
@@ -250,7 +261,7 @@ export function toSummary(input: {
     flagged: isFlagged(input.flags),
     hasAttachments: input.hasAttachments,
     snippet: snippetOf(input.preview),
-    headers: parseTriageHeaders(input.source),
+    headers: parseTriageHeaders(input.headers ?? input.source),
   }
 }
 

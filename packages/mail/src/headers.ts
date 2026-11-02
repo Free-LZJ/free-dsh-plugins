@@ -1,10 +1,13 @@
 /**
  * The slice of a message's header block that triage rules are allowed to see.
  *
- * A scan already fetches the head of every message (`SUMMARY_QUERY`), so the
- * raw headers are in hand; what was missing is reading them. They are read here
- * and nowhere else, as a pure function over bytes, so the parsing rules — the
- * folding, the whitelist, the first blank line — are testable without a socket.
+ * A scan fetches the whitelisted block on its own (`SUMMARY_QUERY`'s `headers`),
+ * because the capped head it also fetches stops short of where GitHub puts
+ * `List-Id` — 4193 bytes into a real notification. Reading that block is this
+ * module's half of the pair; `message.ts` hands it over.
+ *
+ * The parsing rules are pure functions over bytes, so they are testable
+ * without a socket.
  *
  * Three things this must get right, because they are all how a rule silently
  * stops matching:

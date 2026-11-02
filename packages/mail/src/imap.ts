@@ -30,6 +30,7 @@ import type {
   AccountStatus, DraftAccount, FolderResult, MailAccount, MailAction, MailAttachment, MailDetail, MailboxView,
   NormalizedMessage, RouteResult,
 } from './types.ts'
+import { TRIAGE_HEADERS } from './headers.ts'
 import { type MailPart, parseDetail, previewOf, snippetOf, toSummary, addressesOf } from './message.ts'
 
 /** Version reported in the RFC 2971 ID command, next to the plugin's own name. */
@@ -95,6 +96,14 @@ const SECTION = /^[1-9]\d*(\.\d+)*$/
  * `source` is bounded to {@link PREVIEW_MAX_BYTES}: the list needs sender,
  * subject, date and flags (all from the envelope) plus a one-line preview, and
  * asking for whole bodies is what made a first sync take minutes.
+ *
+ * `headers` is a **separate** `BODY.PEEK[HEADER.FIELDS (…)]`, not a bigger
+ * `source`, because the triage headers do not live in the first two kilobytes:
+ * a real GitHub notification measured 4964 bytes of header with `List-Id` at
+ * offset 4193, so reading only the preview slice silently hid the one header a
+ * rule turns into `{repo}`. The whitelist costs a few hundred bytes per
+ * message — cheaper than the 2 KB preview it rides next to, and far cheaper
+ * than the whole body.
  */
 const SUMMARY_QUERY = {
   uid: true,
@@ -104,6 +113,7 @@ const SUMMARY_QUERY = {
   size: true,
   bodyStructure: true,
   source: { maxLength: PREVIEW_MAX_BYTES },
+  headers: [...TRIAGE_HEADERS],
 } as const
 
 /**
@@ -174,6 +184,8 @@ export interface ImapClientLike {
     internalDate?: unknown
     size?: number
     source?: Buffer
+    /** The whitelisted header block when the query asked for `headers`. */
+    headers?: Buffer
     bodyStructure?: unknown
   }, unknown>
   fetchOne(seq: string, query: unknown, options?: unknown): Promise<{
@@ -183,6 +195,8 @@ export interface ImapClientLike {
     internalDate?: unknown
     size?: number
     source?: Buffer
+    /** The whitelisted header block when the query asked for `headers`. */
+    headers?: Buffer
     bodyStructure?: unknown
     /** One entry per `bodyParts` section the server answered for, keyed by section. */
     bodyParts?: Map<string, Buffer>
@@ -844,6 +858,7 @@ export async function scanFolder(client: ImapClientLike, options: ScanOptions): 
         hasAttachments: hasAttachmentsOf(message.bodyStructure),
         preview,
         source: message.source,
+        headers: message.headers,
       })
       messages.push({ summary, preview: summary.snippet })
       if (message.uid > maxUid) maxUid = message.uid
