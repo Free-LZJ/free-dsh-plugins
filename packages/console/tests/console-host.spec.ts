@@ -55,6 +55,8 @@ describe('the Host state', () => {
       awaiting: 0,
       availableChannels: [],
       layout: 'grid',
+      // 归档节奏缺省是「结束即归」：看板只留还在动的东西。
+      archiveRhythm: 'immediate',
       // 布局的选择是内存状态，所以「上次停在哪一页」由这里记着。
       currentView: 'board',
       pinned: [],

@@ -26,6 +26,8 @@ export interface NotifyPort {
     readonly body?: string
     readonly tone?: 'info' | 'success' | 'warn' | 'error'
     readonly source?: string
+    /** 源头地址；工作台据此给一个「打开」按钮。 */
+    readonly link?: string
   }): Promise<unknown>
   raise?(item: {
     readonly title: string
@@ -33,6 +35,7 @@ export interface NotifyPort {
     readonly tone?: 'info' | 'success' | 'warn' | 'error'
     readonly source?: string
     readonly kind: string
+    readonly link?: string
     readonly actions: readonly { readonly id: string; readonly label: string }[]
   }): Promise<unknown>
 }
@@ -54,6 +57,8 @@ export interface NotifySpec {
   readonly title?: string
   readonly body?: string
   readonly tone?: 'info' | 'success' | 'warn' | 'error'
+  /** 源头地址的模板；默认 `{link}`，连接器投影出这个键时自动带上。 */
+  readonly link?: string
 }
 
 /** The outcome shape every action answers with. */
@@ -88,13 +93,16 @@ export async function runNotify(spec: NotifySpec, context: NotifyContext): Promi
   const title = renderNotifyTitle(spec, context)
   const console_ = context.console
   const body = fillTemplate(spec.body ?? '{from} · {rule}', context.templateValues)
+  // 空渲染就是「没有地址」：投影里没这个键时 `{link}` 填成空串，不能当成一个空链接发出去。
+  const link = fillTemplate(spec.link ?? '{link}', context.templateValues).trim()
+  const linkPort = link === '' ? {} : { link }
   if (console_?.notify === undefined && console_?.raise === undefined) {
     context.log(`[${context.source}] 未安装工作台，通知未送出：${title}`)
     return { ok: true, detail: `未安装工作台，通知未送出：${title}` }
   }
   try {
     if (console_.notify !== undefined) {
-      await console_.notify({ title, body, tone: spec.tone ?? 'info', source: context.source })
+      await console_.notify({ title, body, tone: spec.tone ?? 'info', source: context.source, ...linkPort })
     } else if (console_.raise !== undefined) {
       await console_.raise({
         title,
@@ -103,6 +111,7 @@ export async function runNotify(spec: NotifySpec, context: NotifyContext): Promi
         source: context.source,
         kind: context.source,
         actions: [],
+        ...linkPort,
       })
     }
   } catch (error: unknown) {

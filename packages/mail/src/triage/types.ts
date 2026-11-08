@@ -159,6 +159,13 @@ export interface ActionSpec {
   /** `notify`：标题模板与语气。 */
   readonly title?: string
   readonly tone?: 'info' | 'success' | 'warn' | 'error'
+  /**
+   * `notify`：条目上「打开」按钮的去处。
+   *
+   * 不写就走 `{link}`——它是这封信正文里的第一个 http 链接（GitHub 的 run、Jira 的
+   * 工单都在那儿），所以存量规则不用改也能点回源头。
+   */
+  readonly link?: string
   /** `session`：固定工作目录（绝对路径）。 */
   readonly workspacePath?: string
   /**

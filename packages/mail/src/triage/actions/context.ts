@@ -47,6 +47,8 @@ export interface ConsolePort {
     readonly body?: string
     readonly tone?: 'info' | 'success' | 'warn' | 'error'
     readonly source?: string
+    /** 源头地址：工作台据此给一个「打开」按钮。 */
+    readonly link?: string
   }): Promise<unknown>
   /**
    * 一条**条目**：告诉人，并且给他一个能点的动作。
@@ -62,6 +64,7 @@ export interface ConsolePort {
     readonly tone?: 'info' | 'success' | 'warn' | 'error'
     readonly source?: string
     readonly kind: string
+    readonly link?: string
     readonly actions: readonly { readonly id: string; readonly label: string; readonly style?: 'primary' | 'danger' }[]
     readonly sessionId?: string
   }): Promise<{ readonly id: string } | undefined>
@@ -170,6 +173,20 @@ export function modeOf(spec: ActionSpec): ActionMode {
   return spec.mode ?? 'auto'
 }
 /**
+ * 正文里的第一个 http(s) 地址。
+ *
+ * 邮件没有可靠的「主链接」字段，但 GitHub 的 run 与 Jira 的工单都是正文里的第一个
+ * 链接。抽不到就没有——不猜，也不退回发件人地址。
+ * @param text - 这封信的纯文本正文。
+ * @returns 地址，或 undefined。
+ */
+function firstUrl(text: string): string | undefined {
+  const match = /\bhttps?:\/\/[^\s<>"'）)]+/u.exec(text)
+  // 句子结尾的标点属于句子，不属于地址。
+  return match === null ? undefined : match[0].replace(/[.,;:!?]+$/u, '')
+}
+
+/**
  * 把一封信投影成模板值。
  *
  * 键是这一侧定的，内核只负责 `{name}` 替换；缺的键在填充时变成空串，所以这里只放
@@ -187,6 +204,7 @@ export function mailTemplateValues(input: {
   readonly vars?: Readonly<Record<string, string>>
 }, repoRoot: string): Readonly<Record<string, string>> {
   const from = input.summary.from
+  const link = input.body === undefined ? undefined : firstUrl(input.body)
   return {
     // 键名必须和**模板里写的**一致（`{subject}` 不是 `{summary}`）：这些名字是用户在
     // `rules.yml` 里敲的，改键名等于改用户的规则。
@@ -198,6 +216,7 @@ export function mailTemplateValues(input: {
     ...(input.summary.uid === undefined ? {} : { uid: String(input.summary.uid) }),
     ...(input.summary.date === undefined ? {} : { date: input.summary.date }),
     ...(input.body === undefined ? {} : { body: input.body }),
+    ...(link === undefined ? {} : { link }),
     ...(repoRoot === '' ? {} : { repo: repoRoot }),
     ...(input.vars ?? {}),
   }

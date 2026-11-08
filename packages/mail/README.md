@@ -127,7 +127,7 @@ dsh plugin add "<本仓库绝对路径>/packages/mail"
 |---|---|---|
 | `markRead` / `flag` | 标记已读 / 星标 | 自动 |
 | `move` / `archive` | 移到 `folder` / 归档到账号的 `\Archive` | 自动 |
-| `notify` | 推一条工作台通知 | 自动 |
+| `notify` | 推一条工作台通知。条目上的「打开」默认指向正文里第一个链接（GitHub 的 run、Jira 的工单都在那儿），可用 `link` 模板覆盖 | 自动 |
 | `session` | 在 `workspacePath` 或 `workspaceTemplate` 里新建会话并投递 | 自动 |
 | `followup` | 把邮件投递到一个**已有**会话（`sessionId`），不新建 | 自动 |
 | `script` | 跑一个外部命令（`command` + `args` 数组） | 建议 |

@@ -1,413 +1,676 @@
 /**
- * The board view: what needs a decision, who is on it, and what is finished.
+ * The board: one task, one card, the whole chain underneath it.
  *
- * Three columns over one status strip. The strip is the first screen's answer to
- * "how much is on my plate" — 待处理 / 进行中 / 已处理 / 异常 — and every number
- * comes from the board snapshot the Host already sends, so nothing here invents
- * a metric the data does not have (no progress bars, no percentages, no
- * per-card timers).
+ * **What a card is.** Not an event and not a rule hit — a *task*. A task is what
+ * one connector event became: one mail, one Jira ticket, one webhook. The engine
+ * may act on the same task more than once (a retry, a follow-up, a second
+ * session), and every one of those is a separate hit record in `runs.json`; they
+ * all fold into the same card, because the user asked "what happened to this
+ * thing", not "what fired at 10:31".
  *
- * Each column explains itself: a name, a count, one line saying what dropping a
- * card there does, and an empty state that says what would appear. That is the
- * difference between a board that reads at a glance and three empty boxes.
+ * **Where the chain comes from.** `RunRecord` already carries it: `ruleId` +
+ * `ruleName` (which rule fired), `label` (what it was classified as), and
+ * `actions[]` in execution order — each with `ok`, a human-readable `detail` and,
+ * for a session, the `sessionId` to jump to. Nothing is inferred from titles any
+ * more: the old `chain.ts` guessed by string similarity, and a guess is exactly
+ * what the user was looking at when they said the board was wrong.
  *
- * Dragging stays HTML5 DnD (the shape v0 already had, and the one a browser
- * gives us for free) with the two things it was missing: a drop-target state
- * while a card is over a column, and a menu path on every card, because drag is
- * not reachable with a keyboard.
+ * **Three zones.** `todo` (waiting on a human: a failed action, a suggestion, or
+ * a task inside its archive window), `running` (a session it opened is alive
+ * right now), `archived` (done and out of the way). The archive rhythm is a
+ * preference, not a data lifetime: the record stays in `runs.json` either way.
  *
- * @module @free-lzj/dsh-console/client/workbench/board
+ * @module @free-dsh-plugins/dsh-console/client/workbench/board
  */
 
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import { DisclosureRow, IconChevronDownOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ConsoleNoticeRecord, WorkbenchState, WorkbenchCard, WorkbenchColumn } from '../../protocol.ts'
-import type { Translate } from '../locales.ts'
-import { CLS } from '../styles.ts'
 import {
-  BoardCard, CardDetail, COLUMNS, columnDot, columnEmptyKey, columnHintKey, columnLabelKey,
-} from './card.tsx'
+  Button, DisclosureRow, IconChevronDownOutlineRegular, Modal, StateDot, Tag,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import type {
+  ArchiveRhythm, ConsoleNoticeRecord, WorkbenchColumn, WorkbenchState,
+} from '../../protocol.ts'
+import type { Translate } from '../locales.ts'
+import type { TriageRun, TriageRunAction, TriageSource } from '../rules.tsx'
+import { CLS } from '../styles.ts'
 
-/** Everything the board reads and calls, injected by the plugin's `apply`. */
+/**
+ * 旧看板的面：卡片、会话、连接器。
+ *
+ * 看板自己已经不渲染卡片了——链路来自引擎的命中记录，那是它亲手写下的证据，
+ * 比按标题猜出来的分组可信。但连接器页与聚焦页仍在读这份快照：它们问的是
+ * 「哪些连接器可用」「这台机器上跑着什么」，与链路无关，也就不必换数据源。
+ */
 export interface WorkbenchFace {
   /** Selector hook over the board state. */
   readonly useBoard: SnapshotSelectorHook<WorkbenchState | undefined>
-  /** Selector hook over the workbench items, so a chain can list its notices too. */
+  /** Selector hook over the workbench items. */
   readonly useNotices: SnapshotSelectorHook<readonly ConsoleNoticeRecord[]>
-  /** Dispatch one card. */
   readonly dispatch: (cardId: string, executor?: string) => Promise<boolean>
-  /** Move one card between columns. */
   readonly move: (cardId: string, column: WorkbenchColumn) => Promise<boolean>
-  /** Send a follow-up message into a session. */
   readonly interrupt: (sessionId: string, text: string) => Promise<boolean>
-  /** Pause a session. */
   readonly pause: (sessionId: string) => Promise<boolean>
-  /** Resume a paused session. */
   readonly resume: (sessionId: string) => Promise<boolean>
-  /** End a session. */
   readonly end: (sessionId: string) => Promise<boolean>
-  /** Mark a finished card as written back (clears the confirmation flag). */
   readonly confirm: (cardId: string) => Promise<boolean>
-  /** 把推断进来的成员拆开（推断会合错）。 */
   readonly detach: (cardId: string) => Promise<boolean>
 }
 
-/**
- * 一条链路在板上的样子：同一件事的全部步骤，加上代表它的那张卡。
- *
- * 看板画的是它，不是 `WorkbenchCard`：一张卡一件事，这正是「同一件事被拆成好几张卡」
- * 的解药。代表卡负责标题/来源/优先级（根卡自己），状态取全簇最活跃的那一步。
- */
-export interface BoardItem {
-  /** 链路键：根卡 id。 */
-  readonly rootId: string
-  /** 代表卡：根卡；根卡不在时取最早的一步。 */
-  readonly card: WorkbenchCard
-  /** 全部步骤，按发生顺序。 */
-  readonly steps: readonly WorkbenchCard[]
-  /** 整条链落在哪一列：有步骤在跑就算进行中，否则有等待就算待处理。 */
-  readonly column: WorkbenchColumn
-  /** 全簇最新一次活动。 */
+/* ─────────────────────────────── 数据类型 ─────────────────────────────── */
+
+/** Which zone a task sits in. */
+export type TaskZone = 'todo' | 'running' | 'archived'
+
+/** One step of a chain, already worded. */
+export interface ChainStep {
+  /** Stable key inside the task. */
+  readonly key: string
+  /** `rule`, or the action's own kind (`session` / `notify` / `markRead` …). */
+  readonly kind: string
+  /** Short name of the step, localized by the caller. */
+  readonly title: string
+  /** The engine's own one-line account of what it did (or why it failed). */
+  readonly detail: string
+  readonly ok: boolean
+  readonly at: number
+  /** Present on a `session` step: the conversation this task opened. */
+  readonly sessionId?: string
+}
+
+/** One task: every hit record that belongs to the same source event. */
+export interface TaskChain {
+  /** Aggregation key; stable across repaints. */
+  readonly key: string
+  /** The runs behind this task, oldest first. */
+  readonly runs: readonly TriageRun[]
+  /** The whole chain, oldest first. */
+  readonly steps: readonly ChainStep[]
+  readonly zone: TaskZone
+  /** Headline: what the event was about. */
+  readonly title: string
+  /** Which connector it came from (`mail` today). */
+  readonly source: string
+  /** The classification this task last landed on. */
+  readonly label: string
+  /** Epoch ms of the newest activity. */
   readonly updatedAt: number
+  /** True when any run in the task ended with a failed action. */
+  readonly failed: boolean
 }
 
-/** 列权重：只用来给一条链挑「最活跃」的那一列。 */
-const COLUMN_WEIGHT: Record<WorkbenchColumn, number> = { processing: 2, todo: 1, done: 0 }
+/* ─────────────────────────────── 聚合 ─────────────────────────────── */
+
+/** The mail connector's own event shape, as the engine stores it. */
+interface MailEventShape {
+  readonly accountId?: unknown
+  readonly folder?: unknown
+  readonly uid?: unknown
+  readonly from?: unknown
+  readonly subject?: unknown
+}
 
 /**
- * 把卡片按 `rootId` 收成链路。
+ * The key that makes two runs "the same task".
  *
- * 没有 `rootId` 的卡（老数据、外部直接造的事件）自成一链——升级不会把两件不相干
- * 的事悄悄并在一起，这也是这个方案敢自动分组的前提。
- * @param cards - 板上全部卡片。
- * @returns 每条链一项，顺序与输入里第一次出现相同。
+ * The strongest thing the record carries is the event's own identity: a mail is
+ * `accountId/folder/uid`. When a connector gives nothing identifying, the run id
+ * is the fallback — a task of one, which is the honest answer rather than
+ * folding unrelated work together.
+ * @param run - one hit record.
+ * @returns the aggregation key.
  */
-export function groupByChain(cards: readonly WorkbenchCard[]): readonly BoardItem[] {
-  const groups = new Map<string, WorkbenchCard[]>()
-  for (const card of cards) {
-    const key = typeof card.rootId === 'string' && card.rootId !== '' ? card.rootId : card.id
-    const bucket = groups.get(key)
-    if (bucket === undefined) groups.set(key, [card])
-    else bucket.push(card)
+export function taskKeyOf(run: TriageRun): string {
+  const event = run.event as unknown as MailEventShape
+  const { accountId, folder, uid } = event
+  if (typeof accountId === 'string' && typeof folder === 'string' && typeof uid === 'number') {
+    return `mail:${accountId}:${folder}:${String(uid)}`
   }
-  const items: BoardItem[] = []
-  for (const [rootId, bucket] of groups) {
-    const steps = [...bucket].sort((left, right) => left.createdAt - right.createdAt)
-    const card = steps.find(step => step.id === rootId) ?? steps[0]
-    if (card === undefined) continue
-    const column = steps.reduce<WorkbenchColumn>(
-      (best, step) => (COLUMN_WEIGHT[step.column] > COLUMN_WEIGHT[best] ? step.column : best),
-      'done',
-    )
-    const updatedAt = steps.reduce((newest, step) => Math.max(newest, step.updatedAt), 0)
-    items.push({ rootId, card, steps, column, updatedAt })
-  }
-  return items
+  return `run:${run.id}`
 }
 
 /**
- * What the board shows when the Host mounted none: a sentence, not an empty grid.
- * @param props.t - the translate seat.
- * @returns the empty state.
+ * What one task is called.
+ * @param run - the run the title is read from.
+ * @param t - the translate seat.
+ * @returns the subject, or a fallback that names the source.
  */
+function titleOf(run: TriageRun, t: Translate): string {
+  const event = run.event as unknown as MailEventShape
+  const subject = typeof event.subject === 'string' ? event.subject.trim() : ''
+  if (subject !== '') return subject
+  const from = typeof event.from === 'string' ? event.from.trim() : ''
+  return from === '' ? t('taskNoSource') : from
+}
+
+/** Which connector a run's event came from. */
+function sourceOf(run: TriageRun): string {
+  const event = run.event as unknown as MailEventShape
+  if (typeof event.folder === 'string') return 'mail'
+  return 'manual'
+}
+
+/**
+ * The localized name of one action kind.
+ *
+ * The engine names kinds; the page words them. An unknown kind (a connector from
+ * a newer build) is shown as its own id rather than dropped — a step that
+ * happened is better shown plainly than hidden.
+ * @param kind - the action kind.
+ * @param t - the translate seat.
+ * @returns the label.
+ */
+export function kindLabel(kind: string, t: Translate): string {
+  switch (kind) {
+    case 'session': return t('linkKindSession')
+    case 'notify': return t('linkKindNotify')
+    case 'markRead': return t('linkKindMarkRead')
+    case 'markUnread': return t('linkKindMarkRead')
+    case 'move': return t('linkKindMove')
+    case 'flag': case 'unflag': return t('linkKindFlag')
+    case 'archive': return t('linkKindArchive')
+    case 'followup': return t('linkKindFollowup')
+    case 'due': return t('linkKindDue')
+    case 'script': return t('linkKindScript')
+    case 'http': return t('linkKindHttp')
+    case 'mcp': return t('linkKindMcp')
+    default: return kind
+  }
+}
+
+/**
+ * Turn one run into the steps it contributes to its task's chain.
+ *
+ * The rule hit itself is a step: "which rule fired" is part of the story, and a
+ * task triggered twice by two different rules must show both.
+ * @param run - one hit record.
+ * @param t - the translate seat.
+ * @returns the steps, oldest first.
+ */
+function stepsOf(run: TriageRun, t: Translate): ChainStep[] {
+  const at = Date.parse(run.at)
+  const steps: ChainStep[] = [{
+    key: `${run.id}:rule`,
+    kind: 'rule',
+    title: run.ruleName === '' ? run.ruleId : run.ruleName,
+    detail: run.label,
+    ok: true,
+    at: Number.isFinite(at) ? at : 0,
+  }]
+  run.actions.forEach((action: TriageRunAction, index) => {
+    steps.push({
+      key: `${run.id}:${String(index)}`,
+      kind: action.kind,
+      title: kindLabel(action.kind, t),
+      detail: action.detail,
+      ok: action.ok,
+      at: Number.isFinite(at) ? at : 0,
+      ...(action.sessionId === undefined ? {} : { sessionId: action.sessionId }),
+    })
+  })
+  return steps
+}
+
+/**
+ * Fold hit records into tasks and place each one in a zone.
+ *
+ * A task is `running` when a session it opened is alive right now — that is the
+ * only claim the data can back. Otherwise a failed action or a held suggestion
+ * makes it `todo`; a task inside its archive window also stays `todo` so a
+ * rhythm of "after 15 minutes" means what it says; everything else is
+ * `archived`.
+ * @param runs - the hit records, any order.
+ * @param runningIds - sessions the Host says are working right now.
+ * @param archiveAfterMs - how long a settled task keeps its board seat.
+ * @param now - the reading moment, so the whole render agrees on "now".
+ * @param t - the translate seat.
+ * @returns the tasks, newest activity first.
+ */
+export function buildTasks(
+  runs: readonly TriageRun[],
+  runningIds: ReadonlySet<string>,
+  archiveAfterMs: number,
+  now: number,
+  t: Translate,
+): readonly TaskChain[] {
+  const buckets = new Map<string, TriageRun[]>()
+  for (const run of runs) {
+    const key = taskKeyOf(run)
+    const bucket = buckets.get(key)
+    if (bucket === undefined) buckets.set(key, [run])
+    else bucket.push(run)
+  }
+  const tasks: TaskChain[] = []
+  for (const [key, bucket] of buckets) {
+    const ordered = [...bucket].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
+    const newest = ordered[ordered.length - 1]
+    if (newest === undefined) continue
+    const steps = ordered.flatMap(run => stepsOf(run, t))
+    const failed = ordered.some(run => run.actions.some(action => !action.ok))
+    const sessionAlive = steps.some(step => step.sessionId !== undefined && runningIds.has(step.sessionId))
+    const updatedAt = steps.reduce((newestAt, step) => Math.max(newestAt, step.at), 0)
+    const settled = !failed
+      && ordered.every(run => run.status === 'done' || run.status === 'skipped' || run.status === 'undone')
+    const zone: TaskZone = sessionAlive
+      ? 'running'
+      : settled && now - updatedAt >= archiveAfterMs ? 'archived' : 'todo'
+    tasks.push({
+      key,
+      runs: ordered,
+      steps,
+      zone,
+      title: titleOf(newest, t),
+      source: sourceOf(newest),
+      label: newest.label,
+      updatedAt,
+      failed,
+    })
+  }
+  return tasks.sort((left, right) => right.updatedAt - left.updatedAt)
+}
+
+/* ─────────────────────────────── 端口 ─────────────────────────────── */
+
+/** What the board needs from the page it is drawn on. */
+export interface BoardFace {
+  /** Read and write the rule engine — the source of every hit record. */
+  readonly triage: TriageSource
+  /** Sessions the Host says are working right now. */
+  readonly running: () => readonly { readonly sessionId: string; readonly title: string }[]
+  /** How long a settled task keeps its seat; from the stored preference. */
+  readonly rhythm: () => ArchiveRhythm
+  /** Persist a new archive rhythm. */
+  readonly setRhythm: (rhythm: ArchiveRhythm) => void
+  /** Open a session in the conversation page, when the deployment composes one. */
+  readonly openSession?: (sessionId: string) => { readonly ok: boolean; readonly message?: string }
+  /** Whether {@link openSession} can reach a real service. */
+  readonly canOpenSession?: () => boolean
+  /** 这一档节奏对应的窗口毫秒数。 */
+  readonly rhythmMs: (rhythm: ArchiveRhythm) => number
+}
+
+/** What the board shows when the engine cannot be read. */
 export function WorkbenchUnavailable({ t }: { readonly t: Translate }): ReactNode {
   return <p className={CLS.empty}>{t('boardMissing')}</p>
 }
 
-/** The four figures the strip shows, all derived from the snapshot's chains. */
-function statistics(items: readonly BoardItem[], now: number): {
-  readonly todo: number
-  readonly running: number
-  readonly doneToday: number
-  readonly failed: number
-} {
-  const dayStart = new Date(now)
-  dayStart.setHours(0, 0, 0, 0)
-  const since = dayStart.getTime()
-  return {
-    todo: items.filter((item) => item.column === 'todo').length,
-    running: items.filter((item) => item.column === 'processing').length,
-    doneToday: items.filter((item) => item.column === 'done' && item.updatedAt >= since).length,
-    failed: items.filter((item) => item.steps.some((step) => step.status === 'failed')).length,
-  }
+/* ─────────────────────────────── 视图 ─────────────────────────────── */
+
+/** Everything one board read produced. */
+interface BoardData {
+  readonly tasks: readonly TaskChain[]
+  readonly loaded: boolean
+  readonly error: string
 }
 
-/** The local calendar day one instant belongs to, as a comparable key. */
-export function dayKey(at: number): string {
-  const date = new Date(at)
-  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
-}
-
-/** One day of finished work. */
-export interface DoneDay {
-  readonly key: string
-  readonly label: string
-  readonly cards: readonly BoardItem[]
-}
+/** How often the page re-reads the hit records while the board is open. */
+const POLL_MS = 5000
 
 /**
- * Group finished chains by the day they last moved.
+ * Read the hit records and fold them into tasks.
  *
- * Q6 settled the shape: the column expands **today only**, and everything older
- * folds into one disclosure per day — a work desk that scrolls back a month is a
- * work desk nobody reads. Order is newest first inside a day, newest day first.
- * @param items - the finished chains.
- * @param now - the reading moment, so "today" means one thing per render.
+ * A poll rather than a stream: `runs.json` is written by the engine when an
+ * action finishes, so the page only ever needs "what has it done since I last
+ * looked". Five seconds is short enough to see a chain grow and long enough that
+ * an idle board costs nothing noticeable.
+ * @param face - the engine, the session roster and the stored rhythm.
  * @param t - the translate seat.
- * @returns the days, newest first.
+ * @returns the snapshot, plus whether a read has ever landed.
  */
-export function groupDoneByDay(
-  items: readonly BoardItem[],
-  now: number,
-  t: Translate,
-): readonly DoneDay[] {
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  const todayKey = dayKey(now)
-  const yesterdayKey = dayKey(yesterday.getTime())
-  const days = new Map<string, BoardItem[]>()
-  for (const item of [...items].sort((left, right) => right.updatedAt - left.updatedAt)) {
-    const key = dayKey(item.updatedAt)
-    const bucket = days.get(key)
-    if (bucket === undefined) days.set(key, [item])
-    else bucket.push(item)
-  }
-  return [...days.entries()].map(([key, dayItems]) => ({
-    key,
-    label: key === todayKey
-      ? t('dayToday')
-      : key === yesterdayKey ? t('dayYesterday') : new Date(dayItems[0]?.updatedAt ?? now).toLocaleDateString(),
-    cards: dayItems,
-  }))
+export function useBoardData(face: BoardFace, t: Translate): BoardData {
+  const [data, setData] = useState<BoardData>({ tasks: [], loaded: false, error: '' })
+  // Read through refs so a new render's closures never restart the timer; the
+  // rhythm is the one input that must re-read, because it changes the zones.
+  const faceRef = useRef(face)
+  faceRef.current = face
+  const tRef = useRef(t)
+  tRef.current = t
+  const rhythm = face.rhythm()
+  useEffect(() => {
+    let disposed = false
+    const read = async (): Promise<void> => {
+      try {
+        const runs = await faceRef.current.triage.runs()
+        if (disposed) return
+        const runningIds = new Set(faceRef.current.running().map(session => session.sessionId))
+        setData({
+          tasks: buildTasks(
+            runs,
+            runningIds,
+            faceRef.current.rhythmMs(faceRef.current.rhythm()),
+            Date.now(),
+            tRef.current,
+          ),
+          loaded: true,
+          error: '',
+        })
+      } catch {
+        // 引擎没应答与「还没有任何规则命中」是两件事：前者是故障，后者是正常的空。
+        if (disposed) return
+        setData(current => ({ ...current, loaded: true, error: tRef.current('boardMissing') }))
+      }
+    }
+    void read()
+    const timer = setInterval(() => { void read() }, POLL_MS)
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, [rhythm])
+  return data
 }
 
 /**
  * Draw the board.
- * @param props.face - the board face the Host injected.
+ *
+ * One read, three zones. The read is a hook the page owns (`useBoardData`),
+ * because the modal and the zone counts must agree on the same snapshot.
+ * @param props.face - the engine and the session roster.
  * @param props.t - the translate seat.
- * @returns the strip and the three columns.
+ * @param props.data - the snapshot the page already read.
+ * @returns the zones.
  */
-export function BoardView({ face, t }: { readonly face: WorkbenchFace; readonly t: Translate }): ReactNode {
-  const state = face.useBoard((current) => current)
-  const notices = face.useNotices((current) => current)
-  /** The column a card is currently hovering over, so it can show it will take it. */
-  const [over, setOver] = useState<WorkbenchColumn | undefined>(undefined)
-  /** 打开的是哪条链路（按根卡 id），不是哪张卡：详情里要看的是一整件事。 */
-  const [openRootId, setOpenRootId] = useState<string | undefined>(undefined)
-  /** Why the last action did not take; empty means nothing failed. */
+export function BoardView(props: {
+  readonly face: BoardFace
+  readonly t: Translate
+  readonly data: BoardData
+}): ReactNode {
+  const { t, data } = props
+  const [openKey, setOpenKey] = useState<string | undefined>(undefined)
+  const [archiveOpen, setArchiveOpen] = useState(false)
   const [failure, setFailure] = useState('')
-  /** The days the user opened or closed in 已处理; absent means "today's default". */
-  const [openedDays, setOpenedDays] = useState<Readonly<Record<string, boolean>>>({})
-  /** The board root, used to read the visible card order for `j` / `k`. */
-  const boardRef = useRef<HTMLDivElement>(null)
+  if (!data.loaded) return <p className={CLS.empty}>{t('boardLoading')}</p>
+  if (data.error !== '') return <p className={CLS.empty}>{data.error}</p>
+  if (data.tasks.length === 0) return <p className={CLS.empty}>{t('boardEmpty')}</p>
 
-  if (state === undefined) return <p className={CLS.empty}>{t('boardLoading')}</p>
-  // 空看板只说一次：状态条、三列空框与注意力队列的空态摞在一起，比「没活」本身更响。
-  if (state.cards.length === 0) return <p className={CLS.empty}>{t('boardEmpty')}</p>
-
-  const now = Date.now()
-  const items = groupByChain(state.cards)
-  const counts = statistics(items, now)
-  const openItem = items.find((item) => item.rootId === openRootId)
-  const openSession = openItem?.card.sessionId === undefined
-    ? undefined
-    : state.sessions.find((session) => session.id === openItem.card.sessionId)
-
-  /**
-   * Run one action and say so when it does not take.
-   *
-   * v0 swallowed every failure (`void`), which reads as "nothing happened" to the
-   * user; a card that stayed put deserves a sentence.
-   * @param work - the action's answer.
-   */
-  const run = (work: Promise<boolean>): void => {
-    void work.then((ok) => { setFailure(ok ? '' : t('boardActionFailed')) })
-  }
-
-  /** Which day groups the user has opened or closed; today starts open (Q6). */
-  const isDayOpen = (key: string): boolean => openedDays[key] ?? key === dayKey(now)
-  const toggleDay = (key: string): void => {
-    setOpenedDays((current) => ({ ...current, [key]: !(current[key] ?? key === dayKey(now)) }))
-  }
-
-  /** One list of chains, whichever column shape asked for it. */
-  const cardList = (chains: readonly BoardItem[]): ReactNode => (
-    <ul className={CLS.cardsList}>
-      {chains.map((item) => (
-        <li key={item.rootId}>
-          <BoardCard
-            card={item.card}
-            stepCount={item.steps.length}
-            t={t}
-            now={now}
-            onOpen={() => { setOpenRootId(item.rootId) }}
-            onDispatch={() => { run(face.dispatch(item.card.id, item.card.executor)) }}
-            onMove={(next) => { run(face.move(item.card.id, next)) }}
-            onDragEnd={() => { setOver(undefined) }}
-          />
-        </li>
-      ))}
-    </ul>
-  )
-
-  /**
-   * `j` / `k` walk the cards that are actually on screen, in reading order.
-   *
-   * Reading the order off the DOM keeps one source of truth for "what is
-   * visible": a card inside a collapsed day is not in that list, so the cursor
-   * never lands somewhere the user cannot see.
-   * @param event - the key event, bubbled from whichever child had focus.
-   */
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'j' && event.key !== 'k') return
-    if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return
-    const target = event.target
-    if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable]') !== null) return
-    const cards = [...(boardRef.current?.querySelectorAll<HTMLElement>('[data-card-id]') ?? [])]
-    const index = cards.findIndex((card) => card === document.activeElement)
-    const next = event.key === 'j'
-      ? index + 1
-      : (index === -1 ? cards.length - 1 : index - 1)
-    const element = cards[next]
-    if (element === undefined) return
-    event.preventDefault()
-    element.focus()
-  }
+  const open = data.tasks.find(task => task.key === openKey)
+  const zone = (which: TaskZone): readonly TaskChain[] => data.tasks.filter(task => task.zone === which)
+  const todo = zone('todo')
+  const running = zone('running')
+  const archived = zone('archived')
 
   return (
-    <div className={CLS.board} ref={boardRef} onKeyDown={onKeyDown}>
+    <div className={CLS.board}>
       <div className={CLS.statusBar} role="group" aria-label={t('boardTitle')}>
-        <Stat label={t('boardStatTodo')} value={counts.todo} dot="idle" />
-        <Stat label={t('boardStatRunning')} value={counts.running} dot="ongoing" />
-        <Stat label={t('boardStatDone')} value={counts.doneToday} dot="done" />
-        <Stat label={t('boardStatFailed')} value={counts.failed} dot={counts.failed > 0 ? 'error' : 'idle'} />
+        <Stat label={t('boardStatTodo')} value={todo.length} dot={todo.some(task => task.failed) ? 'error' : 'idle'} />
+        <Stat label={t('boardStatRunning')} value={running.length} dot="ongoing" />
+        <Stat label={t('boardStatDone')} value={archived.length} dot="done" />
       </div>
       {failure === '' ? null : <p className={CLS.boardFailure} role="status">{failure}</p>}
+      <RhythmRow face={props.face} t={t} />
       <div className={CLS.boardColumns}>
-        {COLUMNS.map((column) => {
-          const chains = items.filter((item) => item.column === column)
-          return (
-            <section
-              key={column}
-              className={over === column ? `${CLS.column} ${CLS.columnOver}` : CLS.column}
-              aria-label={t(columnLabelKey(column))}
-              onDragOver={(event) => {
-                // Preventing the default is what makes this a drop target at all.
-                event.preventDefault()
-                event.dataTransfer.dropEffect = 'move'
-                if (over !== column) setOver(column)
-              }}
-              onDragLeave={(event) => {
-                const next = event.relatedTarget
-                if (next instanceof Node && event.currentTarget.contains(next)) return
-                setOver((current) => (current === column ? undefined : current))
-              }}
-              onDrop={(event) => {
-                event.preventDefault()
-                setOver(undefined)
-                const cardId = event.dataTransfer.getData('text/plain')
-                if (cardId !== '') run(face.move(cardId, column))
-              }}
-            >
-              <header className={CLS.columnHead}>
-                <div className={CLS.columnTitleRow}>
-                  <StateDot state={columnDot(column)} />
-                  <h3 className={CLS.columnTitle}>{t(columnLabelKey(column))}</h3>
-                  <span className={CLS.columnCount}>{chains.length}</span>
-                </div>
-                <p className={CLS.columnHint}>{t(columnHintKey(column))}</p>
-              </header>
-              {chains.length === 0
-                ? <p className={CLS.columnEmpty}>{t(columnEmptyKey(column))}</p>
-                : column === 'done'
-                  ? (
-                    // 已处理按天折叠（Q6）：今天展开，更早的每天一行，点开才列。
-                    // 只有一天（且就是今天）时不分组——那层折叠只在一列真有历史时才有意义。
-                    doneColumn(chains, now, t, cardList, isDayOpen, toggleDay)
-                  )
-                  : cardList(chains)}
-            </section>
-          )
-        })}
-      </div>
-      {/* 这条注脚说的是数据从哪来、哪里还不真，属于脚注而不是抬头，排在列下面。 */}
-      <p className={CLS.boardHint}>{t('boardHint')}</p>
-      {openItem !== undefined && (
-        <CardDetail
-          card={openItem.card}
-          steps={openItem.steps}
-          // 通知也是这件事的一步：按根归拢，没有根的老通知不硬塞进别人的链路。
-          notices={notices.filter((notice) => notice.rootId === openItem.rootId)}
-          {...(openSession === undefined ? {} : { session: openSession })}
+        <Zone
+          zone="todo"
+          title={t('boardTodo')}
+          hint={t('boardTodoHint')}
+          tasks={todo}
+          empty={t('boardTodoEmpty')}
           t={t}
-          now={now}
-          onClose={() => { setOpenRootId(undefined) }}
-          onDispatch={() => { run(face.dispatch(openItem.card.id, openItem.card.executor)) }}
-          onMove={(column) => { run(face.move(openItem.card.id, column)) }}
-          onConfirm={() => { run(face.confirm(openItem.card.id)) }}
-          onDetach={(cardId) => { run(face.detach(cardId)) }}
-          onInterrupt={(text) => {
-            if (openSession === undefined) return
-            run(face.interrupt(openSession.id, text))
-          }}
-          onStop={() => {
-            if (openSession === undefined) return
-            run(face.end(openSession.id))
-          }}
+          onOpen={setOpenKey}
+        />
+        <Zone
+          zone="running"
+          title={t('boardProcessing')}
+          hint={t('boardProcessingHint')}
+          tasks={running}
+          empty={t('boardProcessingEmpty')}
+          t={t}
+          onOpen={setOpenKey}
+        />
+      </div>
+      {archived.length === 0 ? null : (
+        <DisclosureRow
+          icon={<IconChevronDownOutlineRegular />}
+          title={`${t('boardArchive')} · ${String(archived.length)}`}
+          expandable
+          expandOnRowClick
+          open={archiveOpen}
+          onToggle={() => { setArchiveOpen(value => !value) }}
+        >
+          <p className={CLS.viewMeta}>{t('boardArchiveHint')}</p>
+          <TaskList tasks={archived} t={t} onOpen={setOpenKey} />
+        </DisclosureRow>
+      )}
+      <p className={CLS.boardHint}>{t('boardHint')}</p>
+      {open === undefined ? null : (
+        <TaskDetail
+          task={open}
+          t={t}
+          face={props.face}
+          onClose={() => { setOpenKey(undefined) }}
+          onFailure={message => { setFailure(message) }}
         />
       )}
     </div>
   )
 }
 
-/**
- * Draw the finished column: one flat list while everything belongs to today, and
- * one disclosure per day as soon as there is older work to fold away (Q6).
- * @param cards - the finished cards.
- * @param now - the reading moment.
- * @param t - the translate seat.
- * @param cardList - the shared card renderer.
- * @param isOpen - whether one day is expanded.
- * @param toggle - flips one day.
- * @returns the column body.
- */
-function doneColumn(
-  chains: readonly BoardItem[],
-  now: number,
-  t: Translate,
-  cardList: (chains: readonly BoardItem[]) => ReactNode,
-  isOpen: (key: string) => boolean,
-  toggle: (key: string) => void,
-): ReactNode {
-  const days = groupDoneByDay(chains, now, t)
-  if (days.length === 1 && days[0]?.key === dayKey(now)) return cardList(chains)
+/** One zone: a heading, one line of explanation, then the cards. */
+function Zone(props: {
+  readonly zone: TaskZone
+  readonly title: string
+  readonly hint: string
+  readonly tasks: readonly TaskChain[]
+  readonly empty: string
+  readonly t: Translate
+  readonly onOpen: (key: string) => void
+}): ReactNode {
   return (
-    <div className={CLS.dayGroups}>
-      {days.map((day) => (
-        <div key={day.key} className={CLS.dayGroup}>
-          <DisclosureRow
-            icon={<IconChevronDownOutlineRegular />}
-            title={`${day.label} · ${day.cards.length}`}
-            open={isOpen(day.key)}
-            expandable
-            expandOnRowClick
-            onToggle={() => { toggle(day.key) }}
-          />
-          {isOpen(day.key) && cardList(day.cards)}
+    <section className={CLS.column} aria-label={props.title} data-zone={props.zone}>
+      <header className={CLS.columnHead}>
+        <div className={CLS.columnTitleRow}>
+          <StateDot state={props.zone === 'running' ? 'ongoing' : 'idle'} />
+          <h3 className={CLS.columnTitle}>{props.title}</h3>
+          <span className={CLS.columnCount}>{props.tasks.length}</span>
         </div>
+        <p className={CLS.columnHint}>{props.hint}</p>
+      </header>
+      {props.tasks.length === 0
+        ? <p className={CLS.columnEmpty}>{props.empty}</p>
+        : <TaskList tasks={props.tasks} t={props.t} onOpen={props.onOpen} />}
+    </section>
+  )
+}
+
+/** The cards of one zone. */
+function TaskList(props: {
+  readonly tasks: readonly TaskChain[]
+  readonly t: Translate
+  readonly onOpen: (key: string) => void
+}): ReactNode {
+  return (
+    <ul className={CLS.cardsList}>
+      {props.tasks.map((task) => {
+        const last = task.steps[task.steps.length - 1]
+        return (
+          <li key={task.key}>
+            <button
+              type="button"
+              className={CLS.taskCard}
+              onClick={() => { props.onOpen(task.key) }}
+              aria-label={task.title}
+            >
+              <span className={CLS.taskCardHead}>
+                <span className={CLS.taskCardTitle}>{task.title}</span>
+                <span className={CLS.taskCardMeta}>
+                  <Tag tone="quiet">{task.source}</Tag>
+                  {task.label === '' ? null : <Tag tone="info">{task.label}</Tag>}
+                  {task.failed
+                    ? <StateDot state="error" />
+                    : <StateDot state={task.zone === 'running' ? 'ongoing' : 'done'} />}
+                </span>
+              </span>
+              <ChainLine steps={task.steps} t={props.t} compact />
+              <span className={CLS.taskCardFoot}>
+                <span className={CLS.taskCardHint}>
+                  {props.t('linkStepCount', { count: task.steps.length })}
+                </span>
+                {last === undefined ? null : (
+                  <span className={CLS.taskCardHint}>{new Date(task.updatedAt).toLocaleTimeString()}</span>
+                )}
+              </span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/**
+ * The chain itself: a vertical run of steps joined by a hairline.
+ *
+ * Not a graph library and not a canvas: the chain is a sequence, and a sequence
+ * is a column of dots with a line between them. `StateDot appearance="step"`
+ * already carries the completed/pending semantics.
+ * @param props.steps - the steps, oldest first.
+ * @param props.t - the translate seat.
+ * @param props.compact - true when drawn inside a card (names only, no detail).
+ * @returns the chain.
+ */
+export function ChainLine(props: {
+  readonly steps: readonly ChainStep[]
+  readonly t: Translate
+  readonly compact?: boolean
+}): ReactNode {
+  return (
+    <ol className={CLS.chain}>
+      {props.steps.map((step) => (
+        <li
+          key={step.key}
+          className={step.ok ? CLS.chainStep : `${CLS.chainStep} ${CLS.chainStepFailed}`}
+        >
+          <span className={CLS.chainGlyph} aria-hidden="true">
+            <StateDot
+              state={step.ok ? 'done' : 'error'}
+              {...(step.sessionId === undefined ? {} : { appearance: 'step' as const })}
+            />
+          </span>
+          <span className={CLS.chainBody}>
+            <span className={CLS.chainName}>
+              {step.kind === 'rule' ? `${props.t('linkRule')}·` : ''}{step.title}
+            </span>
+            {props.compact === true || step.detail === '' ? null : (
+              <span className={CLS.chainDetail}>{step.detail}</span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+/** The archive-rhythm picker: four one-click choices, the current one marked. */
+function RhythmRow(props: { readonly face: BoardFace; readonly t: Translate }): ReactNode {
+  const current = props.face.rhythm()
+  const options: readonly ArchiveRhythm[] = ['immediate', 'fifteen', 'hour', 'day']
+  const labelOf = (rhythm: ArchiveRhythm): string => {
+    switch (rhythm) {
+      case 'immediate': return props.t('archiveImmediate')
+      case 'fifteen': return props.t('archiveFifteen')
+      case 'hour': return props.t('archiveHour')
+      case 'day': return props.t('archiveDay')
+    }
+  }
+  return (
+    <div className={CLS.rhythmRow} role="group" aria-label={props.t('archiveRhythm')}>
+      <span className={CLS.rhythmLabel}>{props.t('archiveRhythm')}</span>
+      {options.map(rhythm => (
+        <Button
+          key={rhythm}
+          size="sm"
+          variant={rhythm === current ? 'primary' : 'ghost'}
+          onClick={() => { props.face.setRhythm(rhythm) }}
+        >
+          {labelOf(rhythm)}
+        </Button>
       ))}
     </div>
   )
 }
 
+/** The task detail: the full chain, the trigger, and the one action a human owes. */
+function TaskDetail(props: {
+  readonly task: TaskChain
+  readonly t: Translate
+  readonly face: BoardFace
+  readonly onClose: () => void
+  readonly onFailure: (message: string) => void
+}): ReactNode {
+  const { t, task } = props
+  const canOpen = props.face.canOpenSession?.() === true
+  return (
+    <Modal open onClose={props.onClose} title={t('detailTitle')} closeLabel={t('detailClose')}>
+      <div className={CLS.detail}>
+        <header className={CLS.detailHead}>
+          <h3 className={CLS.detailTitle}>{task.title}</h3>
+          <div className={CLS.detailMeta}>
+            <Tag tone="quiet">{task.source}</Tag>
+            {task.label === '' ? null : <Tag tone="info">{task.label}</Tag>}
+            {task.runs.length > 1 && <Tag tone="outline">{t('detailRuns', { count: task.runs.length })}</Tag>}
+            {task.failed && <Tag tone="danger">{t('boardStatFailed')}</Tag>}
+          </div>
+        </header>
+        <section>
+          <h4 className={CLS.detailSection}>{t('detailEvent')}</h4>
+          <ul className={CLS.detailEvents}>
+            {task.runs.map(run => (
+              <li key={run.id} className={CLS.detailEventRow}>
+                <span className={CLS.detailEventAt}>{new Date(Date.parse(run.at)).toLocaleString()}</span>
+                <span className={CLS.detailEventText}>
+                  {(run.event as unknown as MailEventShape).subject as string ?? run.id}
+                </span>
+                <span className={CLS.detailEventRule}>{run.ruleName === '' ? run.ruleId : run.ruleName}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <section>
+          <h4 className={CLS.detailSection}>{t('detailChain')}</h4>
+          {task.steps.length === 0
+            ? <p className={CLS.empty}>{t('detailNoActions')}</p>
+            : <ChainLine steps={task.steps} t={t} />}
+        </section>
+        {canOpen && (
+          <div className={CLS.detailActions}>
+            {task.steps.filter(step => step.sessionId !== undefined).map(step => (
+              <Button
+                key={step.key}
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const answer = props.face.openSession?.(step.sessionId as string)
+                  if (answer !== undefined && !answer.ok) {
+                    props.onFailure(answer.message ?? t('linkSessionGone'))
+                  }
+                }}
+              >
+                {t('linkOpenSession')}
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 /**
- * One figure in the strip: dot, number, name.
- * @param props.label - the localized name.
- * @param props.value - the count.
- * @param props.dot - the state the number flies under.
- * @returns the figure.
+ * The board page: the read, then the draw.
+ *
+ * A component rather than a hook called inside the shell, because a hook at the
+ * shell's top level would poll the engine even while the user is on another
+ * view. Mounting is the thing that turns the poll on.
+ * @param props.face - the engine and the session roster.
+ * @param props.t - the translate seat.
+ * @returns the board.
  */
+export function BoardPage(props: { readonly face: BoardFace; readonly t: Translate }): ReactNode {
+  const data = useBoardData(props.face, props.t)
+  return <BoardView face={props.face} t={props.t} data={data} />
+}
+
+/** One figure in the strip: dot, number, name. */
 function Stat(props: {
   readonly label: string
   readonly value: number
@@ -421,3 +684,5 @@ function Stat(props: {
     </div>
   )
 }
+
+export type { BoardData }

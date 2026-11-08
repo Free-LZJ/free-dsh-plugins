@@ -26,6 +26,7 @@ import { CLS } from './styles.ts'
 /** Locale key naming one view. */
 export function viewLabelKey(view: ConsoleView): Parameters<Translate>[0] {
   switch (view) {
+    case 'notify': return 'viewNotify'
     case 'rules': return 'viewRules'
     case 'focus': return 'viewFocus'
     case 'connectors': return 'viewConnectors'

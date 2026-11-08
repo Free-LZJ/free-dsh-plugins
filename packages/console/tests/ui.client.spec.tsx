@@ -20,7 +20,7 @@ import type {
   ChannelInfo, ConsoleLogEntry, ConsoleNoticeRecord, ConsoleView, RunningSession,
 } from '../src/protocol.ts'
 import { ConsoleShell, mergeNotices } from '../src/client/shell.tsx'
-import type { WorkbenchFace } from '../src/client/workbench/board.tsx'
+import type { BoardFace } from '../src/client/workbench/board.tsx'
 import { ConsoleSettingsRow } from '../src/client/settings-row.tsx'
 import { PanelRegistry, filterPanels, panelRows, type PanelRow } from '../src/client/registry.ts'
 import type { ConsolePanelDescriptor } from '../src/client/contract.ts'
@@ -391,7 +391,7 @@ describe('the workbench on screen', () => {
       source: 'mail',
       actions: [{ id: 'apply', label: '执行' }],
     }
-    const { face, calls } = shellFace([row('mail', '邮件')], [waiting])
+    const { face, calls } = shellFace([row('mail', '邮件')], [waiting], [], [], { view: 'notify' })
     render(<ConsoleShell {...face} />)
 
     // 队列是首屏内容，不需要先点开通知面板。
@@ -406,7 +406,7 @@ describe('the workbench on screen', () => {
     const logged: ConsoleLogEntry[] = [
       { id: 'l-1', at: 20, source: 'mail', title: '按「推广与电子报」处理了：限时优惠', detail: '已标记为已读；已移动到「推广」', ok: true },
     ]
-    const { face } = shellFace([row('mail', '邮件')], [], [], logged)
+    const { face } = shellFace([row('mail', '邮件')], [], [], logged, { view: 'notify' })
     render(<ConsoleShell {...face} />)
 
     expect(screen.getByText(t('automationLog'))).toBeTruthy()
@@ -416,27 +416,32 @@ describe('the workbench on screen', () => {
   })
 
   it('says so plainly when nothing is waiting', () => {
-    const { face } = shellFace([row('mail', '邮件')])
+    const { face } = shellFace([row('mail', '邮件')], [], [], [], { view: 'notify' })
     render(<ConsoleShell {...face} />)
     expect(screen.getByText(t('attentionClear'))).toBeTruthy()
     expect(screen.getByText(t('attentionEmpty'))).toBeTruthy()
   })
 
-  it('says an empty board once, not once per layer', () => {
-    // 空看板：注意力队列的空卡与看板的统计条/三列空框会重复同一句话。
+  it('says an empty board once, not once per layer', async () => {
+    // 通知队列搬去「通知」页以后，看板这一页只剩它自己的一句话：空态不再和队列
+    // 的空卡叠在一起说同一件事。
     const { face } = shellFace([])
-    const emptyBoard = {
-      useBoard: <S,>(select: (state: { cards: readonly unknown[] } | undefined) => S) => select({ cards: [] }),
-      useNotices: <S,>(select: (notices: readonly never[]) => S) => select([]),
-    } as unknown as WorkbenchFace
-    render(<ConsoleShell {...face} workbench={emptyBoard} />)
-    expect(screen.getByText(t('boardEmpty'))).toBeTruthy()
+    const boards = {
+      triage: { runs: async () => [] } as unknown as BoardFace['triage'],
+      running: () => [],
+      rhythm: () => 'immediate' as const,
+      setRhythm: () => {},
+      rhythmMs: () => 0,
+    } satisfies BoardFace
+    render(<ConsoleShell {...face} board={boards} />)
+    // 首帧还在读命中记录，落地才有话说。
+    expect(await screen.findByText(t('boardEmpty'))).toBeTruthy()
     expect(screen.queryByText(t('attentionEmpty'))).toBeNull()
   })
 
   it('never shows a bare session id in the running list', () => {
     const session: RunningSession = { sessionId: '12345678-aaaa-bbbb-cccc-000000000000', title: '' }
-    const { face } = shellFace([row('mail', '邮件')], [], [session])
+    const { face } = shellFace([row('mail', '邮件')], [], [session], [], { view: 'notify' })
     render(<ConsoleShell {...face} />)
     expect(screen.getByText(t('unnamedSession', { id: '12345678' }))).toBeTruthy()
     expect(screen.queryByText('12345678-aaaa-bbbb-cccc-000000000000')).toBeNull()
@@ -451,10 +456,46 @@ describe('the workbench on screen', () => {
       state: 'seen',
       snoozedUntil: Date.now() + 60_000,
     }
-    const { face } = shellFace([row('mail', '邮件')], [snoozed])
+    const { face } = shellFace([row('mail', '邮件')], [snoozed], [], [], { view: 'notify' })
     render(<ConsoleShell {...face} />)
+    // 已稍后提醒的条目进了归档，归档默认收着——先展开再读它的状态。
+    fireEvent.click(screen.getByText(`${t('attentionArchive')} · 1`))
     expect(screen.getByText(t('noticeSnoozed'))).toBeTruthy()
     expect(screen.queryByText(t('noticeDismissed'))).toBeNull()
+  })
+
+  it('gives an item with a source link an Open button', () => {
+    const opened = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const item: ConsoleNoticeRecord = {
+      id: 'ci',
+      title: 'CI 挂了',
+      createdAt: 10,
+      delivered: [],
+      state: 'new',
+      source: 'mail',
+      link: 'https://github.com/owner/repo/actions/runs/1',
+    }
+    const { face } = shellFace([row('mail', '邮件')], [item], [], [], { view: 'notify' })
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('noticeOpen') }))
+    expect(opened).toHaveBeenCalledWith('https://github.com/owner/repo/actions/runs/1', '_blank', 'noreferrer')
+    opened.mockRestore()
+  })
+
+  it('folds a handled item into the archive instead of leaving it on the page', () => {
+    const dismissed: ConsoleNoticeRecord = {
+      id: 'd',
+      title: '已经忽略的邮件',
+      createdAt: 10,
+      delivered: [],
+      state: 'dismissed',
+    }
+    const { face } = shellFace([row('mail', '邮件')], [dismissed], [], [], { view: 'notify' })
+    render(<ConsoleShell {...face} />)
+    // 归档默认收着：条目不在页面上，但一说就能找到。
+    expect(screen.queryByText('已经忽略的邮件')).toBeNull()
+    fireEvent.click(screen.getByText(`${t('attentionArchive')} · 1`))
+    expect(screen.getByText('已经忽略的邮件')).toBeTruthy()
   })
 
   it('keeps a failed item and says why next to it', async () => {
@@ -467,7 +508,7 @@ describe('the workbench on screen', () => {
       kind: 'mail',
       actions: [{ id: 'apply', label: '执行' }],
     }
-    const { face } = shellFace([row('mail', '邮件')], [item])
+    const { face } = shellFace([row('mail', '邮件')], [item], [], [], { view: 'notify' })
     face.actOnItem = async () => ({ ok: false, message: '插件当前没有加载' })
     render(<ConsoleShell {...face} />)
     fireEvent.click(screen.getByRole('button', { name: '执行' }))
@@ -530,7 +571,7 @@ describe('the workbench on screen', () => {
     // its fixed-position containing block) and carries the fixed frame itself.
     const { face } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
-    fireEvent.click(screen.getByRole('button', { name: t('noticeTitle') }))
+    fireEvent.click(screen.getAllByRole('button', { name: t('noticeTitle') })[0] as HTMLElement)
     const panel = screen.getByRole('dialog', { name: t('noticeTitle') })
     expect(panel.classList.contains('dshc-notice-panel')).toBe(true)
     expect(document.body.contains(panel)).toBe(true)
@@ -547,7 +588,7 @@ describe('the workbench on screen', () => {
     try {
       const { face } = shellFace([row('mail', '邮件')])
       render(<ConsoleShell {...face} />)
-      fireEvent.click(screen.getByRole('button', { name: t('noticeTitle') }))
+      fireEvent.click(screen.getAllByRole('button', { name: t('noticeTitle') })[0] as HTMLElement)
       const panel = screen.getByRole('dialog', { name: t('noticeTitle') })
       const left = Number.parseFloat(panel.style.left)
       const top = Number.parseFloat(panel.style.top)
@@ -567,7 +608,7 @@ describe('the workbench on screen', () => {
   it('closes the notice panel on Escape', () => {
     const { face } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
-    fireEvent.click(screen.getByRole('button', { name: t('noticeTitle') }))
+    fireEvent.click(screen.getAllByRole('button', { name: t('noticeTitle') })[0] as HTMLElement)
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: t('noticeTitle') })).toBeNull()
   })
@@ -575,7 +616,7 @@ describe('the workbench on screen', () => {
   it('closes the notice panel on an outside pointerdown', () => {
     const { face } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
-    fireEvent.click(screen.getByRole('button', { name: t('noticeTitle') }))
+    fireEvent.click(screen.getAllByRole('button', { name: t('noticeTitle') })[0] as HTMLElement)
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('dialog', { name: t('noticeTitle') })).toBeNull()
   })

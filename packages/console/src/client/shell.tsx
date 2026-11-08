@@ -31,7 +31,7 @@ import { FocusPage } from './focus.tsx'
 import { ViewNav } from './nav.tsx'
 import { RulesView, type TriageSource } from './rules.tsx'
 import { AppsView, ConnectorsView } from './views.tsx'
-import { BoardView, WorkbenchUnavailable, type WorkbenchFace } from './workbench/board.tsx'
+import { BoardPage, WorkbenchUnavailable, type BoardFace, type WorkbenchFace } from './workbench/board.tsx'
 import { AttentionQueue } from './attention.tsx'
 import type { Translate } from './locales.ts'
 import { CLS } from './styles.ts'
@@ -117,6 +117,13 @@ export interface ShellInjected {
    * without one — and every existing spec face — renders the home list alone.
    */
   readonly workbench?: WorkbenchFace
+  /**
+   * 看板的数据面：规则引擎的命中记录 + 会话名册 + 归档节奏。
+   *
+   * 可选：一个 spec 面、或一个没接引擎的部署仍然要能画出其它视图，
+   * 缺它只意味着看板这一页说「没有数据」，而不是整页起不来。
+   */
+  readonly board?: BoardFace
   /** The decision engine's public surface, wherever it currently lives. */
   readonly triage: TriageSource
 }
@@ -150,15 +157,6 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
   const current = useView((view) => view)
   const rows = props.useRows((all) => all)
   const notices = mergeNotices(props.useNotices((all) => all), props.liveNotices())
-  /**
-   * Whether the attention queue has anything to say.
-   *
-   * When the board is mounted and completely empty, the board's own empty state
-   * is the one sentence the user should read; the queue's empty card above it
-   * would repeat it. Without a board the queue is the only content, so it keeps
-   * its empty state.
-   */
-  const hasAttention = notices.length > 0 || props.running().length > 0 || props.log().length > 0
   /** 上一次导航或打开失败的原因；空串表示没有。 */
   const [failure, setFailure] = useState('')
   /** 把一句失败原因显示出来：空串表示没事了。 */
@@ -184,24 +182,18 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
       <WorkbenchTop {...props} notices={notices} current={current} onSelect={go} />
       <div className={CLS.body}>
         {failure === '' ? null : <p className={CLS.openError} role="status">{failure}</p>}
-        {current === 'board' && (
-          <>
-            {/*
-              注意力队列排在看板上方：它是「现在要你决定的事」里不能变成卡片的那一半
-              （插件的 notice 与条目）。看板的三列回答的是另一半。
-            */}
-            {(workbench === undefined || hasAttention) && (
-              <AttentionQueue
-                t={t}
-                notices={notices}
-                running={props.running}
-                log={props.log}
-                actOnItem={props.actOnItem}
-                dismissItem={props.dismissItem}
-              />
-            )}
-            {workbench === undefined ? <WorkbenchUnavailable t={t} /> : <BoardView face={workbench} t={t} />}
-          </>
+        {current === 'board' && (props.board === undefined
+          ? <WorkbenchUnavailable t={t} />
+          : <BoardPage face={props.board} t={t} />)}
+        {current === 'notify' && (
+          <AttentionQueue
+            t={t}
+            notices={notices}
+            running={props.running}
+            log={props.log}
+            actOnItem={props.actOnItem}
+            dismissItem={props.dismissItem}
+          />
         )}
         {current === 'rules' && <RulesView t={t} triage={props.triage} />}
         {current === 'connectors' && (workbench === undefined
@@ -383,9 +375,14 @@ function NoticeButton({ t, notices, awaiting, onClear, actOnItem, dismissItem }:
                 {notice.body !== undefined && <span className={CLS.noticeBody}>{notice.body}</span>}
                 {notice.state === 'resolved' && <Tag tone="success">{t('noticeDone')}</Tag>}
                 {notice.state === 'dismissed' && <Tag tone="outline">{t('noticeDismissed')}</Tag>}
-                {notice.actions !== undefined && notice.state === 'new' && (
+                {notice.state === 'new' && (notice.link !== undefined || notice.actions !== undefined) && (
                   <span className={CLS.noticeActions}>
-                    {notice.actions.map((action) => (
+                    {notice.link !== undefined && (
+                      <Button size="sm" variant="outline" onClick={() => { openUrl(notice.link ?? '') }}>
+                        {t('noticeOpen')}
+                      </Button>
+                    )}
+                    {(notice.actions ?? []).map((action) => (
                       <Button
                         key={action.id}
                         size="sm"
@@ -441,6 +438,17 @@ function toneClass(tone: ConsoleNoticeRecord['tone']): string {
   if (tone === 'warn') return CLS.noticeWarn
   if (tone === 'error') return CLS.noticeError
   return ''
+}
+
+/**
+ * 在新标签里打开一个地址。
+ *
+ * `noreferrer` 不是可选项：地址来自邮件，它没有理由从 DSH 的页面拿到 referrer。
+ * @param url - 要打开的地址。
+ */
+function openUrl(url: string): void {
+  if (url === '') return
+  window.open(url, '_blank', 'noreferrer')
 }
 
 /**

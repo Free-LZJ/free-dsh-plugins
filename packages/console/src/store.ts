@@ -15,7 +15,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { CONSOLE_VIEWS, type ConsoleLogEntry, type ConsoleNoticeRecord, type ConsoleView } from './protocol.ts'
+import { CONSOLE_VIEWS, ARCHIVE_RHYTHMS, type ArchiveRhythm, type ConsoleLogEntry, type ConsoleNoticeRecord, type ConsoleView } from './protocol.ts'
 
 /** The directory below `$DSH_HOME` these files live in. */
 export const STATE_DIR = 'dsh-console'
@@ -31,6 +31,12 @@ export interface ConsolePrefs {
    * view, so an older document (and a fresh profile) both stay valid.
    */
   currentView?: ConsoleView
+  /**
+   * 任务走完之后多久离开看板。
+   *
+   * 缺省时按「结束即归」——板面只留还在动的东西，看板才真的是聚焦。
+   */
+  archiveRhythm?: ArchiveRhythm
 }
 
 /** An empty document: what a missing or unreadable file resolves to. */
@@ -174,6 +180,15 @@ export function isConsoleView(value: unknown): value is ConsoleView {
 }
 
 /**
+ * Whether a hand-edited value names an archive rhythm this build knows.
+ * @param value - the candidate.
+ * @returns true when it is one of {@link ARCHIVE_RHYTHMS}.
+ */
+export function isArchiveRhythm(value: unknown): value is ArchiveRhythm {
+  return typeof value === 'string' && ARCHIVE_RHYTHMS.includes(value as ArchiveRhythm)
+}
+
+/**
  * Keep only the fields this module can trust, dropping anything a hand-edited
  * file put in.
  * @param value - the parsed document.
@@ -187,5 +202,6 @@ function normalize(value: unknown): ConsolePrefs {
       ? candidate.filter((item): item is string => typeof item === 'string')
       : [],
     ...(isConsoleView(document.currentView) ? { currentView: document.currentView } : {}),
+    ...(isArchiveRhythm(document.archiveRhythm) ? { archiveRhythm: document.archiveRhythm } : {}),
   }
 }

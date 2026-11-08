@@ -67,6 +67,13 @@ export interface ConsoleNotice {
   readonly kind?: string
   /** What the user can do about it. Omitted = there is nothing to do. */
   readonly actions?: readonly NoticeAction[]
+  /**
+   * 这件事在源头的地址：GitHub 的 run、Jira 的工单、邮件本身。
+   *
+   * 一个裸 URL 而不是 `NoticeAction`：点它是**跳出去看**，不改变任何状态，所以不必
+   * 经过插件的动作路由，点完条目也不该变成 `resolved`。
+   */
+  readonly link?: string
   /** Session this item is about, so a UI can point at where the work happens. */
   readonly sessionId?: string
   /**
@@ -117,17 +124,44 @@ export interface RunningSession {
 export type ConsoleLayout = 'grid' | 'list' | 'compact'
 
 /**
- * One of the five views the workbench navigation switches between.
+ * One of the six views the workbench navigation switches between.
  *
- * Four are pages inside `main:console`; `focus` is its own main panel
+ * Five are pages inside `main:console`; `focus` is its own main panel
  * ({@link CONSOLE_FOCUS_PANEL_ID}), because in DSH's terms a page is one keyed
  * entry in the `main` slot — so reaching it is a `layout.selectPanel` call, not
  * a state flip.
+ *
+ * `notify` exists because a board that shows what happened and a queue that
+ * shows what wants an answer are two different questions. They used to share
+ * one page, so the queue crowded the board and the board buried the queue.
  */
-export type ConsoleView = 'board' | 'rules' | 'focus' | 'connectors' | 'apps'
+export type ConsoleView = 'board' | 'notify' | 'rules' | 'focus' | 'connectors' | 'apps'
 
-/** The five views, in navigation order. */
-export const CONSOLE_VIEWS: readonly ConsoleView[] = ['board', 'rules', 'focus', 'connectors', 'apps']
+/** The six views, in navigation order. */
+export const CONSOLE_VIEWS: readonly ConsoleView[] = ['board', 'notify', 'rules', 'focus', 'connectors', 'apps']
+
+/**
+ * 归档节奏：一个任务走完以后多久离开看板。
+ *
+ * 这是**展示策略**，不是数据生命周期——记录永远留在 `runs.json` 里，
+ * 变的只是它还占不占板面。所以它属于偏好而不是配置项里的能力开关。
+ */
+export type ArchiveRhythm = 'immediate' | 'fifteen' | 'hour' | 'day'
+
+/** 可选的归档节奏，按界面上的顺序。 */
+export const ARCHIVE_RHYTHMS: readonly ArchiveRhythm[] = ['immediate', 'fifteen', 'hour', 'day']
+
+/**
+ * 一档归档节奏对应的毫秒数：任务最后一次活动过去这么久就进归档。
+ *
+ * `immediate` 是 0——走完当场归档，板面只留还在动的东西。
+ */
+export const ARCHIVE_RHYTHM_MS: Readonly<Record<ArchiveRhythm, number>> = {
+  immediate: 0,
+  fifteen: 15 * 60 * 1000,
+  hour: 60 * 60 * 1000,
+  day: 24 * 60 * 60 * 1000,
+}
 
 /**
  * One thing an automation did on its own.
@@ -168,6 +202,13 @@ export interface ConsoleState {
   readonly availableChannels: readonly ChannelInfo[]
   /** The view the user last saved. */
   readonly layout: ConsoleLayout
+  /**
+   * 任务走完之后多久离开看板。
+   *
+   * Host 持有而不是页面自己存：它和 `layout` 一样是一份跟着用户走的偏好，
+   * 换个标签页打开应该看到同一档节奏。
+   */
+  readonly archiveRhythm: ArchiveRhythm
   /**
    * The view the workbench was last showing.
    *

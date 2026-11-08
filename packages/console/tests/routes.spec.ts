@@ -72,6 +72,7 @@ const STATE: ConsoleState = {
   awaiting: 0,
   availableChannels: [{ id: 'desktop', enabled: true }, { id: 'inapp', enabled: true }],
   layout: 'grid',
+  archiveRhythm: 'immediate',
   currentView: 'board',
   pinned: [],
   running: [],
@@ -95,7 +96,7 @@ interface Bench {
 function bench(): Bench {
   const routes = new Map<string, Handler>()
   const written: unknown[] = []
-  const saved = { layout: [] as string[], view: [] as string[], channels: [] as unknown[], pinned: [] as unknown[], cleared: 0 }
+  const saved = { layout: [] as string[], view: [] as string[], rhythm: [] as string[], channels: [] as unknown[], pinned: [] as unknown[], cleared: 0 }
   const openGates: (() => void)[] = []
   const detach = (): void => {
     for (const close of openGates.splice(0)) close()
@@ -123,6 +124,10 @@ function bench(): Bench {
     },
     setView: (view) => {
       saved.view.push(view)
+      return Promise.resolve()
+    },
+    setArchiveRhythm: (rhythm) => {
+      saved.rhythm.push(rhythm)
       return Promise.resolve()
     },
   }

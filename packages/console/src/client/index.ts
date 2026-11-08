@@ -30,13 +30,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import {
-  CONSOLE_FOCUS_PANEL_ID, CONSOLE_PANEL_ID, type ConsoleLayout, type ConsoleNoticeRecord, type ConsoleView,
-  type WorkbenchState,
+  ARCHIVE_RHYTHM_MS, CONSOLE_FOCUS_PANEL_ID, CONSOLE_PANEL_ID, type ArchiveRhythm, type ConsoleLayout,
+  type ConsoleNoticeRecord, type ConsoleView, type WorkbenchState,
 } from '../protocol.ts'
 import type { ConsoleClientService } from './contract.ts'
 import { bindSelector, link } from './link.ts'
 import { WorkbenchLink } from './workbench/link.ts'
-import type { WorkbenchFace } from './workbench/board.tsx'
+import type { BoardFace, WorkbenchFace } from './workbench/board.tsx'
 import { PanelRegistry, panelRows, type PanelRow } from './registry.ts'
 import { createTriageSource } from './rules.tsx'
 import { ConsoleIcon, ConsoleShell, FocusShell, type ConsoleShellProps } from './shell.tsx'
@@ -159,6 +159,34 @@ export function apply(ctx: ClientContext): void {
     confirm: (cardId) => workbenchLink.act({ action: 'confirm', cardId }),
     detach: (cardId) => workbenchLink.act({ action: 'detach', cardId }),
   }
+  const openSession = (sessionId: string): { readonly ok: boolean; readonly message?: string } => {
+    const open = sessionNavigation?.openSession
+    if (open === undefined) return { ok: false as const, message: t('focusOpenFailed', { message: '' }) }
+    try {
+      open.call(sessionNavigation, sessionId)
+      return { ok: true as const }
+    } catch (error: unknown) {
+      return { ok: false as const, message: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  const canOpenSession = (): boolean => typeof sessionNavigation?.openSession === 'function'
+
+  /**
+   * 看板的数据面。
+   *
+   * 与旧看板的 `workbenchFace` 并存但不是同一件事：那一份驱动卡片的派单/移动，
+   * 这一份只读命中记录——链路本身，谁的证据都不如引擎自己写下的那份。
+   */
+  const boardFace: BoardFace = {
+    triage,
+    running: () => link.getSnapshot()?.running ?? [],
+    rhythm: () => link.getSnapshot()?.archiveRhythm ?? 'immediate',
+    setRhythm: (rhythm: ArchiveRhythm) => { link.setArchiveRhythm(rhythm) },
+    rhythmMs: (rhythm: ArchiveRhythm) => ARCHIVE_RHYTHM_MS[rhythm],
+    canOpenSession,
+    openSession,
+  }
+
   const views = {
     getSnapshot: (): ConsoleView => link.viewPreference(),
     subscribe: (fn: () => void) => link.subscribe(fn),
@@ -296,18 +324,10 @@ export function apply(ctx: ClientContext): void {
     actOnItem: (id: string, actionId: string) => link.actOnItem({ op: 'act', id, actionId }),
     dismissItem: (id: string) => link.actOnItem({ op: 'dismiss', id }),
     liveNotices: () => liveNotices,
-    canOpenSession: () => typeof sessionNavigation?.openSession === 'function',
-    openSession: (sessionId: string) => {
-      const open = sessionNavigation?.openSession
-      if (open === undefined) return { ok: false as const, message: t('focusOpenFailed', { message: '' }) }
-      try {
-        open.call(sessionNavigation, sessionId)
-        return { ok: true as const }
-      } catch (error: unknown) {
-        return { ok: false as const, message: error instanceof Error ? error.message : String(error) }
-      }
-    },
+    canOpenSession,
+    openSession,
     workbench: workbenchFace,
+    board: boardFace,
     triage,
   })
 

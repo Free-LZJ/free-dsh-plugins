@@ -304,6 +304,9 @@ export function apply(ctx: Context, config: Config): void {
     setView: async (view) => {
       await host.setView(view)
     },
+    setArchiveRhythm: async (rhythm) => {
+      await host.setArchiveRhythm(rhythm)
+    },
   }
 
   registerRoutes(ctx, routeHost)

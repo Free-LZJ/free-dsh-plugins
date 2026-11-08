@@ -72,6 +72,7 @@ export const CLS = {
   attentionMeta: 'dshc-attention-meta',
   attentionActions: 'dshc-attention-actions',
   attentionFailure: 'dshc-attention-failure',
+  attentionArchive: 'dshc-attention-archive',
   running: 'dshc-running',
   runningLabel: 'dshc-running-label',
   runningList: 'dshc-running-list',
@@ -190,6 +191,32 @@ export const CLS = {
   connectorOn: 'dshc-connector-on',
   connectorOff: 'dshc-connector-off',
   connectorNote: 'dshc-connector-note',
+  taskCard: 'dshc-task-card',
+  taskCardHead: 'dshc-task-card-head',
+  taskCardTitle: 'dshc-task-card-title',
+  taskCardMeta: 'dshc-task-card-meta',
+  taskCardFoot: 'dshc-task-card-foot',
+  taskCardHint: 'dshc-task-card-hint',
+  chain: 'dshc-chain',
+  chainStep: 'dshc-chain-step',
+  chainStepFailed: 'dshc-chain-step-failed',
+  chainGlyph: 'dshc-chain-glyph',
+  chainBody: 'dshc-chain-body',
+  chainName: 'dshc-chain-name',
+  chainDetail: 'dshc-chain-detail',
+  rhythmRow: 'dshc-rhythm-row',
+  rhythmLabel: 'dshc-rhythm-label',
+  detail: 'dshc-detail',
+  detailHead: 'dshc-detail-head',
+  detailTitle: 'dshc-detail-title',
+  detailMeta: 'dshc-detail-meta',
+  detailSection: 'dshc-detail-section',
+  detailEvents: 'dshc-detail-events',
+  detailEventRow: 'dshc-detail-event-row',
+  detailEventAt: 'dshc-detail-event-at',
+  detailEventText: 'dshc-detail-event-text',
+  detailEventRule: 'dshc-detail-event-rule',
+  detailActions: 'dshc-detail-actions',
 } as const
 
 /** Id of the one style element the workbench installs, keyed so a reload replaces it. */
@@ -221,16 +248,19 @@ const CSS = `
 .${CLS.viewSubheading}{display:flex;align-items:center;gap:6px;margin:8px 0 0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.appsTools}{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 /* The board: a summary strip, then three columns of cards. The strip is a line of
-   figures, not four controls — it carries no fill so it reads as a summary. */
-.${CLS.board}{display:flex;flex:1;flex-direction:column;gap:12px;min-height:0}
+   figures, not four controls — it carries no fill so it reads as a summary.
+   The board never steals height from the attention queue above it: it grows to its
+   content and the page scrolls. The body is the only scroll container, so a card
+   list is never clipped and the three columns are never squeezed into a sliver. */
+.${CLS.board}{display:flex;flex:none;flex-direction:column;gap:12px}
 .${CLS.statusBar}{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:4px 24px}
 .${CLS.stat}{display:flex;align-items:center;gap:6px}
 .${CLS.statValue}{font-size:16px;line-height:24px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.statLabel}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardHint}{margin:0;flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardFailure}{margin:0;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
-.${CLS.boardColumns}{display:grid;flex:1;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:stretch;min-height:0}
-.${CLS.column}{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;overflow:hidden;padding:10px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2)}
+.${CLS.boardColumns}{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.${CLS.column}{display:flex;flex-direction:column;gap:8px;min-width:0;padding:10px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2)}
 .${CLS.columnOver}{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary)}
 .${CLS.columnHead}{display:flex;flex:none;flex-direction:column;gap:2px}
 .${CLS.columnTitleRow}{display:flex;align-items:center;gap:6px}
@@ -238,9 +268,43 @@ const CSS = `
 .${CLS.columnCount}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.columnHint}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.columnEmpty}{margin:0;padding:16px 8px;border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);text-align:center;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
-.${CLS.cardsList}{display:flex;flex-direction:column;gap:8px;overflow-y:auto;min-height:0;margin:0;padding:0;list-style:none}
-.${CLS.dayGroups}{display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:0}
+.${CLS.cardsList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.${CLS.dayGroups}{display:flex;flex-direction:column;gap:10px}
 .${CLS.dayGroup}{display:flex;flex:none;flex-direction:column;gap:6px}
+/* 一张任务卡：标题、来源、链路。只读——点它开详情，卡上没有可拖的东西。 */
+.${CLS.taskCard}{display:flex;flex-direction:column;gap:6px;width:100%;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);color:inherit;font:inherit;text-align:left;cursor:pointer}
+.${CLS.taskCard}:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.${CLS.taskCard}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.${CLS.taskCardHead}{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.${CLS.taskCardTitle}{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;flex:1;min-width:0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.taskCardMeta}{display:inline-flex;flex:none;align-items:center;gap:4px}
+.${CLS.taskCardFoot}{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:6px;border-top:0.5px solid var(--dsw-alias-border-l2)}
+.${CLS.taskCardHint}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+/* 链路：一列圆点，一条发丝竖线把它们串起来。序列就是序列，不需要图布局引擎。 */
+.${CLS.chain}{position:relative;display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
+.${CLS.chainStep}{position:relative;display:grid;grid-template-columns:16px minmax(0,1fr);align-items:start;gap:8px;padding:3px 0}
+.${CLS.chainStep}::before{content:'';position:absolute;left:7px;top:16px;bottom:-3px;border-left:0.5px solid var(--dsw-alias-border-l2)}
+.${CLS.chainStep}:last-child::before{display:none}
+.${CLS.chainGlyph}{display:flex;align-items:center;justify-content:center;height:16px}
+.${CLS.chainBody}{display:flex;min-width:0;flex-direction:column;gap:1px}
+.${CLS.chainName}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.${CLS.chainDetail}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.chainStepFailed} .${CLS.chainName}{color:var(--dsw-alias-state-error-primary)}
+/* 归档节奏：四个一档的选择，当前那档是主按钮。 */
+.${CLS.rhythmRow}{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:6px}
+.${CLS.rhythmLabel}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+/* 详情弹窗：抬头、触发记录、链路、动作。 */
+.${CLS.detail}{display:flex;flex-direction:column;gap:16px}
+.${CLS.detailHead}{display:flex;flex-direction:column;gap:4px}
+.${CLS.detailTitle}{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.detailMeta}{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.${CLS.detailSection}{margin:0 0 6px;font-size:11px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-tertiary)}
+.${CLS.detailEvents}{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
+.${CLS.detailEventRow}{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;align-items:baseline;gap:8px}
+.${CLS.detailEventAt}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.${CLS.detailEventText}{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.${CLS.detailEventRule}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.detailActions}{display:flex;flex-wrap:wrap;gap:6px}
 .${CLS.boardCard}{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);cursor:grab}
 .${CLS.boardCard}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .${CLS.cardFrom}{display:flex;align-items:center;gap:6px;min-width:0}
@@ -372,7 +436,7 @@ const CSS = `
 .${CLS.noticeTitle}{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.noticeActions}{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
 .${CLS.openError}{margin:0 0 8px;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary)}
-.${CLS.attention}{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);box-shadow:inset 0 0 0 0.5px var(--dsw-alias-settings-card-stroke)}
+.${CLS.attention}{display:flex;flex:none;flex-direction:column;gap:8px;padding:12px;border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);box-shadow:inset 0 0 0 0.5px var(--dsw-alias-settings-card-stroke)}
 .${CLS.attentionHead}{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .${CLS.attentionHeading}{margin:0;font-size:14px;line-height:22px}
 .${CLS.attentionSubheading}{margin:4px 0 0;font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-secondary)}
@@ -384,6 +448,8 @@ const CSS = `
 .${CLS.attentionMeta}{display:flex;align-items:center;gap:6px}
 .${CLS.attentionActions}{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
 .${CLS.attentionFailure}{flex-basis:100%;margin:2px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
+/* 归档默认收着：处理完的条目该离开视线，而不是留在原地被标成灰色。 */
+.${CLS.attentionArchive}{display:flex;flex-direction:column;gap:4px;min-height:0}
 .${CLS.running}{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2)}
 .${CLS.runningLabel}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .${CLS.runningList}{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
@@ -405,9 +471,7 @@ const CSS = `
 /* Narrow panels: the three columns become one scrolling stack. A 2560px window
    still reads as a page because the body caps its content width above. */
 @media (max-width:1080px){
-  .${CLS.boardColumns}{grid-template-columns:minmax(0,1fr);overflow-y:auto}
-  .${CLS.column}{overflow:visible}
-  .${CLS.cardsList},.${CLS.dayGroups}{overflow:visible}
+  .${CLS.boardColumns}{grid-template-columns:minmax(0,1fr)}
 }
 @media (max-width:720px){
   .${CLS.header}{padding:8px 16px}

@@ -13,7 +13,7 @@
 
 import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/shim/with-selector'
 import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from '../paths.ts'
-import type { ConsoleLayout, ConsoleNoticeRecord, ConsoleState, ConsoleView } from '../protocol.ts'
+import type { ArchiveRhythm, ConsoleLayout, ConsoleNoticeRecord, ConsoleState, ConsoleView } from '../protocol.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 
 /** Header a mutating request must carry; the Host refuses to write without it. */
@@ -79,6 +79,17 @@ export class ConsoleLink {
     this.layout = layout
     this.publish()
     void this.configure({ layout })
+  }
+
+  /**
+   * 换一档归档节奏，先本地生效再交给 Host 存。
+   * @param rhythm - 新的节奏。
+   */
+  setArchiveRhythm(rhythm: ArchiveRhythm): void {
+    const current = this.snapshot
+    if (current !== undefined) this.snapshot = { ...current, archiveRhythm: rhythm }
+    this.publish()
+    void this.configure({ archiveRhythm: rhythm })
   }
 
   /** @param fn - invalidation callback. @returns the unsubscribe function. */

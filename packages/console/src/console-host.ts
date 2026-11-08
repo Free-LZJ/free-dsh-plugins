@@ -31,8 +31,8 @@ import type { DecisionEngine } from '@free-lzj/dsh-decision'
 import { PresenceGate } from './builtin-channels.ts'
 import { ChannelRegistry, type NoticeDelivery } from './channels.ts'
 import type {
-  ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, ConsoleView, NoticeTone,
-  RunningSession, WorkbenchEvent,
+  ArchiveRhythm, ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, ConsoleView,
+  NoticeTone, RunningSession, WorkbenchEvent,
 } from './protocol.ts'
 import { emptyPrefs, readPrefs, readRecords, writePrefs, writeRecords, type ConsolePrefs, type ConsoleRecords } from './store.ts'
 import type { IngestResult, WorkbenchBoard } from './workbench/board.ts'
@@ -52,6 +52,14 @@ export const LOG_LIMIT = 100
 
 /** The view a profile that never navigated opens on. */
 export const DEFAULT_VIEW: ConsoleView = 'board'
+
+/**
+ * 没配置过时的归档节奏。
+ *
+ * 默认「结束即归」：看板是拿来看还在动的东西的，走完的任务留在板上只会把它
+ * 变成一份日志。想多看一会儿的人自己调宽。
+ */
+export const DEFAULT_ARCHIVE_RHYTHM: ArchiveRhythm = 'immediate'
 
 /**
  * What a plugin does when the user picks one of its item's actions.
@@ -322,6 +330,7 @@ export class ConsoleHost extends Service {
       delivered,
       state: 'new',
       ...(notice.kind === undefined ? {} : { kind: notice.kind }),
+      ...(typeof notice.link === 'string' && notice.link !== '' ? { link: notice.link } : {}),
       ...(actions === undefined ? {} : { actions }),
       ...(notice.sessionId === undefined ? {} : { sessionId: notice.sessionId }),
       ...(rootId === undefined ? {} : { rootId }),
@@ -571,6 +580,7 @@ export class ConsoleHost extends Service {
       awaiting: this.awaiting(),
       availableChannels: this.channelInfos(),
       layout: this.layout,
+      archiveRhythm: this.prefs.archiveRhythm ?? DEFAULT_ARCHIVE_RHYTHM,
       currentView: this.prefs.currentView ?? DEFAULT_VIEW,
       pinned: this.prefs.pinned,
       running: this.running,
@@ -617,6 +627,16 @@ export class ConsoleHost extends Service {
     await this.ready
     if ((this.prefs.currentView ?? DEFAULT_VIEW) === view) return
     await this.save({ ...this.prefs, currentView: view })
+  }
+
+  /**
+   * 记住归档节奏：任务走完多久离开看板。
+   * @param rhythm - 新的节奏。
+   */
+  async setArchiveRhythm(rhythm: ArchiveRhythm): Promise<void> {
+    await this.ready
+    if ((this.prefs.archiveRhythm ?? DEFAULT_ARCHIVE_RHYTHM) === rhythm) return
+    await this.save({ ...this.prefs, archiveRhythm: rhythm })
   }
 
   /**

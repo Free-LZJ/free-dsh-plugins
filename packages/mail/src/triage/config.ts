@@ -142,6 +142,8 @@ export function normalizeAction(input: unknown): ActionSpec | undefined {
   const cwd = clamped(input.cwd, MAX_NAME_LENGTH)
   const tool = clamped(input.tool, MAX_NAME_LENGTH)
   const url = clamped(input.url, MAX_PATTERN_LENGTH)
+  /** `notify` 的「打开」地址：模板，所以和 `url` 一样按模式串长度限。 */
+  const link = clamped(input.link, MAX_PATTERN_LENGTH)
   const targetSession = clamped(input.sessionId, MAX_NAME_LENGTH)
   const method = named<'POST' | 'PUT'>(input.method, new Set(['POST', 'PUT']))
   const common = {
@@ -159,7 +161,12 @@ export function normalizeAction(input: unknown): ActionSpec | undefined {
       if (kind === 'move' && folder === undefined) return undefined
       return { ...common, ...(folder === undefined ? {} : { folder }) }
     case 'notify':
-      return { ...common, ...(title === undefined ? {} : { title }), ...(tone === undefined ? {} : { tone }) }
+      return {
+        ...common,
+        ...(title === undefined ? {} : { title }),
+        ...(tone === undefined ? {} : { tone }),
+        ...(link === undefined ? {} : { link }),
+      }
     case 'session': {
       // 至少要有一个工作目录来源，否则这个动作一定失败，不如现在就丢掉。
       if (workspacePath === undefined && workspaceTemplate === undefined) return undefined

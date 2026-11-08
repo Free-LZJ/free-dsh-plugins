@@ -19,8 +19,8 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { ConsoleHost, ItemResult } from './console-host.ts'
-import type { ConsoleLayout, ConsoleState, ConsoleView } from './protocol.ts'
-import { isConsoleView } from './store.ts'
+import type { ArchiveRhythm, ConsoleLayout, ConsoleState, ConsoleView } from './protocol.ts'
+import { isArchiveRhythm, isConsoleView } from './store.ts'
 import { CONFIG_PATH, EVENTS_PATH, ITEM_PATH, STATE_PATH } from './paths.ts'
 
 /** Header a mutating request must carry, together with a JSON content type. */
@@ -44,6 +44,8 @@ export interface RouteHost {
   setLayout(layout: ConsoleLayout): Promise<void>
   /** Persist the view the workbench is showing. */
   setView(view: ConsoleView): Promise<void>
+  /** 持久化归档节奏。 */
+  setArchiveRhythm(rhythm: ArchiveRhythm): Promise<void>
 }
 
 /** What reading a request body produced. */
@@ -281,9 +283,16 @@ function readConfigCommand(value: unknown): ConfigCommand {
   if (body.view !== undefined) {
     const view = body.view
     if (!isConsoleView(view)) {
-      return { ok: false, error: 'view must be board, rules, focus, connectors or apps' }
+      return { ok: false, error: 'view must be board, notify, rules, focus, connectors or apps' }
     }
     return { ok: true, apply: (host) => host.setView(view) }
+  }
+  if (body.archiveRhythm !== undefined) {
+    const rhythm = body.archiveRhythm
+    if (!isArchiveRhythm(rhythm)) {
+      return { ok: false, error: 'archiveRhythm must be immediate, fifteen, hour or day' }
+    }
+    return { ok: true, apply: (host) => host.setArchiveRhythm(rhythm) }
   }
   if (body.layout !== undefined) {
     const layout = body.layout

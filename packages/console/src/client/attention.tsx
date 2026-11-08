@@ -12,7 +12,7 @@
  */
 
 import { useState, type ReactNode } from 'react'
-import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronDownOutlineRegular, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConsoleLogEntry, ConsoleNoticeRecord, RunningSession } from '../protocol.ts'
 import type { Translate } from './locales.ts'
 import { sourceLabel } from './locales.ts'
@@ -37,6 +37,16 @@ function isWaiting(notice: ConsoleNoticeRecord): boolean {
 }
 
 /**
+ * 在新标签里打开一个地址。
+ *
+ * `noreferrer` 不是可选项：地址来自邮件，它没有理由从 DSH 的页面拿到 referrer。
+ * @param url - 要打开的地址。
+ */
+function open(url: string): void {
+  window.open(url, '_blank', 'noreferrer')
+}
+
+/**
  * 一条要人处理的事。
  *
  * 动作失败时把原因留在这条旁边、条目**不消失**：把失败吞掉等于告诉用户「处理了」，
@@ -47,6 +57,7 @@ function isWaiting(notice: ConsoleNoticeRecord): boolean {
  */
 function WaitingRow(props: AttentionProps & { readonly notice: ConsoleNoticeRecord }): ReactNode {
   const { notice, t } = props
+  const link = notice.link
   /** 上一次点击没生效的原因；空串表示没有。 */
   const [failure, setFailure] = useState('')
   /**
@@ -70,6 +81,11 @@ function WaitingRow(props: AttentionProps & { readonly notice: ConsoleNoticeReco
         </span>
       </div>
       <div className={CLS.attentionActions}>
+        {link !== undefined && (
+          <Button size="sm" variant="outline" onClick={() => { open(link) }}>
+            {t('noticeOpen')}
+          </Button>
+        )}
         {(notice.actions ?? []).map((action) => (
           <Button key={action.id} size="sm" onClick={() => { run(props.actOnItem(notice.id, action.id)) }}>
             {action.label}
@@ -91,8 +107,16 @@ function WaitingRow(props: AttentionProps & { readonly notice: ConsoleNoticeReco
  */
 export function AttentionQueue(props: AttentionProps): ReactNode {
   const waiting = props.notices.filter(isWaiting)
-  const settled = props.notices.filter(notice => !isWaiting(notice)).slice(0, 5)
+  const settledAll = props.notices.filter(notice => !isWaiting(notice))
+  const settled = settledAll.slice(0, 5)
   const running = props.running()
+  /**
+   * 归档是否展开。
+   *
+   * 默认关着：忽略/处理完的条目该**离开视线**，而不是留在原地被标成灰色——标灰只
+   * 是把「处理完了吗」这个问题挪个位置问。需要回看时再展开。
+   */
+  const [archiveOpen, setArchiveOpen] = useState(false)
   return (
     <section className={CLS.attention} aria-label={props.t('attentionTitle')}>
       <div className={CLS.attentionHead}>
@@ -132,23 +156,32 @@ export function AttentionQueue(props: AttentionProps): ReactNode {
           </ul>
         )}
       {settled.length > 0 && (
-        <>
-          <h3 className={CLS.attentionSubheading}>{props.t('attentionSettled')}</h3>
-          <ul className={CLS.attentionList}>
-            {settled.map(notice => (
-              <li key={notice.id} className={CLS.attentionItem}>
-                <div className={CLS.attentionMain}>
-                  <span className={CLS.attentionTitle}>{notice.title}</span>
-                </div>
-                <Tag tone={notice.state === 'resolved' ? 'success' : 'outline'}>
-                  {notice.state === 'resolved'
-                    ? props.t('noticeDone')
-                    : notice.state === 'seen' ? props.t('noticeSnoozed') : props.t('noticeDismissed')}
-                </Tag>
-              </li>
-            ))}
-          </ul>
-        </>
+        <div className={CLS.attentionArchive}>
+          <DisclosureRow
+            icon={<IconChevronDownOutlineRegular />}
+            title={`${props.t('attentionArchive')} · ${settledAll.length}`}
+            open={archiveOpen}
+            expandable
+            expandOnRowClick
+            onToggle={() => { setArchiveOpen(value => !value) }}
+          />
+          {archiveOpen && (
+            <ul className={CLS.attentionList}>
+              {settled.map(notice => (
+                <li key={notice.id} className={CLS.attentionItem}>
+                  <div className={CLS.attentionMain}>
+                    <span className={CLS.attentionTitle}>{notice.title}</span>
+                  </div>
+                  <Tag tone={notice.state === 'resolved' ? 'success' : 'outline'}>
+                    {notice.state === 'resolved'
+                      ? props.t('noticeDone')
+                      : notice.state === 'seen' ? props.t('noticeSnoozed') : props.t('noticeDismissed')}
+                  </Tag>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {/*
         自动化日志：它自己做过的事。**不放进上面的队列**——一天归档二十封推广的人不该
