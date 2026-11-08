@@ -28,7 +28,7 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 // Type-only: the `ctx.webServer` service merge the routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { DecisionEngine } from '@free-lzj/dsh-decision'
-import { registerBuiltinChannels, type PageSurfaces } from './builtin-channels.ts'
+import { HANDED_TO_PAGE, registerBuiltinChannels } from './builtin-channels.ts'
 import { STATE_DIR } from './store.ts'
 import { ConsoleHost } from './console-host.ts'
 import { BUILTIN_CHANNELS, type ConsoleLayout, type RunningSession } from './protocol.ts'
@@ -167,16 +167,11 @@ export function apply(ctx: Context, config: Config): void {
 
   /**
    * The consequences a *page* performs: the Web Notification and the tone exist
-   * only in the browser. Listed here as "unavailable" because this half cannot
-   * raise them — the browser asks for the enabled channels and performs them
-   * itself, so a channel that needs a page is gated by {@link ConsoleHost.presence}
-   * rather than by these.
+   * only in the browser. This half reports them as handed over — the page asks
+   * for the enabled channels and performs them itself, and the presence gate has
+   * already established that a page is there to do it.
    */
-  const pages: PageSurfaces = {
-    raise: () => Promise.resolve(false),
-    chime: () => false,
-  }
-  registerBuiltinChannels(host.channels, { gate: host.presence, pages })
+  registerBuiltinChannels(host.channels, { gate: host.presence, pages: HANDED_TO_PAGE })
 
   // The board's assembly: implementations register here, the board itself
   // never names one. A companion plugin adds an executor, a classifier, or a

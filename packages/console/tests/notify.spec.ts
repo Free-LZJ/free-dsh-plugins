@@ -12,7 +12,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { PresenceGate, registerBuiltinChannels, type PageSurfaces } from '../src/builtin-channels.ts'
+import { HANDED_TO_PAGE, PresenceGate, registerBuiltinChannels, type PageSurfaces } from '../src/builtin-channels.ts'
 import type { NotificationChannel } from '../src/channels.ts'
 import { ConsoleHost } from '../src/console-host.ts'
 
@@ -62,6 +62,24 @@ describe('notification dispatch', () => {
     expect([...record.delivered].sort()).toEqual(['desktop', 'inapp', 'sound'])
     expect(surfaces.raised).toEqual(['新邮件'])
     expect(surfaces.chimed).toEqual(['新邮件'])
+  })
+
+  /**
+   * Regression: the real entry registers `HANDED_TO_PAGE`, whose whole job is to
+   * say "the page will do it". While it answered false, `delivered` never named
+   * `desktop` or `sound` — and the page acts only on that receipt — so the
+   * Windows notification and the tone were silently off in every real run.
+   */
+  it('hands the page-only channels over, so the page performs them', async () => {
+    const host = new ConsoleHost(new Context(), {
+      homeDir: '/nonexistent-dsh-home',
+      channels: () => ['desktop', 'inapp', 'sound'],
+      layout: () => 'grid',
+    })
+    registerBuiltinChannels(host.channels, { gate: host.presence, pages: HANDED_TO_PAGE })
+    host.presence.open()
+    const record = await host.notify({ title: '交给页面', tone: 'warn' })
+    expect(record.delivered).toEqual(['desktop', 'inapp', 'sound'])
   })
 
   it('honours the configured subset', async () => {

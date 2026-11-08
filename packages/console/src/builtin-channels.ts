@@ -58,6 +58,21 @@ export interface PageSurfaces {
   chime: (delivery: NoticeDelivery) => boolean
 }
 
+/**
+ * The Host's stand-in for the page half: this half cannot raise a desktop
+ * notification or play a tone, so it reports both as **handed over**.
+ *
+ * Returning true is what makes the page perform them: the page acts on a notice
+ * only when `delivered` names `desktop` or `sound`, and the presence gate has
+ * already established that a page is there to do it. Answering false here — as
+ * a literal "I cannot" — leaves the page waiting for a receipt that never comes,
+ * which is indistinguishable from switching those channels off.
+ */
+export const HANDED_TO_PAGE: PageSurfaces = {
+  raise: () => Promise.resolve(true),
+  chime: () => true,
+}
+
 /** What each channel needs to decide and to deliver. */
 export type BuiltinChannelWiring = {
   readonly gate: PresenceGate
