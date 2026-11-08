@@ -27,11 +27,11 @@ export const followupAction: Action = {
   async run(spec, context): Promise<ActionOutcome> {
     const sessions = context.sessions
     if (sessions === undefined) {
-      return failure('未挂载会话服务，无法投递到已有会话（需要 sessionController）')
+      return failure('未挂载会话服务，无法投递到已有会话（需要 sessionController）', 'config')
     }
     const sessionId = spec.sessionId
     if (sessionId === undefined || sessionId.trim() === '') {
-      return failure('followup 动作缺少 sessionId：投递到已有会话必须写明目标会话')
+      return failure('followup 动作缺少 sessionId：投递到已有会话必须写明目标会话', 'config')
     }
     const { summary, rule } = context.task
     try {
@@ -47,7 +47,7 @@ export const followupAction: Action = {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       // 会话不存在是最常见的失败：宿主在 resolveAgent 里给出错误，这里原样带出来。
-      return failure(`投递到会话 ${sessionId} 失败：${message}`)
+      return failure(`投递到会话 ${sessionId} 失败：${message}`, 'fatal')
     }
     return { ok: true, detail: `已投递到会话 ${sessionId}`, sessionId }
   },

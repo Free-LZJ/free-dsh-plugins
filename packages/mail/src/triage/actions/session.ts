@@ -127,7 +127,7 @@ export function resolveWorkspace(
     if (repo === undefined) {
       return {
         ok: false,
-        outcome: failure(`工作目录模板「${spec.workspaceTemplate}」需要 {repo}，但这封邮件的 List-Id 里没有仓库名`),
+        outcome: failure(`工作目录模板「${spec.workspaceTemplate}」需要 {repo}，但这封邮件的 List-Id 里没有仓库名`, 'config'),
       }
     }
     const full = fullNameFromListId(context.task.summary.headers)
@@ -142,7 +142,7 @@ export function resolveWorkspace(
     // `{repoRoot}` 这样的东西，必须挡住。
     const leftover = /\{\w+\}/.exec(filled)
     if (leftover !== null) {
-      return { ok: false, outcome: failure(`工作目录模板里有没配的变量 ${leftover[0]}：${filled}`) }
+      return { ok: false, outcome: failure(`工作目录模板里有没配的变量 ${leftover[0]}：${filled}`, 'config') }
     }
     return { ok: true, path: filled }
   }

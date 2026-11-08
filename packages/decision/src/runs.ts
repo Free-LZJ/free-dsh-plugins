@@ -17,6 +17,21 @@ import { readJson, serialWriter } from './store.ts'
 /** 一条记录的状态。 */
 export type RunStatus = 'done' | 'partial' | 'skipped' | 'suggested' | 'undone'
 
+/**
+ * 一次失败的性质——它决定人**还能做什么**。
+ *
+ * 三类失败的处置完全不同，混成一个红点就是把「去改配置」「等会儿再看」「这条没救了」
+ * 说成同一句话，于是界面上每个失败都像同一个失败：
+ *
+ * - `config`：规则或部署配错了（模板缺变量、动作缺必填项、能力没挂载）。重试一万次
+ *   结果一样，唯一出路是改配置。
+ * - `transient`：这一次没成（邮箱超时、连接抖了）。重试有意义。
+ * - `fatal`：目标已经不存在（会话被删、工单关了）。重试也没用，只能换目标或放弃。
+ *
+ * 由**产生失败的那一层**标注：只有它知道自己是配错了还是碰巧没成。内核原样带过去。
+ */
+export type RunFailureKind = 'config' | 'transient' | 'fatal'
+
 /** 记录里一个动作的结果。 */
 export interface RunAction {
   readonly kind: string
@@ -26,6 +41,8 @@ export interface RunAction {
   readonly detail: string
   /** `session` 动作建出的会话，供人点进去看。 */
   readonly sessionId?: string
+  /** 失败时说明是哪一类；成功时不带。 */
+  readonly failure?: RunFailureKind
 }
 
 /**
@@ -46,6 +63,14 @@ export interface RunRecord<TEvent> {
   readonly status: RunStatus
   /** 撤销窗口的截止时间；过了就不能撤了。 */
   readonly undoableUntil?: string
+  /**
+   * 人已经说过「这条我看到了」。
+   *
+   * 与 `status` 分开：状态说的是**规则把它办成了什么样**，这个是**人还要不要管**。
+   * 一条 `partial` 的记录既不冤也不假，但人可以把「我知道它失败了，不打算处理」写下来，
+   * 否则它会在待办里躺到被裁剪掉为止。
+   */
+  readonly acknowledged?: boolean
 }
 
 /** 一份命中记录。 */
@@ -67,10 +92,14 @@ export interface RunStore<TEvent> {
   get(id: string): Run<TEvent> | undefined
   /** 追加一条并落盘；返回它。 */
   append(run: Omit<Run<TEvent>, 'id'> & { readonly id?: string }): Promise<Run<TEvent>>
-  /** 就地把一条记录改成另一个状态（撤销用）。 */
+  /** 就地把一条记录改成另一个状态（撤销用），或记下「人已经看到」这一事实。 */
   patch(
     id: string,
-    change: { readonly status: RunStatus; readonly actions?: readonly RunAction[] },
+    change: {
+      readonly status?: RunStatus
+      readonly actions?: readonly RunAction[]
+      readonly acknowledged?: boolean
+    },
   ): Promise<Run<TEvent> | undefined>
   /** 按保留策略裁剪并落盘。 */
   trim(options: { readonly limit: number; readonly days: number }, now: Date): Promise<void>
@@ -120,6 +149,7 @@ function parseRun<TEvent>(
     event,
     actions: run['actions'] as readonly RunAction[],
     status: typeof status === 'string' && STATUSES.has(status as RunStatus) ? status as RunStatus : 'done',
+    ...(run['acknowledged'] === true ? { acknowledged: true } : {}),
     ...(typeof run['undoableUntil'] === 'string' ? { undoableUntil: run['undoableUntil'] } : {}),
   }
 }
@@ -171,8 +201,9 @@ export function createRunStore<TEvent>(options: RunStoreOptions<TEvent>): RunSto
       if (current === undefined) return undefined
       const updated: Run<TEvent> = {
         ...current,
-        status: change.status,
+        ...(change.status === undefined ? {} : { status: change.status }),
         ...(change.actions === undefined ? {} : { actions: change.actions }),
+        ...(change.acknowledged === undefined ? {} : { acknowledged: change.acknowledged }),
       }
       runs = [...runs.slice(0, index), updated, ...runs.slice(index + 1)]
       await persist()

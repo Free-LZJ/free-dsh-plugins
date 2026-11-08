@@ -30,7 +30,7 @@ export const archiveAction: Action = {
     const folder = await archiveFolderOf(context)
     if (folder === undefined) {
       // 不猜路径：说不清「归档夹在哪」比建错一个夹子好。
-      return failure('这个账号没有声明归档文件夹（\\Archive），请在规则里写 folder 指定一个')
+      return failure('这个账号没有声明归档文件夹（\\Archive），请在规则里写 folder 指定一个', 'config')
     }
     return await moveTo(folder, context, '归档')
   },

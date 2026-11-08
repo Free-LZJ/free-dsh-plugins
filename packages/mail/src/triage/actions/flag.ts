@@ -17,10 +17,10 @@ export const flagAction: Action = {
   sideEffect: true,
   async run(_spec, context): Promise<ActionOutcome> {
     const mail = context.mail
-    if (mail === undefined) return failure('未安装邮件插件（@free-lzj/dsh-mail），无法改动邮件状态')
+    if (mail === undefined) return failure('未安装邮件插件（@free-lzj/dsh-mail），无法改动邮件状态', 'config')
     const { accountId, summary } = context.task
     const result = await mail.applyAction({ op: 'flag', accountId, folder: summary.folder, uids: [summary.uid] })
-    if (!result.ok) return failure(`加星标失败：${result.message}`)
+    if (!result.ok) return failure(`加星标失败：${result.message}`, 'transient')
     return {
       ok: true,
       detail: '已加星标',

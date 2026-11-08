@@ -275,7 +275,7 @@ async function apply(
     }
     const action = ports.actions.get(spec.kind)
     if (action === undefined) {
-      results.push({ kind: spec.kind, mode, ok: false, detail: `本部署没有实现动作 ${spec.kind}` })
+      results.push({ kind: spec.kind, mode, ok: false, detail: `本部署没有实现动作 ${spec.kind}`, failure: 'config' })
       continue
     }
     const delay = spec.delaySeconds ?? (action.sideEffect ? config.undoWindowSeconds : 0)
@@ -306,6 +306,7 @@ async function apply(
       ok: outcome.ok,
       detail: outcome.detail,
       ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
+      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
     })
   }
 

@@ -34,7 +34,7 @@ import {
   ActionRegistry, ConditionRegistry, registerAll, type Action, type ActionSpecLike, type Condition,
   type ConditionSpecLike,
 } from './registry.ts'
-import type { Run, RunAction, RunStatus, RunStore } from './runs.ts'
+import type { Run, RunAction, RunFailureKind, RunStatus, RunStore } from './runs.ts'
 import { writeTextFile } from './store.ts'
 import type { Rule, RuleFileError } from './types.ts'
 
@@ -53,6 +53,8 @@ export interface EngineOutcome {
   readonly detail: string
   readonly sessionId?: string
   readonly undo?: () => Promise<void>
+  /** 失败的性质：配置错、碰巧没成、还是目标没了。成功时不带。 */
+  readonly failure?: RunFailureKind
 }
 
 /** 排队记录里引擎真正读的那几个字段；其余都是连接器的。 */
@@ -394,6 +396,24 @@ export class DecisionEngine {
       log: line => this.warn(line),
     })
     return result.ok ? { ok: true } : { ok: false, message: result.message }
+  }
+
+  /**
+   * 记下「这条命中记录我看到了，不用再提醒」。
+   *
+   * 与 {@link undo} 是两件事：撤销会**试着把发生过的事倒回去**，而这条只是留个话——
+   * 一次配错的失败重试一万次也一样，人唯一能做的就是承认它不该再占着待办。
+   * 幂等：重复标记不会报错，也不会改写 `status`（那是规则的结论，不是人的态度）。
+   * @param runId - 命中记录 id。
+   * @param acknowledged - false 表示撤销这个标记，让它回到待办。
+   * @returns 成功，或为什么没有这条记录。
+   */
+  async acknowledge(runId: string, acknowledged = true): Promise<EngineEdit> {
+    const stores = this.connector
+    if (stores === undefined) return { ok: false, message: '还没有连接器提供规则' }
+    const updated = await stores.runs.patch(runId, { acknowledged })
+    if (updated === undefined) return { ok: false, message: `找不到命中记录 ${runId}` }
+    return { ok: true }
   }
 
   /**

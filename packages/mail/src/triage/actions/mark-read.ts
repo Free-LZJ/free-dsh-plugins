@@ -13,10 +13,10 @@ import { failure } from './context.ts'
 /** 一个 UID 的批量动作；`op` 决定加还是减标志位。 */
 async function setSeen(context: ActionContext, op: 'markRead' | 'markUnread'): Promise<ActionOutcome> {
   const mail = context.mail
-  if (mail === undefined) return failure('未安装邮件插件（@free-lzj/dsh-mail），无法改动邮件状态')
+  if (mail === undefined) return failure('未安装邮件插件（@free-lzj/dsh-mail），无法改动邮件状态', 'config')
   const { accountId, summary } = context.task
   const result = await mail.applyAction({ op, accountId, folder: summary.folder, uids: [summary.uid] })
-  if (!result.ok) return failure(`标记失败：${result.message}`)
+  if (!result.ok) return failure(`标记失败：${result.message}`, 'transient')
   const back = op === 'markRead' ? 'markUnread' : 'markRead'
   return {
     ok: true,

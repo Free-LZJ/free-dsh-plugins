@@ -96,6 +96,26 @@ describe('createRunStore', () => {
     expect(await store.patch('missing', { status: 'undone' })).toBeUndefined()
   })
 
+  it('记下「我看到了」，并且重启后还认得', async () => {
+    const home = await scratch()
+    const path = join(home, 'runs.json')
+    const store = createRunStore<Event>({ path, parseEvent })
+    await store.load()
+    const run = await store.append(fresh())
+    // 标记只改 acknowledged：status 是规则的结论，不是人的态度。
+    expect((await store.patch(run.id, { acknowledged: true }))?.status).toBe(run.status)
+
+    const reopened = createRunStore<Event>({ path, parseEvent })
+    await reopened.load()
+    expect(reopened.get(run.id)?.acknowledged).toBe(true)
+    // 取消标记也落盘。`false` 与「没这个字段」是同一件事（都没标记），
+    // 所以读回来是 undefined 也算对。
+    await reopened.patch(run.id, { acknowledged: false })
+    const again = createRunStore<Event>({ path, parseEvent })
+    await again.load()
+    expect(again.get(run.id)?.acknowledged).not.toBe(true)
+  })
+
   it('trims by age first, then by count', async () => {
     const home = await scratch()
     const store = createRunStore<Event>({ path: join(home, 'runs.json'), parseEvent })

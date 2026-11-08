@@ -23,12 +23,12 @@ import { failure } from './context.ts'
  */
 export async function moveTo(folder: string, context: ActionContext, label = folder): Promise<ActionOutcome> {
   const mail = context.mail
-  if (mail === undefined) return failure('未安装邮件插件（@free-lzj/dsh-mail），无法移动邮件')
+  if (mail === undefined) return failure('未安装邮件插件（@free-lzj/dsh-mail），无法移动邮件', 'config')
   const { accountId, summary } = context.task
   // 目标就是当前文件夹时不做任何事：这多半是规则写重复了，报「已移动」会误导。
   if (summary.folder === folder) return { ok: true, detail: `已经在「${label}」里` }
   const ensured = await mail.ensureFolder(accountId, folder)
-  if (!ensured.ok) return failure(`无法准备文件夹「${label}」：${ensured.message}`)
+  if (!ensured.ok) return failure(`无法准备文件夹「${label}」：${ensured.message}`, 'transient')
   const moved = await mail.applyAction({
     op: 'move',
     accountId,
@@ -36,7 +36,7 @@ export async function moveTo(folder: string, context: ActionContext, label = fol
     uids: [summary.uid],
     targetFolder: ensured.path,
   })
-  if (!moved.ok) return failure(`移动到「${label}」失败：${moved.message}`)
+  if (!moved.ok) return failure(`移动到「${label}」失败：${moved.message}`, 'transient')
   const from = summary.folder
   return {
     ok: true,
@@ -67,7 +67,7 @@ export const moveAction: Action = {
   async run(spec, context) {
     // `normalizeAction` 已经保证 `move` 一定带 folder；这里再挡一次是因为动作实现
     // 可能被别处直接调用（测试、将来的第三方装配）。
-    if (spec.folder === undefined) return failure('这条 move 动作没有写目标文件夹')
+    if (spec.folder === undefined) return failure('这条 move 动作没有写目标文件夹', 'config')
     return await moveTo(spec.folder, context)
   },
 }

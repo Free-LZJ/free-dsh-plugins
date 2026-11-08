@@ -14,6 +14,7 @@
  */
 
 import type { Action as CoreAction } from '@free-lzj/dsh-decision'
+import type { RunFailureKind } from '@free-lzj/dsh-decision'
 import type { ActionKind, ActionMode, ActionSpec, MailSummaryLike, Rule } from '../types.ts'
 
 /** 这次动作处理的那封邮件。 */
@@ -153,6 +154,13 @@ export interface ActionOutcome {
    * 调 MCP、建会话都收不回来，所以它们没有这个字段。
    */
   readonly undo?: () => Promise<void>
+  /**
+   * 失败的性质，决定人还能做什么。
+   *
+   * 由产生失败的这一层标注——只有它知道自己是「规则配错了」还是「这次碰巧没成」。
+   * 页面据此把「去改配置」和「再试一次」分开，而不是把所有红点说成同一句话。
+   */
+  readonly failure?: RunFailureKind
 }
 
 /**
@@ -163,9 +171,14 @@ export interface ActionOutcome {
  */
 export type Action = CoreAction<ActionSpec, ActionContext, ActionOutcome, ActionKind>
 
-/** 各动作共用的失败结果。 */
-export function failure(detail: string): ActionOutcome {
-  return { ok: false, detail }
+/**
+ * 各动作共用的失败结果。
+ * @param detail - 给人看的一行说明。
+ * @param kind - 失败的性质；调用方必须明确说，不猜。
+ * @returns 失败结果。
+ */
+export function failure(detail: string, kind: RunFailureKind): ActionOutcome {
+  return { ok: false, detail, failure: kind }
 }
 
 /** 取动作的三态；缺省由配置层填过，这里只兜底。 */
