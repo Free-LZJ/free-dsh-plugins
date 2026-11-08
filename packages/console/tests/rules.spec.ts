@@ -15,8 +15,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
 import { registerRulesRoutes, type RulesEngine, type RulesRouteHost } from '../src/rules/index.ts'
 import {
-  RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH, RULES_STATE_PATH,
-  RULES_TEST_PATH, RULES_UNDO_PATH,
+  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../src/paths.ts'
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
@@ -71,6 +71,7 @@ interface Engaged {
   readonly conditions: { ruleId: string; conditionIndex: number; values: readonly string[] }[]
   readonly priority: { ruleId: string; direction: string }[]
   readonly undo: string[]
+  readonly acked: { runId: string; acknowledged: boolean }[]
   readonly tests: { accountId: string; folder: string; uid: number }[]
   readonly since: (string | undefined)[]
 }
@@ -100,7 +101,7 @@ const VIEW = {
 function bench(overrides: Partial<RulesEngine> = {}): Bench {
   const routes = new Map<string, Handler>()
   const written: string[] = []
-  const engaged: Engaged = { enabled: [], modes: [], conditions: [], priority: [], undo: [], tests: [], since: [] }
+  const engaged: Engaged = { enabled: [], modes: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [] }
   const engine: RulesEngine = {
     view: () => VIEW,
     setEnabled: (ruleId, enabled) => {
@@ -125,6 +126,10 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
         id: 'run-1', at: '2026-10-27T08:00:00.000Z', ruleId: 'first', ruleName: '第一条', label: '第一条',
         event: { subject: 'x' }, actions: [], status: 'done' as const,
       }]
+    },
+    acknowledge: (runId, acknowledged = true) => {
+      engaged.acked.push({ runId, acknowledged })
+      return Promise.resolve({ ok: true })
     },
     undo: (runId) => {
       engaged.undo.push(runId)
@@ -183,8 +188,8 @@ describe('the rule engine’s routes', () => {
   it('mounts every path the page speaks to', () => {
     const { routes } = bench()
     expect([...routes.keys()].sort()).toEqual([
-      RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH, RULES_STATE_PATH,
-      RULES_TEST_PATH, RULES_UNDO_PATH,
+      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+      RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
     ].sort())
   })
 
@@ -227,6 +232,7 @@ describe('the rule engine’s routes', () => {
     expect((await write(route, RULES_CONDITION_PATH, { ruleId: 'first', conditionIndex: 1, values: ['a', 7] })).status).toBe(200)
     expect((await write(route, RULES_PRIORITY_PATH, { ruleId: 'first', direction: 'up' })).status).toBe(200)
     expect((await write(route, RULES_UNDO_PATH, { runId: 'run-1' })).status).toBe(200)
+    expect((await write(route, RULES_ACK_PATH, { runId: 'run-1' })).status).toBe(200)
 
     expect(route.engaged.enabled).toEqual([{ ruleId: 'first', enabled: false }])
     expect(route.engaged.modes).toEqual([{ ruleId: 'first', actionIndex: 2, mode: 'suggest' }])
@@ -234,6 +240,19 @@ describe('the rule engine’s routes', () => {
     expect(route.engaged.conditions).toEqual([{ ruleId: 'first', conditionIndex: 1, values: ['a'] }])
     expect(route.engaged.priority).toEqual([{ ruleId: 'first', direction: 'up' }])
     expect(route.engaged.undo).toEqual(['run-1'])
+    // 省略 `acknowledged` 就是「标记」：只有显式的 false 才取消标记。
+    expect(route.engaged.acked).toEqual([{ runId: 'run-1', acknowledged: true }])
+  })
+
+  it('only takes an explicit false as un-acknowledging', async () => {
+    const route = bench()
+    expect((await write(route, RULES_ACK_PATH, { runId: 'run-1', acknowledged: false })).status).toBe(200)
+    // 手抖打成 null / 0 / 'no' 的请求不该把一条人刚收起来的记录弹回待办。
+    expect((await write(route, RULES_ACK_PATH, { runId: 'run-2', acknowledged: null })).status).toBe(200)
+    expect(route.engaged.acked).toEqual([
+      { runId: 'run-1', acknowledged: false },
+      { runId: 'run-2', acknowledged: true },
+    ])
   })
 
   it('rejects a write whose body is missing a required field', async () => {
@@ -243,6 +262,7 @@ describe('the rule engine’s routes', () => {
     expect((await write(route, RULES_CONDITION_PATH, { ruleId: 'first' })).status).toBe(400)
     expect((await write(route, RULES_PRIORITY_PATH, { ruleId: 'first', direction: 'sideways' })).status).toBe(400)
     expect((await write(route, RULES_UNDO_PATH, {})).status).toBe(400)
+    expect((await write(route, RULES_ACK_PATH, {})).status).toBe(400)
     expect(route.engaged.enabled).toEqual([])
   })
 

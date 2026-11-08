@@ -63,6 +63,8 @@ export interface TriageRunAction {
   readonly ok: boolean
   readonly detail: string
   readonly sessionId?: string
+  /** 失败的性质：页面据此决定给「去改规则」还是「再试一次」。 */
+  readonly failure?: 'config' | 'transient' | 'fatal'
 }
 
 /** One event the engine acted on. */
@@ -90,6 +92,8 @@ export interface TriageRun {
   readonly actions: readonly TriageRunAction[]
   readonly status: string
   readonly undoableUntil?: string
+  /** 人已经说过「这条我看到了」：它不再占待办。 */
+  readonly acknowledged?: boolean
 }
 
 /** The rule file as the engine sees it. */
@@ -147,6 +151,15 @@ export interface TriageSource {
    */
   setCondition(ruleId: string, conditionIndex: number, values: readonly string[]): Promise<TriageResult>
   undo(runId: string): Promise<TriageResult>
+  /**
+   * 记下「这条命中记录我看到了」。
+   *
+   * 与 {@link undo} 完全两回事：撤销会真的去回滚已经发生的动作，而这个只影响它还要不要
+   * 占着待办。一次配错的失败重试也没用，人能做的是承认它。
+   * @param runId - 命中记录 id。
+   * @param acknowledged - 省略即标记；false 表示取消标记。
+   */
+  acknowledge(runId: string, acknowledged?: boolean): Promise<TriageResult>
   /**
    * Run the current rules against one real mail without touching it.
    * @param ref - which mailbox the mail is in.
@@ -206,6 +219,7 @@ export function createTriageSource(): TriageSource {
     setCondition: async (ruleId, conditionIndex, values) =>
       await write('/condition', { ruleId, conditionIndex, values }),
     undo: async (runId) => await write('/undo', { runId }),
+    acknowledge: async (runId, acknowledged = true) => await write('/ack', { runId, acknowledged }),
     testRun: async (ref) => {
       const response = await fetch(`${RULES_PREFIX}/test`, {
         method: 'POST',

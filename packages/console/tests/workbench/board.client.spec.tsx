@@ -13,7 +13,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { zh, type Translate } from '../../src/client/locales.ts'
 import {
-  BoardView, buildTasks, kindLabel, taskKeyOf, type BoardFace,
+  BoardView, buildTasks, kindLabel, remedyOf, taskKeyOf, type BoardFace,
 } from '../../src/client/workbench/board.tsx'
 import type { TriageRun, TriageSource } from '../../src/client/rules.tsx'
 
@@ -50,6 +50,8 @@ function face(overrides: Partial<BoardFace> = {}): BoardFace {
     rhythm: () => 'immediate',
     setRhythm: () => {},
     rhythmMs: () => 0,
+    acknowledge: async () => ({ ok: true }),
+    openRules: () => {},
     ...overrides,
   }
 }
@@ -136,6 +138,61 @@ describe('动作名的说法', () => {
     expect(kindLabel('session', t)).toBe(zh.linkKindSession)
     expect(kindLabel('markRead', t)).toBe(zh.linkKindMarkRead)
     expect(kindLabel('brand-new-kind', t)).toBe('brand-new-kind')
+  })
+})
+
+describe('失败之后人还能做什么', () => {
+  it('配置错给「去改规则」，临时故障给「重试」，目标没了什么都不给', () => {
+    expect(remedyOf('config')).toBe('fix-config')
+    expect(remedyOf('transient')).toBe('retry')
+    expect(remedyOf('fatal')).toBe('none')
+    // 引擎没标性质的老记录：不给一个按不动的按钮。
+    expect(remedyOf(undefined)).toBe('none')
+  })
+
+  it('失败的性质从最早失败的那一步读出来，并带到任务上', () => {
+    const failed = run({
+      id: 'run-1',
+      status: 'partial',
+      actions: [
+        { kind: 'markRead', mode: 'auto', ok: true, detail: '已标记为已读' },
+        { kind: 'session', mode: 'auto', ok: false, detail: '模板缺 {repo}', failure: 'config' },
+      ],
+    })
+    const tasks = buildTasks([failed], new Set(), 0, Date.now(), t)
+    expect(tasks[0]?.failure).toBe('config')
+    expect(tasks[0]?.remedy).toBe('fix-config')
+  })
+})
+
+describe('人说过「我看到了」以后', () => {
+  it('失败的任务不再占待办，直接进归档', () => {
+    const failed = run({
+      id: 'run-1',
+      status: 'partial',
+      actions: [{ kind: 'session', mode: 'auto', ok: false, detail: '模板缺 {repo}', failure: 'config' }],
+    })
+    const before = buildTasks([failed], new Set(), 0, Date.now(), t)
+    expect(before[0]?.zone).toBe('todo')
+    expect(before[0]?.acknowledged).toBe(false)
+
+    const after = buildTasks([{ ...failed, acknowledged: true }], new Set(), 0, Date.now(), t)
+    expect(after[0]?.zone).toBe('archived')
+    expect(after[0]?.acknowledged).toBe(true)
+  })
+
+  it('一次任务只在它每一次命中都被标记后才算收起来', () => {
+    const first = run({ id: 'run-1', acknowledged: true, status: 'partial', actions: [
+      { kind: 'session', mode: 'auto', ok: false, detail: 'x', failure: 'config' },
+    ] })
+    const second = run({
+      id: 'run-2',
+      at: new Date('2026-11-06T10:05:00Z').toISOString(),
+      status: 'partial',
+      actions: [{ kind: 'session', mode: 'auto', ok: false, detail: 'y', failure: 'config' }],
+    })
+    const tasks = buildTasks([first, second], new Set(), 0, Date.now(), t)
+    expect(tasks[0]?.zone).toBe('todo')
   })
 })
 

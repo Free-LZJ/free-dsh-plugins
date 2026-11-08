@@ -76,7 +76,20 @@ export interface ChainStep {
   readonly at: number
   /** Present on a `session` step: the conversation this task opened. */
   readonly sessionId?: string
+  /** 失败的性质；页面据此给出「去改规则」或「再试一次」。 */
+  readonly failure?: RunFailure
 }
+
+/** The three kinds of failure, mirrored from the decision core. */
+export type RunFailure = 'config' | 'transient' | 'fatal'
+
+/**
+ * 人还能对一次失败做什么。
+ *
+ * 由失败的性质决定，不由页面猜：配置错重试一万次也一样，目标没了只能放弃，
+ * 只有「这次碰巧没成」才值得再试。
+ */
+export type Remedy = 'fix-config' | 'retry' | 'none'
 
 /** One task: every hit record that belongs to the same source event. */
 export interface TaskChain {
@@ -97,6 +110,12 @@ export interface TaskChain {
   readonly updatedAt: number
   /** True when any run in the task ended with a failed action. */
   readonly failed: boolean
+  /** 第一个失败的步骤是什么性质；没有失败时 undefined。 */
+  readonly failure?: RunFailure
+  /** 人还能做什么：改配置、重试、还是只能承认它。 */
+  readonly remedy: Remedy
+  /** 人已经说过「这条我看到了」。 */
+  readonly acknowledged: boolean
 }
 
 /* ─────────────────────────────── 聚合 ─────────────────────────────── */
@@ -206,9 +225,24 @@ function stepsOf(run: TriageRun, t: Translate): ChainStep[] {
       ok: action.ok,
       at: Number.isFinite(at) ? at : 0,
       ...(action.sessionId === undefined ? {} : { sessionId: action.sessionId }),
+      ...(action.failure === undefined ? {} : { failure: action.failure }),
     })
   })
   return steps
+}
+
+/**
+ * 一次失败该由谁来收场。
+ * @param failure - the kind the engine recorded, when it recorded one.
+ * @returns what the page may offer.
+ */
+export function remedyOf(failure: RunFailure | undefined): Remedy {
+  switch (failure) {
+    case 'config': return 'fix-config'
+    case 'transient': return 'retry'
+    // 没标性质的失败按「只能承认」处理：给一个点不动的按钮比不给更糟。
+    default: return 'none'
+  }
 }
 
 /**
@@ -249,11 +283,12 @@ export function buildTasks(
     const failed = ordered.some(run => run.actions.some(action => !action.ok))
     const sessionAlive = steps.some(step => step.sessionId !== undefined && runningIds.has(step.sessionId))
     const updatedAt = steps.reduce((newestAt, step) => Math.max(newestAt, step.at), 0)
+    const failure = steps.find(step => !step.ok)?.failure
+    const acknowledged = ordered.every(run => run.acknowledged === true)
     const settled = !failed
       && ordered.every(run => run.status === 'done' || run.status === 'skipped' || run.status === 'undone')
-    const zone: TaskZone = sessionAlive
-      ? 'running'
-      : settled && now - updatedAt >= archiveAfterMs ? 'archived' : 'todo'
+    // 「我看到了」优先于一切：人已经把它从待办里拿走了，失败与节奏都不该再把它弹回来。
+    const zone: TaskZone = sessionAlive ? 'running' : acknowledged ? 'archived' : settled && now - updatedAt >= archiveAfterMs ? 'archived' : 'todo'
     tasks.push({
       key,
       runs: ordered,
@@ -264,6 +299,9 @@ export function buildTasks(
       label: newest.label,
       updatedAt,
       failed,
+      remedy: remedyOf(failure),
+      acknowledged,
+      ...(failure === undefined ? {} : { failure }),
     })
   }
   return tasks.sort((left, right) => right.updatedAt - left.updatedAt)
@@ -287,6 +325,14 @@ export interface BoardFace {
   readonly canOpenSession?: () => boolean
   /** 这一档节奏对应的窗口毫秒数。 */
   readonly rhythmMs: (rhythm: ArchiveRhythm) => number
+  /**
+   * 记下「这些命中记录我看到了」，或撤销这个标记。
+   *
+   * 一次任务可能由多次命中组成，所以按 id 列表收：只标记一部分会让它下次又冒出来。
+   */
+  readonly acknowledge: (runIds: readonly string[], acknowledged: boolean) => Promise<{ readonly ok: boolean; readonly message?: string }>
+  /** 跳到规则页：配置错唯一的出路是改规则。 */
+  readonly openRules: () => void
 }
 
 /** What the board shows when the engine cannot be read. */
@@ -389,6 +435,12 @@ export function BoardView(props: {
   const running = zone('running')
   const archived = zone('archived')
 
+  /** 把一个任务的全部命中记录一起标记/取消标记。 */
+  const acknowledge = (task: TaskChain, value: boolean): void => {
+    void props.face.acknowledge(task.runs.map(run => run.id), value)
+      .then(result => { setFailure(result.ok ? '' : result.message ?? t('boardActionFailed')) })
+  }
+
   return (
     <div className={CLS.board}>
       <div className={CLS.statusBar} role="group" aria-label={t('boardTitle')}>
@@ -407,6 +459,8 @@ export function BoardView(props: {
           empty={t('boardTodoEmpty')}
           t={t}
           onOpen={setOpenKey}
+          onAck={task => { acknowledge(task, true) }}
+          onRules={props.face.openRules}
         />
         <Zone
           zone="running"
@@ -416,6 +470,8 @@ export function BoardView(props: {
           empty={t('boardProcessingEmpty')}
           t={t}
           onOpen={setOpenKey}
+          onAck={task => { acknowledge(task, true) }}
+          onRules={props.face.openRules}
         />
       </div>
       {archived.length === 0 ? null : (
@@ -428,7 +484,14 @@ export function BoardView(props: {
           onToggle={() => { setArchiveOpen(value => !value) }}
         >
           <p className={CLS.viewMeta}>{t('boardArchiveHint')}</p>
-          <TaskList tasks={archived} t={t} onOpen={setOpenKey} />
+          <TaskList
+            tasks={archived}
+            t={t}
+            onOpen={setOpenKey}
+            onAck={task => { acknowledge(task, false) }}
+            onRules={props.face.openRules}
+            archived
+          />
         </DisclosureRow>
       )}
       <p className={CLS.boardHint}>{t('boardHint')}</p>
@@ -439,6 +502,7 @@ export function BoardView(props: {
           face={props.face}
           onClose={() => { setOpenKey(undefined) }}
           onFailure={message => { setFailure(message) }}
+          onAck={value => { acknowledge(open, value) }}
         />
       )}
     </div>
@@ -454,6 +518,8 @@ function Zone(props: {
   readonly empty: string
   readonly t: Translate
   readonly onOpen: (key: string) => void
+  readonly onAck: (task: TaskChain) => void
+  readonly onRules: () => void
 }): ReactNode {
   return (
     <section className={CLS.column} aria-label={props.title} data-zone={props.zone}>
@@ -467,7 +533,15 @@ function Zone(props: {
       </header>
       {props.tasks.length === 0
         ? <p className={CLS.columnEmpty}>{props.empty}</p>
-        : <TaskList tasks={props.tasks} t={props.t} onOpen={props.onOpen} />}
+        : (
+          <TaskList
+            tasks={props.tasks}
+            t={props.t}
+            onOpen={props.onOpen}
+            onAck={props.onAck}
+            onRules={props.onRules}
+          />
+        )}
     </section>
   )
 }
@@ -477,16 +551,20 @@ function TaskList(props: {
   readonly tasks: readonly TaskChain[]
   readonly t: Translate
   readonly onOpen: (key: string) => void
+  readonly onAck: (task: TaskChain) => void
+  readonly onRules: () => void
+  /** 归档区里的卡：「忽略」变成「恢复」，因为它们本来就不在待办里。 */
+  readonly archived?: boolean
 }): ReactNode {
   return (
     <ul className={CLS.cardsList}>
       {props.tasks.map((task) => {
         const last = task.steps[task.steps.length - 1]
         return (
-          <li key={task.key}>
+          <li key={task.key} className={CLS.taskCard}>
             <button
               type="button"
-              className={CLS.taskCard}
+              className={CLS.taskCardOpen}
               onClick={() => { props.onOpen(task.key) }}
               aria-label={task.title}
             >
@@ -495,9 +573,7 @@ function TaskList(props: {
                 <span className={CLS.taskCardMeta}>
                   <Tag tone="quiet">{task.source}</Tag>
                   {task.label === '' ? null : <Tag tone="info">{task.label}</Tag>}
-                  {task.failed
-                    ? <StateDot state="error" />
-                    : <StateDot state={task.zone === 'running' ? 'ongoing' : 'done'} />}
+                  <RemedyBadge task={task} t={props.t} />
                 </span>
               </span>
               <ChainLine steps={task.steps} t={props.t} compact />
@@ -510,11 +586,42 @@ function TaskList(props: {
                 )}
               </span>
             </button>
+            <span className={CLS.taskCardActions}>
+              {task.remedy === 'fix-config' && (
+                <Button size="sm" variant="ghost" onClick={props.onRules}>{props.t('remedyFixConfig')}</Button>
+              )}
+              {props.archived === true
+                ? (task.acknowledged && (
+                  <Button size="sm" variant="ghost" onClick={() => { props.onAck(task) }}>{props.t('remedyRestore')}</Button>
+                ))
+                : (
+                  <Button size="sm" variant="outline" onClick={() => { props.onAck(task) }}>{props.t('remedyDismiss')}</Button>
+                )}
+            </span>
           </li>
         )
       })}
     </ul>
   )
+}
+
+/** 失败的性质，一句话说清人该做什么；没失败就不画。 */
+function RemedyBadge(props: { readonly task: TaskChain; readonly t: Translate }): ReactNode {
+  if (!props.task.failed) {
+    return <StateDot state={props.task.zone === 'running' ? 'ongoing' : 'done'} />
+  }
+  // 老记录没有性质：说「失败」是诚实的，说「目标已失效」是替它编一个原因。
+  if (props.task.failure === undefined) {
+    return <Tag tone="danger">{props.t('boardStatFailed')}</Tag>
+  }
+  switch (props.task.remedy) {
+    case 'fix-config':
+      return <Tag tone="info">{props.t('remedyConfig')}</Tag>
+    case 'retry':
+      return <Tag tone="danger">{props.t('remedyTransient')}</Tag>
+    default:
+      return <Tag tone="danger">{props.t('remedyFatal')}</Tag>
+  }
 }
 
 /**
@@ -596,9 +703,11 @@ function TaskDetail(props: {
   readonly face: BoardFace
   readonly onClose: () => void
   readonly onFailure: (message: string) => void
+  readonly onAck: (acknowledged: boolean) => void
 }): ReactNode {
   const { t, task } = props
   const canOpen = props.face.canOpenSession?.() === true
+  const sessions = task.steps.filter(step => step.sessionId !== undefined)
   return (
     <Modal open onClose={props.onClose} title={t('detailTitle')} closeLabel={t('detailClose')}>
       <div className={CLS.detail}>
@@ -631,25 +740,36 @@ function TaskDetail(props: {
             ? <p className={CLS.empty}>{t('detailNoActions')}</p>
             : <ChainLine steps={task.steps} t={t} />}
         </section>
-        {canOpen && (
-          <div className={CLS.detailActions}>
-            {task.steps.filter(step => step.sessionId !== undefined).map(step => (
-              <Button
-                key={step.key}
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  const answer = props.face.openSession?.(step.sessionId as string)
-                  if (answer !== undefined && !answer.ok) {
-                    props.onFailure(answer.message ?? t('linkSessionGone'))
-                  }
-                }}
-              >
-                {t('linkOpenSession')}
-              </Button>
-            ))}
-          </div>
+        {task.failed && task.failure !== undefined && (
+          <p className={CLS.detailNote}>
+            {task.remedy === 'fix-config'
+              ? t('remedyFixHint')
+              : task.remedy === 'retry' ? t('remedyRetryHint') : t('remedyFatalHint')}
+          </p>
         )}
+        <div className={CLS.detailActions}>
+          {canOpen && sessions.map(step => (
+            <Button
+              key={step.key}
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const answer = props.face.openSession?.(step.sessionId as string)
+                if (answer !== undefined && !answer.ok) {
+                  props.onFailure(answer.message ?? t('linkSessionGone'))
+                }
+              }}
+            >
+              {t('linkOpenSession')}
+            </Button>
+          ))}
+          {task.remedy === 'fix-config' && (
+            <Button size="sm" variant="ghost" onClick={props.face.openRules}>{t('remedyFixConfig')}</Button>
+          )}
+          {task.acknowledged
+            ? <Button size="sm" variant="ghost" onClick={() => { props.onAck(false) }}>{t('remedyRestore')}</Button>
+            : <Button size="sm" variant="outline" onClick={() => { props.onAck(true) }}>{t('remedyDismiss')}</Button>}
+        </div>
       </div>
     </Modal>
   )

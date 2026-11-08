@@ -24,8 +24,8 @@ import type { DecisionEngine } from '@free-lzj/dsh-decision'
 import { isMutationRequest, isSameOrigin, readJsonBody, respond } from '../routes.ts'
 import { STATE_DIR } from '../store.ts'
 import {
-  RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH, RULES_STATE_PATH,
-  RULES_TEST_PATH, RULES_UNDO_PATH,
+  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../paths.ts'
 
 /**
@@ -48,7 +48,7 @@ export function rulesHome(dshHome: string): string {
  */
 export type RulesEngine = Pick<
   DecisionEngine,
-  'view' | 'setEnabled' | 'setMode' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'test'
+  'view' | 'setEnabled' | 'setMode' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -192,6 +192,16 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       const runId = textOf(body, 'runId')
       if (runId === undefined) return { ok: false, error: 'runId must not be empty' }
       return { ok: true, command: async engine => await engine.undo(runId) }
+    })
+
+    registerWrite(RULES_ACK_PATH, 'acknowledging a hit', (body) => {
+      const runId = textOf(body, 'runId')
+      if (runId === undefined) return { ok: false, error: 'runId must not be empty' }
+      // 只认显式的 false 为「取消标记」，其余一律当作标记：一个手抖打成 null 的请求
+      // 不该把一条人刚收起来的记录又弹回待办。
+      const raw = (body ?? {}) as Record<string, unknown>
+      const acknowledged = raw['acknowledged'] !== false
+      return { ok: true, command: async engine => await engine.acknowledge(runId, acknowledged) }
     })
 
     // 试跑成功时回答的是试跑结果本身，不是 `{ ok: true }`，所以不走上面那个包装。

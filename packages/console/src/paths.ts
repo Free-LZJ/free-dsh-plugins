@@ -67,5 +67,13 @@ export const RULES_PRIORITY_PATH = `${RULES_PREFIX}/priority`
 /** Undo one hit record. */
 export const RULES_UNDO_PATH = `${RULES_PREFIX}/undo`
 
+/**
+ * 记下「这条命中记录我看到了」。
+ *
+ * 与 `/undo` 分开：撤销是**试着把发生过的事倒回去**，这条只是让人把一条他决定不处理的
+ * 记录从待办里拿走——两者失败的后果完全不同，路由不该共用一个。
+ */
+export const RULES_ACK_PATH = `${RULES_PREFIX}/ack`
+
 /** Run the current rules against one event without touching it. */
 export const RULES_TEST_PATH = `${RULES_PREFIX}/test`

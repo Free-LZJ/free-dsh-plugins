@@ -117,6 +117,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
       return { ok: true }
     },
     setCondition: async (): Promise<TriageResult> => ({ ok: true }),
+    acknowledge: async () => ({ ok: true }),
     undo: async (runId): Promise<TriageResult> => {
       calls.undo.push(runId)
       return { ok: true }

@@ -197,6 +197,8 @@ export const CLS = {
   taskCardMeta: 'dshc-task-card-meta',
   taskCardFoot: 'dshc-task-card-foot',
   taskCardHint: 'dshc-task-card-hint',
+  taskCardOpen: 'dshc-task-card-open',
+  taskCardActions: 'dshc-task-card-actions',
   chain: 'dshc-chain',
   chainStep: 'dshc-chain-step',
   chainStepFailed: 'dshc-chain-step-failed',
@@ -271,10 +273,12 @@ const CSS = `
 .${CLS.cardsList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .${CLS.dayGroups}{display:flex;flex-direction:column;gap:10px}
 .${CLS.dayGroup}{display:flex;flex:none;flex-direction:column;gap:6px}
-/* 一张任务卡：标题、来源、链路。只读——点它开详情，卡上没有可拖的东西。 */
-.${CLS.taskCard}{display:flex;flex-direction:column;gap:6px;width:100%;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);color:inherit;font:inherit;text-align:left;cursor:pointer}
+/* 一张任务卡：标题、来源、链路，加一条动作带。只读为主——动作只出现在失败和归档上。 */
+.${CLS.taskCard}{display:flex;flex-direction:column;overflow:hidden;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}
 .${CLS.taskCard}:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.${CLS.taskCard}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.${CLS.taskCardOpen}{display:flex;flex-direction:column;gap:6px;width:100%;padding:10px 12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.${CLS.taskCardOpen}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}
+.${CLS.taskCardActions}{display:flex;justify-content:flex-end;gap:6px;padding:0 12px 8px}
 .${CLS.taskCardHead}{display:flex;align-items:flex-start;gap:8px;min-width:0}
 .${CLS.taskCardTitle}{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;flex:1;min-width:0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.taskCardMeta}{display:inline-flex;flex:none;align-items:center;gap:4px}

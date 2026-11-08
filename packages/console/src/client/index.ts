@@ -185,6 +185,15 @@ export function apply(ctx: ClientContext): void {
     rhythmMs: (rhythm: ArchiveRhythm) => ARCHIVE_RHYTHM_MS[rhythm],
     canOpenSession,
     openSession,
+    acknowledge: async (runIds, acknowledged) => {
+      for (const runId of runIds) {
+        const result = await triage.acknowledge(runId, acknowledged)
+        if (!result.ok) return result
+      }
+      return { ok: true }
+    },
+    // 看板与规则页都在 `main:console` 里，切视图是改一个记住的值，不是换面板。
+    openRules: () => { link.setView('rules') },
   }
 
   const views = {
