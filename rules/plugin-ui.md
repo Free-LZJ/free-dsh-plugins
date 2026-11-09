@@ -14,7 +14,8 @@
 
 - 写控件前先查 `packages/client/ui-primitives/README.zh.md#组件目录`（DSH 仓库）。插件之间无法互相 import 组件，该包是控件唯一能共享的地方。
 - 按钮、输入、分段、开关、复选框、下拉菜单、浮层、徽章一律复用：`Button`、`Input`、`SegmentedControl`、`Switch`、`Checkbox`、`Menu`／`MenuItemButton`／`MenuSurface`、`Tag`、`Pill`、`Tooltip`、`Modal`。有意的视觉差异提升成 `ui-primitives` 的 prop，不在本仓库另起一份拷贝。
-- 禁止新增 UI 依赖库、CSS 框架或 Tailwind。
+- **可以为 `ui-primitives` 覆盖不到的领域引入第三方依赖**：图／拓扑、时间轴、代码或日志高亮、富文本编辑这类要专门引擎的东西。引入前按 [`build.md`](build.md) 的依赖检查走一遍，并说明它对浏览器包体积的影响；`React` 等平台模块仍然必须 external（见 [`packages.md`](packages.md)）。
+- **不得用第三方组件库替换上一条列出的共享控件**，也不得引入 Tailwind 这类 CSS 框架。判据很直白：装了它以后，同一个页面出现两套按钮／两套下拉，就是越界。
 
 ## 颜色与材质
 
