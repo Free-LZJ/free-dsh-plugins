@@ -96,6 +96,7 @@ export const CLS = {
   statValue: 'dshc-stat-value',
   statLabel: 'dshc-stat-label',
   boardColumns: 'dshc-board-columns',
+  boardColumnsLive: 'dshc-board-columns-live',
   column: 'dshc-column',
   columnOver: 'dshc-column-over',
   columnHead: 'dshc-column-head',
@@ -200,6 +201,8 @@ export const CLS = {
   taskCardOpen: 'dshc-task-card-open',
   taskCardActions: 'dshc-task-card-actions',
   archiveGroups: 'dshc-archive-groups',
+  dimRow: 'dshc-dim-row',
+  dimLabel: 'dshc-dim-label',
   chain: 'dshc-chain',
   chainStep: 'dshc-chain-step',
   chainStepFailed: 'dshc-chain-step-failed',
@@ -262,7 +265,9 @@ const CSS = `
 .${CLS.statLabel}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardHint}{margin:0;flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardFailure}{margin:0;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
-.${CLS.boardColumns}{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.${CLS.boardColumns}{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,260px);gap:12px;align-items:start}
+/* 进行中真的有人在跑时两列平分；空着的时候只给它一条窄带——半屏空地不值得看。 */
+.${CLS.boardColumnsLive}{grid-template-columns:repeat(2,minmax(0,1fr))}
 .${CLS.column}{display:flex;flex-direction:column;gap:8px;min-width:0;padding:10px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2)}
 .${CLS.columnOver}{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-business-primary)}
 .${CLS.columnHead}{display:flex;flex:none;flex-direction:column;gap:2px}
@@ -282,6 +287,9 @@ const CSS = `
 .${CLS.taskCardActions}{display:flex;justify-content:flex-end;gap:6px;padding:0 12px 8px}
 /* 归档里的分组：每组一个折叠行，组与组之间留一点呼吸。 */
 .${CLS.archiveGroups}{display:flex;flex-direction:column;gap:8px}
+/* 归档的维度切换：一行胶囊，选中那档自己亮着。 */
+.${CLS.dimRow}{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 4px}
+.${CLS.dimLabel}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.taskCardHead}{display:flex;align-items:flex-start;gap:8px;min-width:0}
 .${CLS.taskCardTitle}{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;flex:1;min-width:0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.taskCardMeta}{display:inline-flex;flex:none;align-items:center;gap:4px}

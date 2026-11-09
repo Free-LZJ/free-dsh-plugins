@@ -13,7 +13,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { zh, type Translate } from '../../src/client/locales.ts'
 import {
-  BoardView, buildTasks, groupArchived, archiveGroupLabel, kindLabel, remedyOf, taskKeyOf,
+  BoardView, buildTasks, dimensionLabel, groupArchived, kindLabel, remedyOf, taskKeyOf,
   type BoardFace, type TaskChain,
 } from '../../src/client/workbench/board.tsx'
 import type { TriageRun, TriageSource } from '../../src/client/rules.tsx'
@@ -134,7 +134,7 @@ describe('任务落在哪个区', () => {
   })
 })
 
-describe('归档里按结局分组', () => {
+describe('归档按维度分组', () => {
   /** 一条任务，按它是怎么结束的造出来（分组只看 failed / acknowledged）。 */
   const archivedTask = (key: string, ended: 'done' | 'failed' | 'dismissed'): TaskChain => {
     const failed = ended === 'failed'
@@ -149,34 +149,57 @@ describe('归档里按结局分组', () => {
     return made[0] as TaskChain
   }
 
-  it('失败在前、手动收起居中、顺利做完在后，空的一组不出现', () => {
+  it('按结局：失败在前、手动收起居中、顺利做完在后，空组不出现', () => {
     const groups = groupArchived([
       archivedTask('a', 'done'),
       archivedTask('b', 'failed'),
       archivedTask('c', 'dismissed'),
       archivedTask('d', 'done'),
-    ])
+    ], 'outcome', t)
     expect(groups.map(group => group.key)).toEqual(['failed', 'dismissed', 'done'])
     expect(groups.find(group => group.key === 'done')?.tasks).toHaveLength(2)
   })
 
   it('只有一种结局时只给一组', () => {
-    const groups = groupArchived([archivedTask('a', 'done'), archivedTask('b', 'done')])
+    const groups = groupArchived([archivedTask('a', 'done'), archivedTask('b', 'done')], 'outcome', t)
     expect(groups).toHaveLength(1)
     expect(groups[0]?.key).toBe('done')
-    expect(groupArchived([])).toEqual([])
+    expect(groupArchived([], 'outcome', t)).toEqual([])
   })
 
   it('既失败又收起的，算「失败过」——人记住的是它失败过', () => {
     const task = archivedTask('a', 'failed')
-    const groups = groupArchived([{ ...task, acknowledged: true }])
+    const groups = groupArchived([{ ...task, acknowledged: true }], 'outcome', t)
     expect(groups[0]?.key).toBe('failed')
   })
 
-  it('每组都有中文名', () => {
-    expect(archiveGroupLabel('failed', t)).toBe(zh.archiveFailed)
-    expect(archiveGroupLabel('dismissed', t)).toBe(zh.archiveDismissed)
-    expect(archiveGroupLabel('done', t)).toBe(zh.archiveDone)
+  it('按规则：用最新一次命中说的规则名', () => {
+    const groups = groupArchived([
+      archivedTask('a', 'done'),
+      archivedTask('b', 'done'),
+    ], 'rule', t)
+    // 夹具里两条都属于同一条规则，所以是一组。
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.label).toBe('Jira bug')
+  })
+
+  it('按来源：一个来源一组', () => {
+    const groups = groupArchived([archivedTask('a', 'done')], 'source', t)
+    expect(groups[0]?.key).toBe('mail')
+  })
+
+  it('按日期：由新到旧，今天叫「今天」', () => {
+    const now = Date.parse('2026-11-09T10:00:00Z')
+    const fresh = archivedTask('a', 'done')
+    const older = { ...archivedTask('b', 'done'), updatedAt: now - 3 * 24 * 60 * 60 * 1000 }
+    const groups = groupArchived([older, { ...fresh, updatedAt: now }], 'day', t, now)
+    expect(groups[0]?.label).toBe(zh.dayToday)
+    expect(groups).toHaveLength(2)
+  })
+
+  it('每个维度都有中文名', () => {
+    expect(dimensionLabel('outcome', t)).toBe(zh.archiveDimOutcome)
+    expect(dimensionLabel('rule', t)).toBe(zh.archiveDimRule)
   })
 })
 

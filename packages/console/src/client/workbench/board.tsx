@@ -26,7 +26,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  Button, DisclosureRow, IconChevronDownOutlineRegular, Modal, StateDot, Tag,
+  Button, DisclosureRow, IconChevronDownOutlineRegular, Modal, Pill, StateDot, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   ArchiveRhythm, ConsoleNoticeRecord, WorkbenchColumn, WorkbenchState,
@@ -245,43 +245,98 @@ export function remedyOf(failure: RunFailure | undefined): Remedy {
   }
 }
 
-/** 归档里的一个分组。 */
-export type ArchiveGroupKey = 'failed' | 'dismissed' | 'done'
+/** 归档可以按哪个维度分组。 */
+export type ArchiveDimension = 'outcome' | 'source' | 'rule' | 'day'
+
+/** 维度在界面上出现的顺序。 */
+export const ARCHIVE_DIMENSIONS: readonly ArchiveDimension[] = ['outcome', 'source', 'rule', 'day']
 
 /** 归档里的一组任务。 */
 export interface ArchiveGroup {
-  readonly key: ArchiveGroupKey
+  readonly key: string
+  /** 组名，已经本地化。 */
+  readonly label: string
   readonly tasks: readonly TaskChain[]
 }
 
-/**
- * 把归档的任务按**它是怎么结束的**分成三组。
- *
- * 归档不该是一坨同等重量的历史：一次失败被收起来，和一次顺利做完，是两个不同的结局，
- * 混在一起就等于说「这些都过去了」。顺序是失败在前——展开归档的人通常是想知道
- * 「哪些出过问题」，而不是再数一遍成功了多少。
- * @param tasks - the archived tasks, any order.
- * @returns the non-empty groups; empty ones are dropped rather than drawn as zero.
- */
-export function groupArchived(tasks: readonly TaskChain[]): readonly ArchiveGroup[] {
-  const buckets: Record<ArchiveGroupKey, TaskChain[]> = { failed: [], dismissed: [], done: [] }
-  for (const task of tasks) {
-    // 失败优先：一条既失败又被收起的任务，人记住的是它失败过。
-    const key: ArchiveGroupKey = task.failed ? 'failed' : task.acknowledged ? 'dismissed' : 'done'
-    buckets[key].push(task)
+/** 一个维度的名字。 */
+export function dimensionLabel(dimension: ArchiveDimension, t: Translate): string {
+  switch (dimension) {
+    case 'outcome': return t('archiveDimOutcome')
+    case 'source': return t('archiveDimSource')
+    case 'rule': return t('archiveDimRule')
+    default: return t('archiveDimDay')
   }
-  return (['failed', 'dismissed', 'done'] as const)
-    .filter(key => buckets[key].length > 0)
-    .map(key => ({ key, tasks: buckets[key] }))
 }
 
-/** 一组归档叫什么。 */
-export function archiveGroupLabel(key: ArchiveGroupKey, t: Translate): string {
-  switch (key) {
-    case 'failed': return t('archiveFailed')
-    case 'dismissed': return t('archiveDismissed')
-    default: return t('archiveDone')
+/** `2026-11-09`，按本机时区。 */
+function dayKey(at: number): string {
+  const date = new Date(at)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  return `${String(date.getFullYear())}-${month}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** 一天叫什么：今天 / 昨天 / 具体日期。 */
+function dayLabel(at: number, now: number, t: Translate): string {
+  const today = dayKey(now)
+  if (dayKey(at) === today) return t('dayToday')
+  if (dayKey(at) === dayKey(now - 24 * 60 * 60 * 1000)) return t('dayYesterday')
+  return dayKey(at)
+}
+
+/**
+ * 把归档的任务按一个维度分组。
+ *
+ * 维度只是**同批数据的不同切法**，所以它是这个函数的一个参数，不是四份实现：
+ * 每个维度自己决定「怎么归类」和「这一类排第几」，剩下的分桶与排序共用。
+ * @param tasks - the archived tasks, any order.
+ * @param dimension - how to split them.
+ * @param t - the translate seat.
+ * @param now - the reading moment, so "today" means one thing per render.
+ * @returns the non-empty groups, in the dimension's own order.
+ */
+export function groupArchived(
+  tasks: readonly TaskChain[],
+  dimension: ArchiveDimension,
+  t: Translate,
+  now = Date.now(),
+): readonly ArchiveGroup[] {
+  const buckets = new Map<string, { label: string; rank: number; tasks: TaskChain[] }>()
+  /** 收一个任务进某组；`rank` 小的排前面。 */
+  const put = (key: string, label: string, rank: number, task: TaskChain): void => {
+    const bucket = buckets.get(key)
+    if (bucket === undefined) buckets.set(key, { label, rank, tasks: [task] })
+    else bucket.tasks.push(task)
   }
+  for (const task of tasks) {
+    switch (dimension) {
+      case 'outcome':
+        put(
+          task.failed ? 'failed' : task.acknowledged ? 'dismissed' : 'done',
+          task.failed ? t('archiveFailed') : task.acknowledged ? t('archiveDismissed') : t('archiveDone'),
+          task.failed ? 0 : task.acknowledged ? 1 : 2,
+          task,
+        )
+        break
+      case 'source':
+        put(task.source, task.source, 0, task)
+        break
+      case 'rule': {
+        const newest = task.runs[task.runs.length - 1]
+        const rule = newest !== undefined && newest.ruleName !== '' ? newest.ruleName : t('archiveNoRule')
+        put(rule, rule, 0, task)
+        break
+      }
+      default: {
+        // 越新的日期排越前：`rank` 用负时间戳，就是「由新到旧」。
+        put(dayKey(task.updatedAt), dayLabel(task.updatedAt, now, t), -task.updatedAt, task)
+        break
+      }
+    }
+  }
+  return [...buckets.entries()]
+    .sort(([, left], [, right]) => left.rank - right.rank || left.label.localeCompare(right.label))
+    .map(([key, bucket]) => ({ key, label: bucket.label, tasks: bucket.tasks }))
 }
 
 /**
@@ -465,6 +520,8 @@ export function BoardView(props: {
   const [archiveOpen, setArchiveOpen] = useState(false)
   /** 归档里哪一组被展开；默认都收着——展开归档是为了找，不是为了再滚一遍。 */
   const [openedGroups, setOpenedGroups] = useState<Readonly<Record<string, boolean>>>({})
+  /** 归档按哪个维度分组；换维度只重排同一批数据，不动任何记录。 */
+  const [archiveDimension, setArchiveDimension] = useState<ArchiveDimension>('outcome')
   const [failure, setFailure] = useState('')
   if (!data.loaded) return <p className={CLS.empty}>{t('boardLoading')}</p>
   if (data.error !== '') return <p className={CLS.empty}>{data.error}</p>
@@ -491,7 +548,7 @@ export function BoardView(props: {
       </div>
       {failure === '' ? null : <p className={CLS.boardFailure} role="status">{failure}</p>}
       <RhythmRow face={props.face} t={t} />
-      <div className={CLS.boardColumns}>
+      <div className={running.length === 0 ? CLS.boardColumns : `${CLS.boardColumns} ${CLS.boardColumnsLive}`}>
         <Zone
           zone="todo"
           title={t('boardTodo')}
@@ -525,8 +582,20 @@ export function BoardView(props: {
           onToggle={() => { setArchiveOpen(value => !value) }}
         >
           <p className={CLS.viewMeta}>{t('boardArchiveHint')}</p>
+          <div className={CLS.dimRow} role="group" aria-label={t('archiveBy')}>
+            <span className={CLS.dimLabel}>{t('archiveBy')}</span>
+            {ARCHIVE_DIMENSIONS.map(dimension => (
+              <Pill
+                key={dimension}
+                active={dimension === archiveDimension}
+                onClick={() => { setArchiveDimension(dimension) }}
+              >
+                {dimensionLabel(dimension, t)}
+              </Pill>
+            ))}
+          </div>
           {(() => {
-            const groups = groupArchived(archived)
+            const groups = groupArchived(archived, archiveDimension, t)
             // 只有一组时不再套一层折叠：底下就一种东西，再点一下才看得见是白费的。
             if (groups.length <= 1) {
               return (
@@ -546,7 +615,7 @@ export function BoardView(props: {
                   <DisclosureRow
                     key={group.key}
                     icon={<IconChevronDownOutlineRegular />}
-                    title={`${archiveGroupLabel(group.key, t)} · ${String(group.tasks.length)}`}
+                    title={`${group.label} · ${String(group.tasks.length)}`}
                     expandable
                     expandOnRowClick
                     open={openedGroups[group.key] === true}
