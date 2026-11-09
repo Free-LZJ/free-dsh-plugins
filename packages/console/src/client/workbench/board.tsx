@@ -245,6 +245,45 @@ export function remedyOf(failure: RunFailure | undefined): Remedy {
   }
 }
 
+/** 归档里的一个分组。 */
+export type ArchiveGroupKey = 'failed' | 'dismissed' | 'done'
+
+/** 归档里的一组任务。 */
+export interface ArchiveGroup {
+  readonly key: ArchiveGroupKey
+  readonly tasks: readonly TaskChain[]
+}
+
+/**
+ * 把归档的任务按**它是怎么结束的**分成三组。
+ *
+ * 归档不该是一坨同等重量的历史：一次失败被收起来，和一次顺利做完，是两个不同的结局，
+ * 混在一起就等于说「这些都过去了」。顺序是失败在前——展开归档的人通常是想知道
+ * 「哪些出过问题」，而不是再数一遍成功了多少。
+ * @param tasks - the archived tasks, any order.
+ * @returns the non-empty groups; empty ones are dropped rather than drawn as zero.
+ */
+export function groupArchived(tasks: readonly TaskChain[]): readonly ArchiveGroup[] {
+  const buckets: Record<ArchiveGroupKey, TaskChain[]> = { failed: [], dismissed: [], done: [] }
+  for (const task of tasks) {
+    // 失败优先：一条既失败又被收起的任务，人记住的是它失败过。
+    const key: ArchiveGroupKey = task.failed ? 'failed' : task.acknowledged ? 'dismissed' : 'done'
+    buckets[key].push(task)
+  }
+  return (['failed', 'dismissed', 'done'] as const)
+    .filter(key => buckets[key].length > 0)
+    .map(key => ({ key, tasks: buckets[key] }))
+}
+
+/** 一组归档叫什么。 */
+export function archiveGroupLabel(key: ArchiveGroupKey, t: Translate): string {
+  switch (key) {
+    case 'failed': return t('archiveFailed')
+    case 'dismissed': return t('archiveDismissed')
+    default: return t('archiveDone')
+  }
+}
+
 /**
  * Fold hit records into tasks and place each one in a zone.
  *
@@ -424,6 +463,8 @@ export function BoardView(props: {
   const { t, data } = props
   const [openKey, setOpenKey] = useState<string | undefined>(undefined)
   const [archiveOpen, setArchiveOpen] = useState(false)
+  /** 归档里哪一组被展开；默认都收着——展开归档是为了找，不是为了再滚一遍。 */
+  const [openedGroups, setOpenedGroups] = useState<Readonly<Record<string, boolean>>>({})
   const [failure, setFailure] = useState('')
   if (!data.loaded) return <p className={CLS.empty}>{t('boardLoading')}</p>
   if (data.error !== '') return <p className={CLS.empty}>{data.error}</p>
@@ -484,14 +525,51 @@ export function BoardView(props: {
           onToggle={() => { setArchiveOpen(value => !value) }}
         >
           <p className={CLS.viewMeta}>{t('boardArchiveHint')}</p>
-          <TaskList
-            tasks={archived}
-            t={t}
-            onOpen={setOpenKey}
-            onAck={task => { acknowledge(task, false) }}
-            onRules={props.face.openRules}
-            archived
-          />
+          {(() => {
+            const groups = groupArchived(archived)
+            // 只有一组时不再套一层折叠：底下就一种东西，再点一下才看得见是白费的。
+            if (groups.length <= 1) {
+              return (
+                <TaskList
+                  tasks={archived}
+                  t={t}
+                  onOpen={setOpenKey}
+                  onAck={task => { acknowledge(task, false) }}
+                  onRules={props.face.openRules}
+                  archived
+                />
+              )
+            }
+            return (
+              <div className={CLS.archiveGroups}>
+                {groups.map(group => (
+                  <DisclosureRow
+                    key={group.key}
+                    icon={<IconChevronDownOutlineRegular />}
+                    title={`${archiveGroupLabel(group.key, t)} · ${String(group.tasks.length)}`}
+                    expandable
+                    expandOnRowClick
+                    open={openedGroups[group.key] === true}
+                    onToggle={() => {
+                      setOpenedGroups(current => ({
+                        ...current,
+                        [group.key]: !(current[group.key] ?? false),
+                      }))
+                    }}
+                  >
+                    <TaskList
+                      tasks={group.tasks}
+                      t={t}
+                      onOpen={setOpenKey}
+                      onAck={task => { acknowledge(task, false) }}
+                      onRules={props.face.openRules}
+                      archived
+                    />
+                  </DisclosureRow>
+                ))}
+              </div>
+            )
+          })()}
         </DisclosureRow>
       )}
       <p className={CLS.boardHint}>{t('boardHint')}</p>

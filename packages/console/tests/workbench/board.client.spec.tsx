@@ -13,7 +13,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { zh, type Translate } from '../../src/client/locales.ts'
 import {
-  BoardView, buildTasks, kindLabel, remedyOf, taskKeyOf, type BoardFace,
+  BoardView, buildTasks, groupArchived, archiveGroupLabel, kindLabel, remedyOf, taskKeyOf,
+  type BoardFace, type TaskChain,
 } from '../../src/client/workbench/board.tsx'
 import type { TriageRun, TriageSource } from '../../src/client/rules.tsx'
 
@@ -130,6 +131,52 @@ describe('任务落在哪个区', () => {
     expect(quarter[0]?.zone).toBe('todo')
     const later = buildTasks([done], new Set(), 15 * 60 * 1000, Date.now() + 20 * 60 * 1000, t)
     expect(later[0]?.zone).toBe('archived')
+  })
+})
+
+describe('归档里按结局分组', () => {
+  /** 一条任务，按它是怎么结束的造出来（分组只看 failed / acknowledged）。 */
+  const archivedTask = (key: string, ended: 'done' | 'failed' | 'dismissed'): TaskChain => {
+    const failed = ended === 'failed'
+    const made = buildTasks([run({
+      id: key,
+      ...(failed ? { status: 'partial' as const } : {}),
+      ...(ended === 'dismissed' ? { acknowledged: true } : {}),
+      actions: failed
+        ? [{ kind: 'session', mode: 'auto', ok: false, detail: 'x', failure: 'config' as const }]
+        : [{ kind: 'markRead', mode: 'auto', ok: true, detail: '已标记为已读' }],
+    })], new Set(), 0, Date.now(), t)
+    return made[0] as TaskChain
+  }
+
+  it('失败在前、手动收起居中、顺利做完在后，空的一组不出现', () => {
+    const groups = groupArchived([
+      archivedTask('a', 'done'),
+      archivedTask('b', 'failed'),
+      archivedTask('c', 'dismissed'),
+      archivedTask('d', 'done'),
+    ])
+    expect(groups.map(group => group.key)).toEqual(['failed', 'dismissed', 'done'])
+    expect(groups.find(group => group.key === 'done')?.tasks).toHaveLength(2)
+  })
+
+  it('只有一种结局时只给一组', () => {
+    const groups = groupArchived([archivedTask('a', 'done'), archivedTask('b', 'done')])
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.key).toBe('done')
+    expect(groupArchived([])).toEqual([])
+  })
+
+  it('既失败又收起的，算「失败过」——人记住的是它失败过', () => {
+    const task = archivedTask('a', 'failed')
+    const groups = groupArchived([{ ...task, acknowledged: true }])
+    expect(groups[0]?.key).toBe('failed')
+  })
+
+  it('每组都有中文名', () => {
+    expect(archiveGroupLabel('failed', t)).toBe(zh.archiveFailed)
+    expect(archiveGroupLabel('dismissed', t)).toBe(zh.archiveDismissed)
+    expect(archiveGroupLabel('done', t)).toBe(zh.archiveDone)
   })
 })
 

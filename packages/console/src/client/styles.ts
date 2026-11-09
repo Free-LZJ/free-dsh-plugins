@@ -199,6 +199,7 @@ export const CLS = {
   taskCardHint: 'dshc-task-card-hint',
   taskCardOpen: 'dshc-task-card-open',
   taskCardActions: 'dshc-task-card-actions',
+  archiveGroups: 'dshc-archive-groups',
   chain: 'dshc-chain',
   chainStep: 'dshc-chain-step',
   chainStepFailed: 'dshc-chain-step-failed',
@@ -279,6 +280,8 @@ const CSS = `
 .${CLS.taskCardOpen}{display:flex;flex-direction:column;gap:6px;width:100%;padding:10px 12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .${CLS.taskCardOpen}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}
 .${CLS.taskCardActions}{display:flex;justify-content:flex-end;gap:6px;padding:0 12px 8px}
+/* 归档里的分组：每组一个折叠行，组与组之间留一点呼吸。 */
+.${CLS.archiveGroups}{display:flex;flex-direction:column;gap:8px}
 .${CLS.taskCardHead}{display:flex;align-items:flex-start;gap:8px;min-width:0}
 .${CLS.taskCardTitle}{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;flex:1;min-width:0;font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.taskCardMeta}{display:inline-flex;flex:none;align-items:center;gap:4px}
