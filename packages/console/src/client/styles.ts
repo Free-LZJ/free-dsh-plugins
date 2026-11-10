@@ -106,6 +106,7 @@ export const CLS = {
   columnHint: 'dshc-column-hint',
   columnEmpty: 'dshc-column-empty',
   cardsList: 'dshc-cards-list',
+  cardsGrid: 'dshc-cards-grid',
   dayGroups: 'dshc-day-groups',
   dayGroup: 'dshc-day-group',
   boardCard: 'dshc-board-card',
@@ -265,7 +266,7 @@ const CSS = `
 .${CLS.statLabel}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardHint}{margin:0;flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.boardFailure}{margin:0;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
-.${CLS.boardColumns}{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,260px);gap:12px;align-items:start}
+.${CLS.boardColumns}{display:grid;grid-template-columns:minmax(0,860px) minmax(0,280px);gap:12px;align-items:start;justify-content:start}
 /* 进行中真的有人在跑时两列平分；空着的时候只给它一条窄带——半屏空地不值得看。 */
 .${CLS.boardColumnsLive}{grid-template-columns:repeat(2,minmax(0,1fr))}
 .${CLS.column}{display:flex;flex-direction:column;gap:8px;min-width:0;padding:10px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2)}
@@ -277,6 +278,8 @@ const CSS = `
 .${CLS.columnHint}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.columnEmpty}{margin:0;padding:16px 8px;border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);text-align:center;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.cardsList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+/* 待办铺成网格：一行八百多像素的卡，标题读起来要横着追字；两列刚好。 */
+.${CLS.cardsGrid}{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:8px;margin:0;padding:0;list-style:none}
 .${CLS.dayGroups}{display:flex;flex-direction:column;gap:10px}
 .${CLS.dayGroup}{display:flex;flex:none;flex-direction:column;gap:6px}
 /* 一张任务卡：标题、来源、链路，加一条动作带。只读为主——动作只出现在失败和归档上。 */

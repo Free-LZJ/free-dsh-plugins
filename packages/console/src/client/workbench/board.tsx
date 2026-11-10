@@ -446,19 +446,34 @@ interface BoardData {
 /** How often the page re-reads the hit records while the board is open. */
 const POLL_MS = 5000
 
+/** 一次读的结果加上「现在再读一次」。 */
+export interface BoardRead {
+  readonly data: BoardData
+  /**
+   * 立刻重读，不等下一次轮询。
+   *
+   * 一次点击改了数据以后必须用它：轮询是给「别人做的事」看的，自己刚做的事要当场
+   * 看见，否则按钮点下去到页面变样之间那几秒就是「卡住了」。
+   */
+  readonly reload: () => void
+}
+
 /**
  * Read the hit records and fold them into tasks.
  *
  * A poll rather than a stream: `runs.json` is written by the engine when an
  * action finishes, so the page only ever needs "what has it done since I last
  * looked". Five seconds is short enough to see a chain grow and long enough that
- * an idle board costs nothing noticeable.
+ * an idle board costs nothing noticeable — and a write the page itself made
+ * re-reads immediately through {@link BoardRead.reload}.
  * @param face - the engine, the session roster and the stored rhythm.
  * @param t - the translate seat.
  * @returns the snapshot, plus whether a read has ever landed.
  */
-export function useBoardData(face: BoardFace, t: Translate): BoardData {
+export function useBoardData(face: BoardFace, t: Translate): BoardRead {
   const [data, setData] = useState<BoardData>({ tasks: [], loaded: false, error: '' })
+  /** 每加一次就跑一遍读：手动刷新走它，不必等定时器。 */
+  const [generation, setGeneration] = useState(0)
   // Read through refs so a new render's closures never restart the timer; the
   // rhythm is the one input that must re-read, because it changes the zones.
   const faceRef = useRef(face)
@@ -496,8 +511,11 @@ export function useBoardData(face: BoardFace, t: Translate): BoardData {
       disposed = true
       clearInterval(timer)
     }
-  }, [rhythm])
-  return data
+  }, [rhythm, generation])
+  return {
+    data,
+    reload: () => { setGeneration(current => current + 1) },
+  }
 }
 
 /**
@@ -514,6 +532,8 @@ export function BoardView(props: {
   readonly face: BoardFace
   readonly t: Translate
   readonly data: BoardData
+  /** 自己刚改过数据时立刻重读；不传就只跟轮询（spec 面用得上）。 */
+  readonly reload?: () => void
 }): ReactNode {
   const { t, data } = props
   const [openKey, setOpenKey] = useState<string | undefined>(undefined)
@@ -522,6 +542,8 @@ export function BoardView(props: {
   const [openedGroups, setOpenedGroups] = useState<Readonly<Record<string, boolean>>>({})
   /** 归档按哪个维度分组；换维度只重排同一批数据，不动任何记录。 */
   const [archiveDimension, setArchiveDimension] = useState<ArchiveDimension>('outcome')
+  /** 正在等哪一条任务的写请求回来：那一张卡的按钮先锁住，免得连点。 */
+  const [busyKey, setBusyKey] = useState<string | undefined>(undefined)
   const [failure, setFailure] = useState('')
   if (!data.loaded) return <p className={CLS.empty}>{t('boardLoading')}</p>
   if (data.error !== '') return <p className={CLS.empty}>{data.error}</p>
@@ -533,10 +555,20 @@ export function BoardView(props: {
   const running = zone('running')
   const archived = zone('archived')
 
-  /** 把一个任务的全部命中记录一起标记/取消标记。 */
+  /**
+   * 把一个任务的全部命中记录一起标记/取消标记，写完立刻重读。
+   *
+   * 重读是必须的：不然按钮点下去到页面变样之间要等下一次轮询（最多五秒），
+   * 那五秒就是用户说的「卡」。
+   */
   const acknowledge = (task: TaskChain, value: boolean): void => {
+    setBusyKey(task.key)
     void props.face.acknowledge(task.runs.map(run => run.id), value)
-      .then(result => { setFailure(result.ok ? '' : result.message ?? t('boardActionFailed')) })
+      .then((result) => {
+        setFailure(result.ok ? '' : result.message ?? t('boardActionFailed'))
+        if (result.ok) props.reload?.()
+      })
+      .finally(() => { setBusyKey(undefined) })
   }
 
   return (
@@ -559,6 +591,7 @@ export function BoardView(props: {
           onOpen={setOpenKey}
           onAck={task => { acknowledge(task, true) }}
           onRules={props.face.openRules}
+          busyKey={busyKey}
         />
         <Zone
           zone="running"
@@ -570,6 +603,7 @@ export function BoardView(props: {
           onOpen={setOpenKey}
           onAck={task => { acknowledge(task, true) }}
           onRules={props.face.openRules}
+          busyKey={busyKey}
         />
       </div>
       {archived.length === 0 ? null : (
@@ -667,6 +701,7 @@ function Zone(props: {
   readonly onOpen: (key: string) => void
   readonly onAck: (task: TaskChain) => void
   readonly onRules: () => void
+  readonly busyKey?: string | undefined
 }): ReactNode {
   return (
     <section className={CLS.column} aria-label={props.title} data-zone={props.zone}>
@@ -687,6 +722,8 @@ function Zone(props: {
             onOpen={props.onOpen}
             onAck={props.onAck}
             onRules={props.onRules}
+            grid
+            {...(props.busyKey === undefined ? {} : { busyKey: props.busyKey })}
           />
         )}
     </section>
@@ -702,11 +739,16 @@ function TaskList(props: {
   readonly onRules: () => void
   /** 归档区里的卡：「忽略」变成「恢复」，因为它们本来就不在待办里。 */
   readonly archived?: boolean
+  /** 待办/进行中铺成网格：一列八百多像素太宽，一行读下来眼睛要跑。 */
+  readonly grid?: boolean
+  /** 正在等写请求的那一条：它的按钮先锁住。 */
+  readonly busyKey?: string
 }): ReactNode {
   return (
-    <ul className={CLS.cardsList}>
+    <ul className={props.grid === true ? CLS.cardsGrid : CLS.cardsList}>
       {props.tasks.map((task) => {
         const last = task.steps[task.steps.length - 1]
+        const busy = props.busyKey === task.key
         return (
           <li key={task.key} className={CLS.taskCard}>
             <button
@@ -739,10 +781,14 @@ function TaskList(props: {
               )}
               {props.archived === true
                 ? (task.acknowledged && (
-                  <Button size="sm" variant="ghost" onClick={() => { props.onAck(task) }}>{props.t('remedyRestore')}</Button>
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => { props.onAck(task) }}>
+                    {props.t('remedyRestore')}
+                  </Button>
                 ))
                 : (
-                  <Button size="sm" variant="outline" onClick={() => { props.onAck(task) }}>{props.t('remedyDismiss')}</Button>
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => { props.onAck(task) }}>
+                    {props.t('remedyDismiss')}
+                  </Button>
                 )}
             </span>
           </li>
@@ -933,8 +979,8 @@ function TaskDetail(props: {
  * @returns the board.
  */
 export function BoardPage(props: { readonly face: BoardFace; readonly t: Translate }): ReactNode {
-  const data = useBoardData(props.face, props.t)
-  return <BoardView face={props.face} t={props.t} data={data} />
+  const { data, reload } = useBoardData(props.face, props.t)
+  return <BoardView face={props.face} t={props.t} data={data} reload={reload} />
 }
 
 /** One figure in the strip: dot, number, name. */

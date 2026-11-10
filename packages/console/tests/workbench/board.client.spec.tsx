@@ -9,7 +9,7 @@
  * @module @dsh-console/tests/workbench/board
  */
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { zh, type Translate } from '../../src/client/locales.ts'
 import {
@@ -282,6 +282,48 @@ describe('看板画出来', () => {
     // 弹窗标题用的是已有的「卡片详情」键，不另造一个。
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(screen.getByText('已标记为已读')).toBeTruthy()
+  })
+
+  it('忽略之后立刻重读，不等下一次轮询', async () => {
+    // 轮询是给「别人做的事」看的：自己刚点的按钮要当场见效，否则那几秒就是「卡住」。
+    const task = buildTasks([run({
+      id: 'run-1',
+      at: new Date().toISOString(),
+      status: 'partial',
+      actions: [{ kind: 'session', mode: 'auto', ok: false, detail: 'x', failure: 'config' }],
+    })], new Set(), 60 * 60 * 1000, Date.now(), t)
+    let reloaded = 0
+    render(
+      <BoardView
+        face={face({ acknowledge: async () => ({ ok: true }) })}
+        t={t}
+        data={{ tasks: task, loaded: true, error: '' }}
+        reload={() => { reloaded += 1 }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: zh.remedyDismiss }))
+    await waitFor(() => { expect(reloaded).toBe(1) })
+  })
+
+  it('写失败时不重读，并把原因说出来', async () => {
+    const task = buildTasks([run({
+      id: 'run-1',
+      at: new Date().toISOString(),
+      status: 'partial',
+      actions: [{ kind: 'session', mode: 'auto', ok: false, detail: 'x', failure: 'config' }],
+    })], new Set(), 60 * 60 * 1000, Date.now(), t)
+    let reloaded = 0
+    render(
+      <BoardView
+        face={face({ acknowledge: async () => ({ ok: false, message: '写不进去' }) })}
+        t={t}
+        data={{ tasks: task, loaded: true, error: '' }}
+        reload={() => { reloaded += 1 }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: zh.remedyDismiss }))
+    expect(await screen.findByText('写不进去')).toBeTruthy()
+    expect(reloaded).toBe(0)
   })
 
   it('没有任务时只说一句话，不画三个空框', () => {
