@@ -1,0 +1,18 @@
+# The one Loader row this feature needs: the Host plugin that lists tabs, mounts
+# BrowserSkill's MCP server, and registers the bundled skill, plus — through this
+# package's own `dsh.client` declaration — the browser half that registers the
+# `@` source.
+#
+# The id must stay `browser-use`: it is this package's route prefix
+# (`/dsh-browser-use`) and the locale namespace key the browser half registers.
+# It is not `browser`, which the harness's own sidebar-browser bundle uses.
+#
+# This overlay is for the package NOT being listed in the profile's
+# `dsh.profile.bundles` (nor installed with `dsh plugin add`, which applies the
+# package's own bundle patch): in either of those cases the bundle layer already
+# inserts this same id, and adding it here again leaves two rows with one id —
+# the plugin market's preflight then reports `duplicate loader entry id` and
+# rolls the install back.
+- insert:
+    - id: browser-use
+      name: '@free-lzj/dsh-browser-use'
