@@ -8,7 +8,7 @@
  * @module @free-lzj/dsh-browser-use/browser-mention
  */
 
-import type { BskCli } from './bsk.ts'
+import type { BskMcpChannel } from './mcp-tabs.ts'
 import type { MentionProvider } from './mention.ts'
 import type { BrowserTab } from './protocol.ts'
 
@@ -60,7 +60,7 @@ function matches(tab: BrowserTab, needle: string): boolean {
  * @param cli - the shared `bsk` session.
  * @returns the provider the registry holds.
  */
-export function browserMentionProvider(cli: BskCli): MentionProvider {
+export function browserMentionProvider(cli: BskMcpChannel): MentionProvider {
   return {
     id: PROVIDER_ID,
     label: PROVIDER_LABEL,
@@ -68,7 +68,7 @@ export function browserMentionProvider(cli: BskCli): MentionProvider {
       const needle = query.trim().toLowerCase()
       // Listing starts a session the first time, which is the one call worth
       // abandoning when the user has already typed past this menu.
-      const tabs = await cli.listUserTabs()
+      const tabs = await cli.listUserTabs(signal)
       if (signal.aborted) return []
       return tabs.filter(tab => matches(tab, needle)).map(tab => ({
         ref: `${PROVIDER_ID}:${tab.tabId}`,

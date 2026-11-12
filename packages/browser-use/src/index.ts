@@ -22,13 +22,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 // Type-only: the `ctx.skills` registry merge the bundled skill registers onto.
 import type {} from '@deepseek-ai/dsh-skill'
-import { BskCli } from './bsk.ts'
+import { BskMcpChannel } from './mcp-tabs.ts'
 import { browserMentionProvider } from './browser-mention.ts'
 import { MentionRegistry } from './mention.ts'
 import { registerRoutes } from './routes.ts'
 import { BROWSER_SKILL } from './skill.ts'
 
-export { BskCli, type BskConfig, type TabRequest, type TabActionResult } from './bsk.ts'
+export { BskMcpChannel } from './mcp-tabs.ts'
 export { browserMentionProvider } from './browser-mention.ts'
 export { MentionRegistry, type CollectedMentions, type MentionProvider } from './mention.ts'
 export * from './protocol.ts'
@@ -105,14 +105,15 @@ export function registerSkill(ctx: Context): void {
  * @param ctx - the Host plugin context.
  */
 export function apply(ctx: Context): void {
-  // One CLI handle for the mention path: listing tabs opens a browser session,
-  // and a second handle would open a second one for no reason.
-  const cli = new BskCli()
+  // The mention path needs tab data, which only a live `bsk mcp` child can give
+  // inside a desktop application (see mcp-tabs.ts). It is not the same child the
+  // tool server runs on: that one belongs to the harness's MCP client.
+  const tabs = new BskMcpChannel()
   const registry = new MentionRegistry()
 
-  ctx.effect(() => registry.register(browserMentionProvider(cli)), 'browser-use: browser provider')
+  ctx.effect(() => registry.register(browserMentionProvider(tabs)), 'browser-use: browser provider')
   registerRoutes(ctx, registry)
-  ctx.effect(() => () => { void cli.dispose() }, 'browser-use: bsk session')
+  ctx.effect(() => () => { tabs.dispose() }, 'browser-use: bsk mcp channel')
 
   // The operating half: BrowserSkill's own MCP tools, one server per Session.
   mountBrowserTools(ctx)

@@ -96,7 +96,12 @@ async function handleMentions(
     const collected = await registry.collect(query, abort.signal)
     for (const failure of collected.failures) ctx.logger.warn(`browser-use: provider failed: ${failure}`)
     if (abort.signal.aborted) return
-    respond(res, 200, { groups: collected.groups } satisfies MentionsResult)
+    respond(res, 200, {
+      groups: collected.groups,
+      // An empty menu is indistinguishable from a broken `bsk` without this,
+      // and the menu is the only surface where the person would notice.
+      ...collected.failures.length === 0 ? {} : { failures: collected.failures },
+    } satisfies MentionsResult)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     ctx.logger.warn(`browser-use: mention lookup failed: ${message}`)

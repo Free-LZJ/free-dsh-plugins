@@ -34,6 +34,13 @@ export interface MentionGroup {
 /** One answer to a candidate request: every reachable group, in menu order. */
 export interface MentionsResult {
   readonly groups: readonly MentionGroup[]
+  /**
+   * Providers that could not answer, as `id: message`.
+   *
+   * Returned rather than only logged: an empty menu has to be able to say why,
+   * and the caller is often the only place a person can see it.
+   */
+  readonly failures?: readonly string[]
 }
 
 /** Refusal shape every route uses instead of a bare status. */
@@ -49,9 +56,3 @@ export interface BrowserTab {
   /** The tab the browser currently shows; a tab in a background window is not active. */
   readonly active: boolean
 }
-
-/** The actions the agent tool can ask of one tab; the set `bsk` already implements. */
-export const TAB_ACTIONS = ['observe', 'snapshot', 'click', 'fill', 'navigate', 'screenshot'] as const
-
-/** One action name from {@link TAB_ACTIONS}. */
-export type TabAction = typeof TAB_ACTIONS[number]
