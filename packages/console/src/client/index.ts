@@ -158,6 +158,10 @@ export function apply(ctx: ClientContext): void {
     end: (sessionId) => workbenchLink.act({ action: 'end', sessionId }),
     confirm: (cardId) => workbenchLink.act({ action: 'confirm', cardId }),
     detach: (cardId) => workbenchLink.act({ action: 'detach', cardId }),
+    setConnector: async (id, enabled) => {
+      const ok = await workbenchLink.act({ action: 'toggle-connector', connectorId: id, enabled })
+      return ok ? { ok: true } : { ok: false, message: '连接器开关没有生效' }
+    },
   }
   const openSession = (sessionId: string): { readonly ok: boolean; readonly message?: string } => {
     const open = sessionNavigation?.openSession
@@ -174,21 +178,25 @@ export function apply(ctx: ClientContext): void {
   /**
    * 看板的数据面。
    *
-   * 与旧看板的 `workbenchFace` 并存但不是同一件事：那一份驱动卡片的派单/移动，
-   * 这一份只读命中记录——链路本身，谁的证据都不如引擎自己写下的那份。
+   * 只读任务链：Host 已经把它们折好了（一个事件一个任务，链在 `nodes` 里），页面不再
+   * 按事件 key 聚合——那是「同一件事变成好几张卡」的老病根。
    */
   const boardFace: BoardFace = {
-    triage,
+    tasks: () => workbenchLink.getSnapshot()?.tasks ?? [],
     running: () => link.getSnapshot()?.running ?? [],
     rhythm: () => link.getSnapshot()?.archiveRhythm ?? 'immediate',
     setRhythm: (rhythm: ArchiveRhythm) => { link.setArchiveRhythm(rhythm) },
     rhythmMs: (rhythm: ArchiveRhythm) => ARCHIVE_RHYTHM_MS[rhythm],
     canOpenSession,
     openSession,
-    acknowledge: async (runIds, acknowledged) => {
-      for (const runId of runIds) {
-        const result = await triage.acknowledge(runId, acknowledged)
-        if (!result.ok) return result
+    undo: async (taskId) => {
+      const ok = await workbenchLink.act({ action: 'undo', taskId })
+      return ok ? { ok: true } : { ok: false, message: '撤销没有成功' }
+    },
+    acknowledge: async (taskIds, acknowledged) => {
+      for (const taskId of taskIds) {
+        const ok = await workbenchLink.act({ action: 'acknowledge', taskId, acknowledged })
+        if (!ok) return { ok: false, message: '承认状态没有写进去' }
       }
       return { ok: true }
     },

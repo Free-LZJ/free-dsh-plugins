@@ -61,6 +61,7 @@ function yamlError(error: unknown): RuleFileError {
 export function parseRuleFile<TCondition, TAction>(
   source: string,
   vocabulary: RuleVocabulary<TCondition, TAction>,
+  defaultConnector?: string,
 ): { ok: true; rules: readonly Rule<TCondition, TAction>[]; dropped: readonly string[] } | { ok: false; error: RuleFileError } {
   let document: Document
   try {
@@ -85,7 +86,11 @@ export function parseRuleFile<TCondition, TAction>(
       error: { message: `不认识的规则文件版本 ${JSON.stringify(root['version'])}；本版只认 ${String(RULES_VERSION)}` },
     }
   }
-  const normalized = normalizeRules(root['rules'] ?? [], vocabulary)
+  // 规则归哪个连接器：顶层 `connector:` 是整份文件的缺省，单条可以覆盖。
+  const connector = isRecord(root) && typeof root['connector'] === 'string' && root['connector'].trim() !== ''
+    ? root['connector'].trim()
+    : defaultConnector
+  const normalized = normalizeRules(root['rules'] ?? [], vocabulary, connector === undefined ? {} : { connector })
   const problem = vocabulary.validate?.(normalized.rules)
   if (problem !== undefined) return { ok: false, error: problem }
   return { ok: true, rules: normalized.rules, dropped: normalized.dropped }
@@ -105,13 +110,14 @@ export async function loadRuleFile<TCondition, TAction>(
   path: string,
   fallback: string,
   vocabulary: RuleVocabulary<TCondition, TAction>,
+  defaultConnector?: string,
 ): Promise<LoadedRules<TCondition, TAction>> {
   let raw: string
   try {
     raw = await readFile(path, 'utf8')
   } catch {
     // 文件不存在（或读不了）：用默认规则，并落一份到磁盘供人修改。
-    const parsed = parseRuleFile(fallback, vocabulary)
+    const parsed = parseRuleFile(fallback, vocabulary, defaultConnector)
     if (!parsed.ok) {
       // 发货内容自己坏了，是打包事故而不是用户配置错误，必须显式暴露。
       return { rules: [], error: { message: `内置默认规则无法解析：${parsed.error.message}` }, source: 'default', dropped: [] }
@@ -123,7 +129,7 @@ export async function loadRuleFile<TCondition, TAction>(
     }
     return { rules: parsed.rules, source: 'default', dropped: parsed.dropped }
   }
-  const parsed = parseRuleFile(raw, vocabulary)
+  const parsed = parseRuleFile(raw, vocabulary, defaultConnector)
   if (!parsed.ok) return { rules: [], error: parsed.error, source: 'file', dropped: [] }
   return { rules: parsed.rules, source: 'file', dropped: parsed.dropped }
 }

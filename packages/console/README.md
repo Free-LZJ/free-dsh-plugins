@@ -192,6 +192,8 @@ dsh plugin --profile web add @free-lzj/dsh-console
 dsh plugin --profile desktop add @free-lzj/dsh-console
 ```
 
+> 看板的内容来自**连接器**。内置的 `connector-dsh`（会话/投递/通知/脚本/MCP/HTTP/大模型）随本包装好、自动注册；外部来源（例如 `@free-lzj/dsh-mail` 的邮件事件与邮件域动作）另行安装。一个都没有时连接器页会说「还没有连接器接入规则」——这是正常状态，不是装坏了。
+
 本包自带 `dsh.bundle`，`dsh plugin add` 已经插入 `console` 这一行，所以 profile 补丁里**不用也不要**再手写同 id 的 `- insert:`（同一个 id 两行 → 插件市场预检报 `duplicate loader entry id` 并回滚安装）；要覆盖配置就写一行同 id 的 override（`- id: console` + `config:`，**不带** `insert`）。
 
 <details>
@@ -214,10 +216,8 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 |---|---|---|---|
 | `channels` | `('desktop' \| 'inapp' \| 'sound')[]` | 全部三个 | 通知走哪些渠道。设置 → 通用 → **通知** 里多选，写回这一行 |
 | `layout` | `'grid' \| 'list' \| 'compact'` | `grid` | 首页布局。首页右上角切换，写回这一行 |
-| `workbenchConnectors` | `('mail' \| 'webhook' \| 'dingtalk' \| 'jira')[]` | `['mail', 'webhook']` | 看板启用哪些连接器；写了实现里没有的 id 会被丢弃并告警 |
-| `workbenchClassifier` | `string` | `'rule'` | 看板用哪个分类器；写了没注册的 id 会回落到规则分类器并告警 |
-| `workbenchModel` | `string` | `'` | LLM 分类器用哪个模型（`provider/model`）。留空则该分类器没有路由，一律回退到规则分类。**provider 名不是猜的**：DeepSeek 账号登录是 `deepseek-account`，API key 是 `deepseek-official`（写错会得到「no adapter registered for provider …」并回退） |
-| `workbenchWorkspace` | `string` | `''` | `dsh` 执行器（真实会话）在哪个目录里跑。留空 = 不注册它，路由表指着 `dsh` 时只会得到「执行器未注册」的 hold；填了目录且宿主有建会话能力时它才会出现 |
+
+看板**没有**连接器、分类器、执行器之类的配置：它们现在归连接器自己（`ctx.console.tasks`），工作台不再用一行 YAML 去开关别人包里的实现。看板上有哪些连接器、能用哪些动作，取决于装了哪些连接器插件（`@free-lzj/dsh-mail`、`@free-lzj/dsh-connector-dsh` …）。
 
 页面的置顶与「上次停在哪一页」（`$DSH_HOME/dsh-console/prefs.json`）不在这一行里：它们是**用户点击产生**的状态，不是配置。
 

@@ -74,6 +74,7 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.3",
+    "@free-lzj/dsh-connector-dsh": "workspace:^",
     "@free-lzj/dsh-decision": "workspace:^"
   },
   "peerDependencies": {

@@ -132,7 +132,9 @@ describe('open_session', () => {
           calls.push(`create:${request.cwd}:${request.agentPreset ?? ''}`)
           return { sessionId: 'session-9' }
         },
-        async attachSession() {},
+        async attachSession(_cwd: string, sessionId: string) {
+          calls.push(`attach:${sessionId}`)
+        },
         async rename(sessionId: string, title: string) {
           calls.push(`rename:${sessionId}:${title}`)
         },
@@ -174,7 +176,7 @@ describe('open_session', () => {
     }]])
   }
 
-  it('按「建工作区 → 建会话 → 挂工作区 → 起标题 → 投递」的顺序做完', async () => {
+  it('按「建会话 → 挂工作区 → 起标题 → 投递」的顺序做完', async () => {
     const calls: string[] = []
     const opened: RegisteredTool[] = []
     const cwd = await tempDir()
@@ -185,9 +187,8 @@ describe('open_session', () => {
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
     const value = await tool.execute({ cwd, title: 'Jira EXEPD-229676', prompt: '加载 skill jira-bugfix' })
 
-    expect(value).toEqual({ sessionId: 'session-9', cwd, workspace: 'EXEPD-229676' })
+    expect(value).toEqual({ sessionId: 'session-9', cwd, workspace: cwd })
     expect(calls).toEqual([
-      `workspace:${cwd}`,
       `create:${cwd}:`,
       'attach:session-9',
       'rename:session-9:Jira EXEPD-229676',
@@ -216,31 +217,37 @@ describe('open_session', () => {
     await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('没有提供建会话的能力')
   })
 
-  it('没有工作区表时先失败，不建出掉进「未分组」的会话', async () => {
+  it('没有工作区表时照样建会话：登记是端口的事，缺了只是不归组', async () => {
     const calls: string[] = []
     const opened: RegisteredTool[] = []
     const cwd = await tempDir()
     registerAgentTools(contextOf(toolsOnly(opened)), sessionHost(calls))
 
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
-    await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('没有工作区表')
-    expect(calls).toEqual([])
+    const value = await tool.execute({ cwd, title: 'x', prompt: 'y' }) as { sessionId: string }
+    expect(value.sessionId).toBe('session-9')
+    expect(calls).toContain(`create:${cwd}:`)
   })
 
-  it('建工作区失败时也不建会话，错误照实抛出去', async () => {
+  it('把这次派单发成事件，让看板上出现一条任务', async () => {
     const calls: string[] = []
     const opened: RegisteredTool[] = []
+    const emitted: unknown[] = []
     const cwd = await tempDir()
-    const services = toolsOnly(opened)
-    services.set('workspaceRegistry', {
-      async create() {
-        throw new Error('工作区表说这个目录不是目录')
-      },
-    })
-    registerAgentTools(contextOf(services), sessionHost(calls))
+    const host = sessionHost(calls)
+    ;(host as unknown as { tasks: unknown }).tasks = {
+      emit: async (event: unknown) => { emitted.push(event) },
+    }
+    registerAgentTools(contextOf(toolsOnly(opened)), host)
 
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
-    await expect(tool.execute({ cwd, title: 'x', prompt: 'y' })).rejects.toThrow('不是目录')
-    expect(calls).toEqual([])
+    await tool.execute({ cwd, title: 'Jira EXEPD-229676', prompt: 'x' })
+    // emit 是后台的：等一拍让那次调用落地。
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0]).toMatchObject({
+      type: 'console.tool.invoked',
+      payload: { sessionId: 'session-9', workspace: cwd },
+    })
   })
 })

@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import type { DecisionEngine } from '@free-lzj/dsh-decision'
+import type { Task, TaskEngine } from '@free-lzj/dsh-decision'
 import { isMutationRequest, isSameOrigin, readJsonBody, respond } from '../routes.ts'
 import { STATE_DIR } from '../store.ts'
 import {
@@ -47,8 +47,8 @@ export function rulesHome(dshHome: string): string {
  * other verbs (start/stop/use) are not HTTP's business.
  */
 export type RulesEngine = Pick<
-  DecisionEngine,
-  'view' | 'setEnabled' | 'setMode' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
+  TaskEngine,
+  'rules' | 'setEnabled' | 'setMode' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -141,12 +141,12 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
     }
 
     register(RULES_STATE_PATH, guard((_req, res) => {
-      respond(res, 200, host.engine.view())
+      respond(res, 200, host.engine.rules())
     }, 'reading rule file'), 'console.rules-state-route')
 
     register(RULES_RUNS_PATH, guard((req, res) => {
       const since = queryOf(req).get('since')
-      respond(res, 200, { runs: host.engine.listRuns(since ?? undefined) })
+      respond(res, 200, { runs: host.engine.listRuns(since ?? undefined).map(toRunView) })
     }, 'reading hit records'), 'console.rules-runs-route')
 
     registerWrite(RULES_ENABLE_PATH, 'switching a rule', (body) => {
@@ -235,6 +235,53 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       respond(res, 200, answer.result)
     }, 'trying the rules'), 'console.rules-test-route')
   })
+}
+
+/**
+ * 把一个任务折成页面现在读的「命中记录」形状。
+ *
+ * 这是**过渡层**：任务链是新的真相，页面还按旧的 run 形状画。它只做投影、不改状态，
+ * 前端切到 `TaskState` 之后这一段就可以删。
+ * @param task - 一个任务。
+ * @returns 旧前端认识的记录。
+ */
+function toRunView(task: Task): Record<string, unknown> {
+  const rule = task.nodes.find(node => node.kind === 'rule')
+  const classify = task.nodes.find(node => node.kind === 'classify')
+  const ruleData = (rule?.data ?? {}) as { readonly ruleId?: unknown; readonly ruleName?: unknown; readonly label?: unknown }
+  const classifyData = (classify?.data ?? {}) as { readonly label?: unknown }
+  const actionSessions = new Set(
+    task.nodes
+      .filter(node => node.kind !== 'session' && node.sessionId !== undefined)
+      .map(node => node.sessionId as string),
+  )
+  const actions = task.nodes
+    .filter(node => node.kind !== 'trigger' && node.kind !== 'classify' && node.kind !== 'rule')
+    // 会话节点：动作自己带 sessionId 的那一格已经够页面画了；只有「触发器就带着会话」
+    // 的那种（`open_session` 工具）需要单独补一格。
+    .filter(node => node.kind !== 'session' || (node.sessionId !== undefined && !actionSessions.has(node.sessionId)))
+    .map(node => ({
+      kind: node.kind,
+      mode: typeof node.data?.['mode'] === 'string' ? node.data['mode'] : 'auto',
+      ok: node.ok,
+      detail: node.detail,
+      ...(node.sessionId === undefined ? {} : { sessionId: node.sessionId }),
+      ...(node.failure === undefined ? {} : { failure: node.failure }),
+    }))
+  return {
+    id: task.id,
+    at: task.at,
+    ruleId: typeof ruleData.ruleId === 'string' ? ruleData.ruleId : '',
+    ruleName: typeof ruleData.ruleName === 'string' ? ruleData.ruleName : '',
+    label: typeof classifyData.label === 'string'
+      ? classifyData.label
+      : (typeof ruleData.label === 'string' ? ruleData.label : ''),
+    event: task.event.payload,
+    actions,
+    status: task.status,
+    ...(task.undoableUntil === undefined ? {} : { undoableUntil: task.undoableUntil }),
+    ...(task.acknowledged === true ? { acknowledged: true } : {}),
+  }
 }
 
 /** One non-empty trimmed string field, or undefined. */

@@ -25,17 +25,6 @@ interface ToolRuntimeLike {
   register(definition: unknown): () => void
 }
 
-/** 一个工作区，就本模块用得到的两件事：它叫什么、能不能挂一个会话。 */
-interface WorkspaceLike {
-  readonly title?: string
-  attachSession(sessionId: string): Promise<void>
-}
-
-/** 工作区表里本模块用得到的部分：按目录建一个（已存在则复用同一个）。 */
-interface WorkspaceRegistryLike {
-  create(path: string, title?: string): Promise<WorkspaceLike>
-}
-
 /** 一条通知的语气；入参用字符串，落下时收窄。 */
 const TONES: readonly NoticeTone[] = ['info', 'success', 'warn', 'error']
 
@@ -127,7 +116,7 @@ export function registerAgentTools(ctx: Context, host: ConsoleHost): () => void 
         text: `已在 ${value.cwd} 新建会话 ${value.sessionId}（工作区：${value.workspace}）`,
       }],
     },
-    async execute(args, exec) {
+    async execute(args) {
       if (!isAbsolute(args.cwd)) throw new Error(`工作目录必须是绝对路径：${args.cwd}`)
       assertDirectory(args.cwd)
       const sessions = host.sessions
@@ -135,23 +124,27 @@ export function registerAgentTools(ctx: Context, host: ConsoleHost): () => void 
         throw new Error('这个部署没有提供建会话的能力（sessionController），无法新建会话')
       }
 
-      // 工作区先建：这一步失败时还没有会话，不会留下一个掉进「未分组」的孤儿。
-      const workspace = await requireWorkspace(ctx, args.cwd)
-      // 顺序与邮件动作一致：先建出会话，挂好工作区，再起名，最后才投递第一条消息。
+      // 顺序不能换：先建会话，再挂工作区（宿主用 header 里的 cwd 做 realpath 比对），
+      // 起名，最后才投递第一条消息——一投进去，这一轮就已经开始了。
       const created = await sessions.createSession({
         cwd: args.cwd,
         ...(args.agentPreset === undefined ? {} : { agentPreset: args.agentPreset }),
       })
-      // 派单的会话属于调用它的那条链：先登记，第一条消息建卡时才有根可归。
-      const rootId = rootOf(exec)
-      if (rootId !== undefined) host.linkSession(created.sessionId, rootId)
-      await workspace.attachSession(created.sessionId)
+      await sessions.attachSession(args.cwd, created.sessionId)
       await sessions.rename(created.sessionId, args.title)
       await sessions.followup(created.sessionId, args.prompt, {
         kind: 'plugin:dsh-console',
         form: 'open-session',
       })
-      return { sessionId: created.sessionId, cwd: args.cwd, workspace: workspace.title ?? args.cwd }
+      // 让这次派单在看板上成一条任务：工具先把会话建好了，所以把 id 一起发过去——
+      // 触发器的 sessionId 会在链上补一格会话节点，和「规则动作建的会话」一模一样。
+      void host.tasks?.emit({
+        type: 'console.tool.invoked',
+        source: 'console',
+        dedupeKey: `console:tool:${created.sessionId}`,
+        payload: { title: args.title, sessionId: created.sessionId, workspace: args.cwd },
+      })
+      return { sessionId: created.sessionId, cwd: args.cwd, workspace: args.cwd }
     },
   })
 
@@ -171,23 +164,4 @@ function assertDirectory(path: string): void {
     isDirectory = false
   }
   if (!isDirectory) throw new Error(`工作目录不存在或不是目录：${path}`)
-}
-
-/**
- * 给会话所在目录取一个工作区（没有就建，已存在则复用）。
- *
- * 为什么必须给这个目录本身建一个：工作区是**精确目录**身份——成员资格要求会话
- * `cwd` 的 realpath 等于工作区 `path`，父仓库那个工作区装不下
- * `.agents/worktrees/<单号>` 里的会话，拖也拖不进去。缺这样一次登记，会话就只能
- * 落在侧边栏的「未分组」。
- * @param ctx - Host 上下文，工作区表按可选协作者探测。
- * @param cwd - 会话的工作目录（已确认存在）。
- * @returns 这个目录的工作区。
- */
-async function requireWorkspace(ctx: Context, cwd: string): Promise<WorkspaceLike> {
-  const registry = ctx.get('workspaceRegistry') as WorkspaceRegistryLike | undefined
-  if (registry?.create === undefined) {
-    throw new Error('这个部署没有工作区表（workspaceRegistry），无法把会话归到目录分组下')
-  }
-  return await registry.create(cwd)
 }

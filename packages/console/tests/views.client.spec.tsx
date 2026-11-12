@@ -2,15 +2,13 @@
 /**
  * The connectors view.
  *
- * Two things it must say without lying: which connectors are switched on, and —
- * the newer half — which **executors** this deployment actually has. A routing
- * table naming an executor that is missing is a configuration answer the user can
- * act on; a silently dead button is not.
+ * 它要说清两件事：哪些连接器在喂规则、每个连接器带来什么；以及**开关在这里**——
+ * 关掉一个连接器只是让它不再派活，不是卸载它的插件。
  *
  * @module @free-dsh-plugins/dsh-console/tests/views-client
  */
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ConnectorsView } from '../src/client/views.tsx'
 import { zh, type Translate } from '../src/client/locales.ts'
@@ -29,18 +27,18 @@ afterEach(cleanup)
 /** A board state with one connector and one executor. */
 function board(): WorkbenchState {
   return {
+    tasks: [],
     cards: [],
     sessions: [],
-    executors: [{ id: 'dsh', label: 'DSH 会话' }],
     connectors: [{
       id: 'mail',
       label: '邮件',
       directions: ['in'],
       enabled: true,
       implemented: true,
+      triggers: ['mail:new'],
+      actions: ['markRead'],
     }],
-    routingVersion: 'workbench-routes-v1',
-    executorNote: '',
     revision: 3,
   }
 }
@@ -62,27 +60,31 @@ function face(state: WorkbenchState): WorkbenchFace {
 }
 
 describe('ConnectorsView', () => {
-  it('lists the executors this deployment registered', () => {
-    render(<ConnectorsView t={t} face={face(board())} />)
-    expect(screen.getByText(t('executorsTitle'))).toBeTruthy()
-    expect(screen.getByText('DSH 会话')).toBeTruthy()
-    expect(screen.getByText(t('executorReady'))).toBeTruthy()
-  })
-
-  it('says which setting is missing instead of just showing no real executor', () => {
-    // 静默缺席会让人以为功能坏了——上一轮我就是这么把 P2 判成「等宿主」的。
-    render(<ConnectorsView t={t} face={face({ ...board(), executorNote: 'no-workspace' })} />)
-    expect(screen.getByRole('status').textContent).toBe(t('executorOffNoWorkspace'))
-  })
-
-  it('says nothing extra when the real executor is registered', () => {
-    render(<ConnectorsView t={t} face={face(board())} />)
-    expect(screen.queryByRole('status')).toBeNull()
-  })
-  it('still says which connectors are on', () => {
+  it('lists a connector with what it brings to the rules', () => {
     render(<ConnectorsView t={t} face={face(board())} />)
     expect(screen.getByText('邮件')).toBeTruthy()
-    expect(screen.getByText(t('connectorEnabled'))).toBeTruthy()
+    expect(screen.getByText('mail:new')).toBeTruthy()
+    expect(screen.getByText('markRead')).toBeTruthy()
+  })
+
+  it('每个连接器一个开关，点下去就写回引擎', async () => {
+    const written: { id: string; enabled: boolean }[] = []
+    const withSwitch = face(board())
+    const props = { ...withSwitch, setConnector: async (id: string, enabled: boolean) => { written.push({ id, enabled }); return { ok: true } } }
+    render(<ConnectorsView t={t} face={{ ...props, setConnector: props.setConnector }} />)
+    const toggle = screen.getByRole('switch', { name: '邮件' })
+    fireEvent.click(toggle)
+    await waitFor(() => { expect(written).toEqual([{ id: 'mail', enabled: false }]) })
+  })
+
+  it('没有引擎可写时开关是锁住的', () => {
+    render(<ConnectorsView t={t} face={face(board())} />)
+    expect((screen.getByRole('switch', { name: '邮件' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('一个连接器都没有时说清是没装，而不是画一个空列表', () => {
+    render(<ConnectorsView t={t} face={face({ ...board(), connectors: [] })} />)
+    expect(screen.getByText(t('connectorsEmpty'))).toBeTruthy()
   })
 })
 

@@ -28,6 +28,7 @@ describe('DEFAULT_CONFIG', () => {
         runHistoryLimit: 500,
         runRetentionDays: 30,
         repoRoot: 'D:/open',
+        model: '',
       },
     })
     expect([DEFAULT_FALLBACK_SCAN_SECONDS, DEFAULT_MAX_LIST_MESSAGES, DEFAULT_IMAP_TIMEOUT_SECONDS]).toEqual([300, 300, 30])

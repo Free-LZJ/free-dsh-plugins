@@ -563,10 +563,8 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
             ledger: store,
             readBody: (uid, fallback) => readBody(connection, folder, uid, fallback),
             emit: (payload) => {
-              void engine.triage(payload).catch((error: unknown) => {
-                ctx.logger.warn(`mail: 分诊「${payload.summary.subject}」失败：${describe(error)}`)
-              })
-              // 事件照发：分诊用它，但为它订阅过的别处不该因为这次合并而失联。
+              engine.emit(payload)
+              // 事件照发：邮件连接器用它建任务，但为它订阅过的别处不该因为这次合并而失联。
               ctx.emit('mail/received', payload)
             },
           })

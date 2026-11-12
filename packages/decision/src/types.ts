@@ -28,6 +28,14 @@ export interface Rule<TCondition, TAction> {
   readonly enabled: boolean
   /** 升序匹配，首条命中生效。缺省按数组下标 × 10。 */
   readonly priority: number
+  /**
+   * 这条规则归哪个连接器：决定 `when` 用哪套条件词表、由谁的事件触发。
+   *
+   * 缺省从规则文件顶层的 `connector` 继承，再缺省归到「第一个注册的连接器」——
+   * 旧文件因此不用改。一个事件只跑它那个连接器的规则（条件要知道事件长什么样），
+   * 但 `then` 里的动作可以来自任意连接器。
+   */
+  readonly connector?: string
   /** 空数组 = 匹配一切（兜底规则）。 */
   readonly when: readonly TCondition[]
   /** 命中后打的标签；缺省 = 规则名。 */

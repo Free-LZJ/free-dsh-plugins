@@ -14,15 +14,17 @@ packages/
     tests/             #   *.spec.ts（Host）/ *.client.spec.tsx（浏览器）
     cordis.patch.yml   #   dsh.bundle 补丁：dsh plugin add 时插入的唯一 Loader 行
     tsdown.config.ts   #   两半的打包形态（平台模块表在这）
-  decision/            # @free-lzj/dsh-decision      决策内核（库，不是插件：没有 Loader 行、没有浏览器半边）：规则引擎（DecisionEngine）、条件/动作注册表、命中记录与撤销窗口
+  decision/            # @free-lzj/dsh-decision      工作台核心（库，不是插件：没有 Loader 行、没有浏览器半边）：TaskNode/触发器/连接器契约、任务链执行器（触发→分类→规则→动作）、tasks.json、撤销窗口与到期执行
   mail/                # @free-lzj/dsh-mail          邮箱面板（接入工作台后从工作台进入）+ 邮件 I/O 服务 + 规则分诊（作为连接器：发货默认规则、邮件自己的条件/动作实现、试跑；规则状态与界面都在工作台）
-  console/             # @free-lzj/dsh-console       工作台首页（注意力队列 + 正在跑的会话 + 自动化日志）+ 通知/条目接口 + 规则引擎宿主 + 任务看板（看板/会话/连接器在 src/workbench/，规则引擎与 /rules 路由在 src/rules/）；对外导出 panel 契约
+  console/             # @free-lzj/dsh-console       工作台首页（注意力队列 + 正在跑的会话 + 自动化日志）+ 通知/条目接口 + 任务核心宿主（ctx.console.tasks）+ 任务看板与规则页；对外导出 panel 契约
     src/index.ts       #   Host 半边：ctx.console 服务（notify 通知 / raise 条目 / log 自动化日志）、通知渠道注册表
     src/client/        #   浏览器半边：注意力队列、插件列表、正在跑的会话、自动化日志、通知中心、设置行
     src/client/contract.ts  # 跨插件契约（消费方 import 的是它）
     src/protocol.ts    #   两半共用的类型（Host 与浏览器都 import）
   web-search-account/  # @free-lzj/dsh-web-search-account  用已登录账号联网搜索（仅 Host 半边）
+  connector-dsh/       # @free-lzj/dsh-connector-dsh 内置 DSH 连接器（库，不是插件：没有 Loader 行）：会话/投递/通知/脚本/MCP/HTTP/大模型七个动作 + console:tool 触发器，由 console 直接注册，走同一套连接器 API
   worktree/            # @free-lzj/dsh-worktree         新会话时从当前仓库建 Git 工作树、在其中打开会话
+  browser-use/         # @free-lzj/dsh-browser-use     @ 提及已打开的浏览器标签页 + 内嵌 BrowserSkill 全套 MCP 工具与技能
     src/index.ts       #   Host 半边：git worktree 创建 + 一条 HTTP 路由
     src/client/        #   浏览器半边：首屏「新建工作树会话」控件
 examples/              # dsh web --patch 用的 overlay 示例

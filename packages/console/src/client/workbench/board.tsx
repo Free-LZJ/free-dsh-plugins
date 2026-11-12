@@ -29,10 +29,9 @@ import {
   Button, DisclosureRow, IconChevronDownOutlineRegular, Modal, Pill, StateDot, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  ArchiveRhythm, ConsoleNoticeRecord, WorkbenchColumn, WorkbenchState,
+  ArchiveRhythm, ConsoleNoticeRecord, Task, TaskNodeRecord, WorkbenchColumn, WorkbenchState,
 } from '../../protocol.ts'
 import type { Translate } from '../locales.ts'
-import type { TriageRun, TriageRunAction, TriageSource } from '../rules.tsx'
 import { CLS } from '../styles.ts'
 
 /**
@@ -55,6 +54,13 @@ export interface WorkbenchFace {
   readonly end: (sessionId: string) => Promise<boolean>
   readonly confirm: (cardId: string) => Promise<boolean>
   readonly detach: (cardId: string) => Promise<boolean>
+  /**
+   * 打开或关掉一个连接器的规则参与。
+   *
+   * 可选：一个没有任务引擎的部署（或更旧的宿主）没有这个动作，连接器页据此把开关
+   * 画成锁住的，而不是给一个点了没反应的按钮。
+   */
+  readonly setConnector?: (id: string, enabled: boolean) => Promise<{ readonly ok: boolean; readonly message?: string }>
 }
 
 /* ─────────────────────────────── 数据类型 ─────────────────────────────── */
@@ -91,12 +97,12 @@ export type RunFailure = 'config' | 'transient' | 'fatal'
  */
 export type Remedy = 'fix-config' | 'retry' | 'none'
 
-/** One task: every hit record that belongs to the same source event. */
+/** One task: an event a connector emitted, and the chain it ran through. */
 export interface TaskChain {
   /** Aggregation key; stable across repaints. */
   readonly key: string
-  /** The runs behind this task, oldest first. */
-  readonly runs: readonly TriageRun[]
+  /** The tasks behind this card, oldest first (a later event may join the same chain). */
+  readonly tasks: readonly Task[]
   /** The whole chain, oldest first. */
   readonly steps: readonly ChainStep[]
   readonly zone: TaskZone
@@ -120,53 +126,24 @@ export interface TaskChain {
 
 /* ─────────────────────────────── 聚合 ─────────────────────────────── */
 
-/** The mail connector's own event shape, as the engine stores it. */
-interface MailEventShape {
-  readonly accountId?: unknown
-  readonly folder?: unknown
-  readonly uid?: unknown
-  readonly from?: unknown
-  readonly subject?: unknown
+/** 一格节点的名字：核心只给 kind，文案在这里。 */
+function nodeTitle(node: TaskNodeRecord, t: Translate): string {
+  if (node.kind === 'trigger') return t('linkKindTrigger')
+  if (node.kind === 'classify') return t('linkKindClassify')
+  if (node.kind === 'rule') return t('linkKindRule')
+  if (node.kind === 'session') return t('linkKindSession')
+  return kindLabel(node.kind, t)
 }
 
-/**
- * The key that makes two runs "the same task".
- *
- * The strongest thing the record carries is the event's own identity: a mail is
- * `accountId/folder/uid`. When a connector gives nothing identifying, the run id
- * is the fallback — a task of one, which is the honest answer rather than
- * folding unrelated work together.
- * @param run - one hit record.
- * @returns the aggregation key.
- */
-export function taskKeyOf(run: TriageRun): string {
-  const event = run.event as unknown as MailEventShape
-  const { accountId, folder, uid } = event
-  if (typeof accountId === 'string' && typeof folder === 'string' && typeof uid === 'number') {
-    return `mail:${accountId}:${folder}:${String(uid)}`
-  }
-  return `run:${run.id}`
+/** 一条链的标题：触发它的那件事的名字（触发器给的，不再从事件里猜）。 */
+function titleOf(task: Task, t: Translate): string {
+  const title = task.title.trim()
+  return title === '' ? t('taskNoSource') : title
 }
 
-/**
- * What one task is called.
- * @param run - the run the title is read from.
- * @param t - the translate seat.
- * @returns the subject, or a fallback that names the source.
- */
-function titleOf(run: TriageRun, t: Translate): string {
-  const event = run.event as unknown as MailEventShape
-  const subject = typeof event.subject === 'string' ? event.subject.trim() : ''
-  if (subject !== '') return subject
-  const from = typeof event.from === 'string' ? event.from.trim() : ''
-  return from === '' ? t('taskNoSource') : from
-}
-
-/** Which connector a run's event came from. */
-function sourceOf(run: TriageRun): string {
-  const event = run.event as unknown as MailEventShape
-  if (typeof event.folder === 'string') return 'mail'
-  return 'manual'
+/** 任务来自哪个连接器。 */
+function sourceOf(task: Task): string {
+  return task.connector
 }
 
 /**
@@ -198,37 +175,38 @@ export function kindLabel(kind: string, t: Translate): string {
 }
 
 /**
- * Turn one run into the steps it contributes to its task's chain.
+ * Turn one task into the steps its card shows.
  *
- * The rule hit itself is a step: "which rule fired" is part of the story, and a
- * task triggered twice by two different rules must show both.
- * @param run - one hit record.
+ * 链就是任务自己的节点——不再从「命中记录」里拼：触发器、分类、规则、动作、会话
+ * 本来就按发生顺序排在 `task.nodes` 里，页面只需要给每一格一个名字。
+ * @param task - one task.
  * @param t - the translate seat.
  * @returns the steps, oldest first.
  */
-function stepsOf(run: TriageRun, t: Translate): ChainStep[] {
-  const at = Date.parse(run.at)
-  const steps: ChainStep[] = [{
-    key: `${run.id}:rule`,
-    kind: 'rule',
-    title: run.ruleName === '' ? run.ruleId : run.ruleName,
-    detail: run.label,
-    ok: true,
-    at: Number.isFinite(at) ? at : 0,
-  }]
-  run.actions.forEach((action: TriageRunAction, index) => {
-    steps.push({
-      key: `${run.id}:${String(index)}`,
-      kind: action.kind,
-      title: kindLabel(action.kind, t),
-      detail: action.detail,
-      ok: action.ok,
+function stepsOf(task: Task, t: Translate): ChainStep[] {
+  return task.nodes.map(node => {
+    const at = Date.parse(node.at)
+    return {
+      key: node.id,
+      kind: node.kind,
+      title: nodeTitle(node, t),
+      detail: node.detail,
+      ok: node.ok,
       at: Number.isFinite(at) ? at : 0,
-      ...(action.sessionId === undefined ? {} : { sessionId: action.sessionId }),
-      ...(action.failure === undefined ? {} : { failure: action.failure }),
-    })
+      ...(node.sessionId === undefined ? {} : { sessionId: node.sessionId }),
+      ...(node.failure === undefined ? {} : { failure: node.failure }),
+    }
   })
-  return steps
+}
+
+/** 这条任务最后一次分类落在哪一类；没有分类节点时退到规则标签。 */
+function labelOf(task: Task): string {
+  const classify = task.nodes.find(node => node.kind === 'classify')
+  const label = classify?.data?.['label']
+  if (typeof label === 'string' && label !== '') return label
+  const rule = task.nodes.find(node => node.kind === 'rule')
+  const ruleLabel = rule?.data?.['label']
+  return typeof ruleLabel === 'string' ? ruleLabel : ''
 }
 
 /**
@@ -322,8 +300,10 @@ export function groupArchived(
         put(task.source, task.source, 0, task)
         break
       case 'rule': {
-        const newest = task.runs[task.runs.length - 1]
-        const rule = newest !== undefined && newest.ruleName !== '' ? newest.ruleName : t('archiveNoRule')
+        // 命中规则的名字在规则节点里；没有规则节点的任务（工具发起的）归到「没有规则」。
+        const ruleNode = task.tasks[0]?.nodes.find(node => node.kind === 'rule')
+        const name = typeof ruleNode?.data?.['ruleName'] === 'string' ? ruleNode.data['ruleName'] : ''
+        const rule = name === '' ? t('archiveNoRule') : name
         put(rule, rule, 0, task)
         break
       }
@@ -355,42 +335,31 @@ export function groupArchived(
  * @returns the tasks, newest activity first.
  */
 export function buildTasks(
-  runs: readonly TriageRun[],
+  tasks: readonly Task[],
   runningIds: ReadonlySet<string>,
   archiveAfterMs: number,
   now: number,
   t: Translate,
 ): readonly TaskChain[] {
-  const buckets = new Map<string, TriageRun[]>()
-  for (const run of runs) {
-    const key = taskKeyOf(run)
-    const bucket = buckets.get(key)
-    if (bucket === undefined) buckets.set(key, [run])
-    else bucket.push(run)
-  }
-  const tasks: TaskChain[] = []
-  for (const [key, bucket] of buckets) {
-    const ordered = [...bucket].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
-    const newest = ordered[ordered.length - 1]
-    if (newest === undefined) continue
-    const steps = ordered.flatMap(run => stepsOf(run, t))
-    const failed = ordered.some(run => run.actions.some(action => !action.ok))
+  const chains: TaskChain[] = []
+  for (const task of tasks) {
+    const steps = stepsOf(task, t)
+    const failed = task.status === 'partial' || task.status === 'failed'
     const sessionAlive = steps.some(step => step.sessionId !== undefined && runningIds.has(step.sessionId))
     const updatedAt = steps.reduce((newestAt, step) => Math.max(newestAt, step.at), 0)
     const failure = steps.find(step => !step.ok)?.failure
-    const acknowledged = ordered.every(run => run.acknowledged === true)
-    const settled = !failed
-      && ordered.every(run => run.status === 'done' || run.status === 'skipped' || run.status === 'undone')
+    const acknowledged = task.acknowledged === true
+    const settled = !failed && (task.status === 'done' || task.status === 'skipped' || task.status === 'undone')
     // 「我看到了」优先于一切：人已经把它从待办里拿走了，失败与节奏都不该再把它弹回来。
     const zone: TaskZone = sessionAlive ? 'running' : acknowledged ? 'archived' : settled && now - updatedAt >= archiveAfterMs ? 'archived' : 'todo'
-    tasks.push({
-      key,
-      runs: ordered,
+    chains.push({
+      key: task.id,
+      tasks: [task],
       steps,
       zone,
-      title: titleOf(newest, t),
-      source: sourceOf(newest),
-      label: newest.label,
+      title: titleOf(task, t),
+      source: sourceOf(task),
+      label: labelOf(task),
       updatedAt,
       failed,
       remedy: remedyOf(failure),
@@ -398,21 +367,23 @@ export function buildTasks(
       ...(failure === undefined ? {} : { failure }),
     })
   }
-  return tasks.sort((left, right) => right.updatedAt - left.updatedAt)
+  return chains.sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
 /* ─────────────────────────────── 端口 ─────────────────────────────── */
 
 /** What the board needs from the page it is drawn on. */
 export interface BoardFace {
-  /** Read and write the rule engine — the source of every hit record. */
-  readonly triage: TriageSource
+  /** 任务链——看板唯一的真相（Host 折好的一份，页面不再聚合）。 */
+  readonly tasks: () => readonly Task[]
   /** Sessions the Host says are working right now. */
   readonly running: () => readonly { readonly sessionId: string; readonly title: string }[]
   /** How long a settled task keeps its seat; from the stored preference. */
   readonly rhythm: () => ArchiveRhythm
   /** Persist a new archive rhythm. */
   readonly setRhythm: (rhythm: ArchiveRhythm) => void
+  /** 撤销一个任务：窗口内取消，窗口外回滚。 */
+  readonly undo: (taskId: string) => Promise<{ readonly ok: boolean; readonly message?: string }>
   /** Open a session in the conversation page, when the deployment composes one. */
   readonly openSession?: (sessionId: string) => { readonly ok: boolean; readonly message?: string }
   /** Whether {@link openSession} can reach a real service. */
@@ -483,14 +454,14 @@ export function useBoardData(face: BoardFace, t: Translate): BoardRead {
   const rhythm = face.rhythm()
   useEffect(() => {
     let disposed = false
-    const read = async (): Promise<void> => {
+    const read = (): void => {
       try {
-        const runs = await faceRef.current.triage.runs()
+        const tasks = faceRef.current.tasks()
         if (disposed) return
         const runningIds = new Set(faceRef.current.running().map(session => session.sessionId))
         setData({
           tasks: buildTasks(
-            runs,
+            tasks,
             runningIds,
             faceRef.current.rhythmMs(faceRef.current.rhythm()),
             Date.now(),
@@ -500,13 +471,13 @@ export function useBoardData(face: BoardFace, t: Translate): BoardRead {
           error: '',
         })
       } catch {
-        // 引擎没应答与「还没有任何规则命中」是两件事：前者是故障，后者是正常的空。
+        // 读不到与「还没有任何任务」是两件事：前者是故障，后者是正常的空。
         if (disposed) return
         setData(current => ({ ...current, loaded: true, error: tRef.current('boardMissing') }))
       }
     }
-    void read()
-    const timer = setInterval(() => { void read() }, POLL_MS)
+    read()
+    const timer = setInterval(read, POLL_MS)
     return () => {
       disposed = true
       clearInterval(timer)
@@ -563,7 +534,7 @@ export function BoardView(props: {
    */
   const acknowledge = (task: TaskChain, value: boolean): void => {
     setBusyKey(task.key)
-    void props.face.acknowledge(task.runs.map(run => run.id), value)
+    void props.face.acknowledge(task.tasks.map(item => item.id), value)
       .then((result) => {
         setFailure(result.ok ? '' : result.message ?? t('boardActionFailed'))
         if (result.ok) props.reload?.()
@@ -909,20 +880,18 @@ function TaskDetail(props: {
           <div className={CLS.detailMeta}>
             <Tag tone="quiet">{task.source}</Tag>
             {task.label === '' ? null : <Tag tone="info">{task.label}</Tag>}
-            {task.runs.length > 1 && <Tag tone="outline">{t('detailRuns', { count: task.runs.length })}</Tag>}
+            
             {task.failed && <Tag tone="danger">{t('boardStatFailed')}</Tag>}
           </div>
         </header>
         <section>
           <h4 className={CLS.detailSection}>{t('detailEvent')}</h4>
           <ul className={CLS.detailEvents}>
-            {task.runs.map(run => (
-              <li key={run.id} className={CLS.detailEventRow}>
-                <span className={CLS.detailEventAt}>{new Date(Date.parse(run.at)).toLocaleString()}</span>
-                <span className={CLS.detailEventText}>
-                  {(run.event as unknown as MailEventShape).subject as string ?? run.id}
-                </span>
-                <span className={CLS.detailEventRule}>{run.ruleName === '' ? run.ruleId : run.ruleName}</span>
+            {task.tasks.map(item => (
+              <li key={item.id} className={CLS.detailEventRow}>
+                <span className={CLS.detailEventAt}>{new Date(Date.parse(item.at)).toLocaleString()}</span>
+                <span className={CLS.detailEventText}>{item.title}</span>
+                <span className={CLS.detailEventRule}>{item.connector}</span>
               </li>
             ))}
           </ul>

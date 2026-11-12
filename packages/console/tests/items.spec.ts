@@ -17,7 +17,6 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ConsoleHost, LOG_LIMIT } from '../src/console-host.ts'
-import type { WorkbenchBoard } from '../src/workbench/board.ts'
 
 /** 一个测试创建的临时目录，用完删掉。 */
 const homes: string[] = []
@@ -30,7 +29,7 @@ afterEach(async () => {
  * 造一个 Host。
  * @returns Host 与它的临时目录。
  */
-async function bench(): Promise<ConsoleHost> {
+async function bench(tasks?: unknown): Promise<ConsoleHost> {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-console-items-'))
   homes.push(directory)
   return new ConsoleHost(new Context(), {
@@ -38,6 +37,7 @@ async function bench(): Promise<ConsoleHost> {
     // 用一个不上报任何渠道的选择：这一组关心的是条目，不是投递。
     channels: () => [],
     layout: () => 'grid',
+    ...(tasks === undefined ? {} : { tasks: tasks as never }),
   })
 }
 
@@ -72,11 +72,10 @@ describe('raise：比 notify 多的那两样东西', () => {
   })
 
   it('挂到会话所属的链路上，而不是在队列里另起一件事', async () => {
-    const host = await bench()
-    // 只演「这条会话属于哪条链」这一个回答：条目要的正是它。
-    host.attachWorkbench({
-      rootOfSession: (sessionId: string) => (sessionId === 'session-1' ? 'root-1' : undefined),
-    } as unknown as WorkbenchBoard)
+    // 只演「这条会话属于哪条任务」这一个回答：条目要的正是它。
+    const host = await bench({
+      taskOfSession: (sessionId: string) => (sessionId === 'session-1' ? { id: 'root-1' } : undefined),
+    })
     const inherited = await host.raise({ title: '建议处理：DSH E2E', kind: 'mail', sessionId: 'session-1' })
     expect(inherited.rootId).toBe('root-1')
     // 显式给了根就用它，不去猜。

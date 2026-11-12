@@ -16,7 +16,7 @@
  * @module @free-lzj/dsh-decision/match
  */
 
-import type { ConditionRegistry, ConditionSpecLike } from './registry.ts'
+import type { Condition, ConditionSpecLike } from './registry.ts'
 
 /** What a matching pass carries between conditions. */
 export interface MatchState {
@@ -26,7 +26,13 @@ export interface MatchState {
 
 /** Everything one matching pass needs from the connector. */
 export interface MatchPlan<TSpec extends ConditionSpecLike, TContext, TKind extends string> {
-  readonly conditions: ConditionRegistry<TSpec, TContext, TKind>
+  /**
+   * 只要求「按 kind 取一个实现」。
+   *
+   * 不是 `ConditionRegistry` 本身，因为注册表有两个（旧的按连接器单例，新的带
+   * owner 冲突检测），而匹配逻辑不该关心实现用的是哪一个。
+   */
+  readonly conditions: { get(kind: TKind): Condition<TSpec, TContext, TKind> | undefined }
   /** Build the context for one condition; `state` is the same object across the pass. */
   readonly context: (state: MatchState) => TContext
   /** Fetch the body; called at most once per pass. */

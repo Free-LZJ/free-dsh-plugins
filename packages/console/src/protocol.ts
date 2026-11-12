@@ -417,52 +417,71 @@ export interface WorkbenchSession {
   readonly updatedAt: number
 }
 
-/** One connector as the board and the settings surface describe it. */
-export interface WorkbenchConnectorInfo {
+
+
+/**
+ * 任务与节点：工作台看板读的那份真相。
+ *
+ * 与 `@free-lzj/dsh-decision` 的 `Task` 逐字段对应，但**故意复制一份**：那个包是
+ * Node 库（读文件、跑链），浏览器半边不能 import 它。两份定义靠这一句约定绑住：
+ * 改任何一个字段，两边一起改，否则看板会静默少一列。
+ */
+
+/** 一条任务走到哪了。 */
+export type TaskStatus = 'running' | 'done' | 'partial' | 'skipped' | 'failed' | 'undone'
+
+/** 链上的一格。 */
+export interface TaskNodeRecord {
   readonly id: string
-  readonly label: string
-  /** Which directions this connector carries. */
-  readonly directions: readonly ('in' | 'out')[]
-  /** Whether the configuration switches it on. */
-  readonly enabled: boolean
-  /**
-   * Whether the entrance actually works in this build. A placeholder connector
-   * (DingTalk, Jira) is listed and configurable but sends no real request.
-   */
-  readonly implemented: boolean
-  /** What it does today, and what it deliberately does not. */
-  readonly note?: string
+  /** `trigger` | `classify` | `rule` | 动作 kind | `session`。 */
+  readonly kind: string
+  readonly at: string
+  readonly ok: boolean
+  readonly detail: string
+  readonly failure?: 'config' | 'transient' | 'fatal'
+  readonly actionIndex?: number
+  /** 只有会话节点（与建了会话的动作）才有。 */
+  readonly sessionId?: string
+  readonly data?: Readonly<Record<string, unknown>>
 }
 
-/** One executor, as the board lists it. */
-export interface WorkbenchExecutorInfo {
-  /** Stable id the routing table names. */
+/** 一个任务：一个事件被触发器选中后的整条链。 */
+export interface Task {
   readonly id: string
-  /** Display label. */
+  readonly connector: string
+  readonly triggerId: string
+  readonly key: string
+  readonly eventKey?: string
+  readonly title: string
+  readonly at: string
+  readonly updatedAt: string
+  readonly status: TaskStatus
+  readonly nodes: readonly TaskNodeRecord[]
+  readonly awaitingConfirmation?: boolean
+  readonly acknowledged?: boolean
+  readonly undoableUntil?: string
+}
+
+/** 一个连接器在看板上长什么样。 */
+export interface TaskConnectorInfo {
+  readonly id: string
   readonly label: string
+  readonly directions: readonly ('in' | 'out')[]
+  readonly implemented: boolean
+  readonly note?: string
+  /** 它参不参与规则；关掉只停规则，不卸载插件。 */
+  readonly enabled: boolean
+  readonly triggers: readonly string[]
+  readonly actions: readonly string[]
 }
 
 /** Everything the browser cannot derive about the board. */
 export interface WorkbenchState {
+  /** 看板的真相：每个任务是一条节点链。 */
+  readonly tasks: readonly Task[]
+  /** 已废弃（旧卡片管线）：留着字段是为了旧页面不炸，值恒为空。 */
   readonly cards: readonly WorkbenchCard[]
   readonly sessions: readonly WorkbenchSession[]
-  readonly connectors: readonly WorkbenchConnectorInfo[]
-  /**
-   * Executors this deployment actually has.
-   *
-   * The page needs this to tell "not wired yet" from "wired but broken": a
-   * routing table naming an executor that is absent is a configuration answer the
-   * user can act on, whereas a silent no-op just looks like a dead button.
-   */
-  readonly executors: readonly WorkbenchExecutorInfo[]
-  /**
-   * 为什么没有真实执行器；'' 表示有。
-   *
-   * 一个**码**而不是一句话：文案在 locales.ts，两种语言才能各说各的。真实执行器关掉是
-   * 正常部署，但静默关掉会让人以为功能坏了——连接器页据此说明还差哪一项配置。
-   */
-  readonly executorNote: '' | 'no-workspace' | 'no-session-api'
-  /** Version of the routing table the current decisions were made with. */
-  readonly routingVersion: string
+  readonly connectors: readonly TaskConnectorInfo[]
   readonly revision: number
 }

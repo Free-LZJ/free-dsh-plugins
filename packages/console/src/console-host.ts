@@ -27,15 +27,14 @@
 
 import { randomUUID } from 'node:crypto'
 import { Service, type Context } from '@deepseek-ai/cordis'
-import type { DecisionEngine } from '@free-lzj/dsh-decision'
+import type { TaskEngine } from '@free-lzj/dsh-decision'
 import { PresenceGate } from './builtin-channels.ts'
 import { ChannelRegistry, type NoticeDelivery } from './channels.ts'
 import type {
   ArchiveRhythm, ChannelInfo, ConsoleLayout, ConsoleLogEntry, ConsoleNotice, ConsoleNoticeRecord, ConsoleState, ConsoleView,
-  NoticeTone, RunningSession, WorkbenchEvent,
+  NoticeTone, RunningSession,
 } from './protocol.ts'
 import { emptyPrefs, readPrefs, readRecords, writePrefs, writeRecords, type ConsolePrefs, type ConsoleRecords } from './store.ts'
-import type { IngestResult, WorkbenchBoard } from './workbench/board.ts'
 import type { WorkbenchSessionPort } from './workbench/session-port.ts'
 
 /** The most notices kept for one browser session. */
@@ -103,11 +102,11 @@ export interface ConsoleHostOptions {
    * The rule engine this workbench holds.
    *
    * Optional only so a spec can build the service without one; the plugin's own
-   * mount always passes it. A connector (mail, Jira, …) probes `ctx.console.decision`
+   * mount always passes it. A connector (mail, Jira, …) probes `ctx.console.tasks`
    * and registers its vocabulary there, which is what makes the rule state live
    * in exactly one place.
    */
-  readonly decision?: DecisionEngine
+  readonly tasks?: TaskEngine
 }
 
 /** Normalize a caller-supplied tone, defaulting to `info`. */
@@ -157,8 +156,6 @@ export class ConsoleHost extends Service {
   private prefs: ConsolePrefs = emptyPrefs()
   private layout: ConsoleLayout
   private revision = 0
-  /** The board this service fronts for companion plugins; set by the plugin's mount. */
-  private board: WorkbenchBoard | undefined
   /**
    * The session capability connectors may use.
    *
@@ -200,10 +197,10 @@ export class ConsoleHost extends Service {
   /**
    * 规则引擎：规则文件、命中记录、待确认与撤销都归它。
    *
-   * 连接器（邮件…）通过 `ctx.console.decision` 把自己的词表注册进来；没有连接器
+   * 连接器（邮件…）通过 `ctx.console.tasks` 把自己的词表注册进来；没有连接器
    * 时它仍然在，只是规则页会说「还没有连接器提供规则」。
    */
-  readonly decision: DecisionEngine | undefined
+  readonly tasks: TaskEngine | undefined
 
   /**
    * @param ctx - the providing plugin's context (the service unloads with it).
@@ -212,7 +209,7 @@ export class ConsoleHost extends Service {
   constructor(ctx: Context, private readonly options: ConsoleHostOptions) {
     super(ctx, 'console')
     this.layout = options.layout()
-    this.decision = options.decision
+    this.tasks = options.tasks
     // 偏好与记录一起读：重启后的第一次 `state()` 就该是完整的那一屏，而不是先
     // 显示空队列、再被异步读回来的条目替换一次。
     this.ready = Promise.all([readPrefs(options.homeDir), readRecords(options.homeDir)]).then(([saved, records]) => {
@@ -324,7 +321,7 @@ export class ConsoleHost extends Service {
     // 没显式给根就按会话找：通知是它所属链路的一步，而不是并列的第二个东西。
     const rootId = typeof notice.rootId === 'string' && notice.rootId !== ''
       ? notice.rootId
-      : notice.sessionId === undefined ? undefined : this.board?.rootOfSession(notice.sessionId)
+      : notice.sessionId === undefined ? undefined : this.rootOfSession(notice.sessionId)
     const record: ConsoleNoticeRecord = {
       ...envelope,
       delivered,
@@ -499,17 +496,6 @@ export class ConsoleHost extends Service {
     return this.logEntries
   }
 
-  /**
-   * Attach the board this service fronts.
-   *
-   * The board is assembled by the plugin's mount, not by this class, so a
-   * companion plugin that only needs `notify()` never pays for it — and a
-   * test can drive this class without a board at all.
-   * @param board - the board.
-   */
-  attachWorkbench(board: WorkbenchBoard): void {
-    this.board = board
-  }
 
   /**
    * Attach the session port built over the host's session controller.
@@ -524,20 +510,6 @@ export class ConsoleHost extends Service {
     return this.sessionPort
   }
 
-  /**
-   * Hand one inbound work event to the board — the mail connector's entrance
-   * for a companion plugin, and the shape the webhook entrance normalizes to.
-   *
-   * A caller probes for this method rather than assuming it: a workbench
-   * without a board (or an older one) answers `ok: false`, and the caller
-   * keeps its own behavior instead of failing.
-   * @param event - the normalized inbound event.
-   * @returns the ingest result, or why there is no board to take it.
-   */
-  ingestWorkbenchEvent(event: WorkbenchEvent): Promise<IngestResult> {
-    if (this.board === undefined) return Promise.resolve({ ok: false, error: 'the workbench board is not mounted' })
-    return this.board.ingest(event)
-  }
 
   /**
    * 这条会话属于哪条链路。
@@ -547,7 +519,7 @@ export class ConsoleHost extends Service {
    * @returns 根卡 id；没有看板或不属于任何链时 undefined。
    */
   rootOfSession(sessionId: string): string | undefined {
-    return this.board?.rootOfSession(sessionId)
+    return this.tasks?.taskOfSession(sessionId)?.id
   }
 
   /**
@@ -555,8 +527,8 @@ export class ConsoleHost extends Service {
    * @param sessionId - 宿主会话 id。
    * @param rootId - 链路根卡 id。
    */
-  linkSession(sessionId: string, rootId: string): void {
-    this.board?.linkSession(sessionId, rootId)
+  linkSession(): void {
+    // 链由触发器建立（一个事件一个任务），调用方不需要再手动挂。
   }
 
   /** Forget the notices of this session (the user dismissed the list). */

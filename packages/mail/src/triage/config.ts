@@ -13,9 +13,8 @@
 
 import {
   DEFAULT_DECISION_CONFIG, DEFAULT_RUN_HISTORY_LIMIT, DEFAULT_RUN_RETENTION_DAYS, DEFAULT_UNDO_WINDOW_SECONDS,
-  MAX_INSTRUCTIONS_LENGTH, MAX_MATCH_LENGTH, MAX_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_TITLE_LENGTH,
-  MAX_UNDO_WINDOW_SECONDS, clamped, integer, named, normalizeDecisionConfig, normalizeRules as normalizeRuleList,
-  stringList, type RuleVocabulary,
+  MAX_INSTRUCTIONS_LENGTH, MAX_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_UNDO_WINDOW_SECONDS, clamped, integer, named,
+  normalizeDecisionConfig, normalizeRules as normalizeRuleList, stringList, type RuleVocabulary,
 } from '@free-lzj/dsh-decision'
 import { isRecord, text } from '@free-lzj/dsh-decision'
 import type {
@@ -29,16 +28,20 @@ const CONDITION_KINDS = new Set<string>([
   'from', 'to', 'subject', 'body', 'header', 'regex', 'attachment', 'classifier',
 ] satisfies ConditionKind[])
 
-/** 动作种类名。 */
+/**
+ * 动作种类名：**只有邮件域的那四个**。
+ *
+ * `session` / `followup` / `notify` / `script` / `mcp` / `http` 现在归 DSH 连接器
+ * （`@free-lzj/dsh-connector-dsh`），它们不认邮件头，只认事件投影。词表只收自己认的
+ * kind，是「多个连接器共用一份规则文件」的前提：另一个连接器问到这里时必须拿到
+ * undefined，否则一条 `session` 会被收成邮件形状、再由 DSH 的动作去跑。
+ */
 const ACTION_KINDS = new Set<string>([
-  'markRead', 'flag', 'move', 'archive', 'notify', 'session', 'followup', 'script', 'mcp', 'http',
+  'markRead', 'flag', 'move', 'archive',
 ] satisfies ActionKind[])
 
 /** 动作三态。 */
 const ACTION_MODES = new Set<string>(['auto', 'suggest', 'off'] satisfies ActionMode[])
-
-/** 语气。 */
-const TONES = new Set<string>(['info', 'success', 'warn', 'error'])
 
 /**
  * 不可撤销的动作默认只「建议」。
@@ -129,23 +132,6 @@ export function normalizeAction(input: unknown): ActionSpec | undefined {
   const mode = named<ActionMode>(input.mode, ACTION_MODES)
   const delaySeconds = integer(input.delaySeconds, 0, MAX_UNDO_WINDOW_SECONDS)
   const folder = clamped(input.folder, MAX_NAME_LENGTH)
-  const title = clamped(input.title, MAX_TITLE_LENGTH)
-  const tone = named<'info' | 'success' | 'warn' | 'error'>(input.tone, TONES)
-  const workspacePath = clamped(input.workspacePath, MAX_NAME_LENGTH)
-  const workspaceTemplate = clamped(input.workspaceTemplate, MAX_NAME_LENGTH)
-  const agentPreset = clamped(input.agentPreset, MAX_NAME_LENGTH)
-  const permissionPreset = clamped(input.permissionPreset, MAX_NAME_LENGTH)
-  const titleTemplate = clamped(input.titleTemplate, MAX_TITLE_LENGTH)
-  const instructions = clamped(input.instructions, MAX_INSTRUCTIONS_LENGTH)
-  const command = clamped(input.command, MAX_NAME_LENGTH)
-  const args = stringList(input.args, MAX_MATCH_LENGTH)
-  const cwd = clamped(input.cwd, MAX_NAME_LENGTH)
-  const tool = clamped(input.tool, MAX_NAME_LENGTH)
-  const url = clamped(input.url, MAX_PATTERN_LENGTH)
-  /** `notify` 的「打开」地址：模板，所以和 `url` 一样按模式串长度限。 */
-  const link = clamped(input.link, MAX_PATTERN_LENGTH)
-  const targetSession = clamped(input.sessionId, MAX_NAME_LENGTH)
-  const method = named<'POST' | 'PUT'>(input.method, new Set(['POST', 'PUT']))
   const common = {
     kind,
     mode: mode ?? DEFAULT_MODE[kind],
@@ -156,52 +142,10 @@ export function normalizeAction(input: unknown): ActionSpec | undefined {
     case 'flag':
       return common
     case 'move':
+      // `move` 必须给文件夹；`archive` 允许不给（用账号的 `\Archive`）。
+      return folder === undefined ? undefined : { ...common, folder }
     case 'archive':
-      // `archive` 允许不给 folder（用账号的 \Archive），`move` 必须给。
-      if (kind === 'move' && folder === undefined) return undefined
       return { ...common, ...(folder === undefined ? {} : { folder }) }
-    case 'notify':
-      return {
-        ...common,
-        ...(title === undefined ? {} : { title }),
-        ...(tone === undefined ? {} : { tone }),
-        ...(link === undefined ? {} : { link }),
-      }
-    case 'session': {
-      // 至少要有一个工作目录来源，否则这个动作一定失败，不如现在就丢掉。
-      if (workspacePath === undefined && workspaceTemplate === undefined) return undefined
-      return {
-        ...common,
-        ...(workspacePath === undefined ? {} : { workspacePath }),
-        ...(workspaceTemplate === undefined ? {} : { workspaceTemplate }),
-        ...(agentPreset === undefined ? {} : { agentPreset }),
-        ...(permissionPreset === undefined ? {} : { permissionPreset }),
-        ...(titleTemplate === undefined ? {} : { titleTemplate }),
-        ...(instructions === undefined ? {} : { instructions }),
-      }
-    }
-    case 'followup':
-      // 没有目标会话的投递一定失败，不如现在就丢掉。
-      return targetSession === undefined ? undefined : {
-        ...common,
-        sessionId: targetSession,
-        ...(instructions === undefined ? {} : { instructions }),
-      }
-    case 'script':
-      return command === undefined ? undefined : {
-        ...common,
-        command,
-        ...(args === undefined ? {} : { args }),
-        ...(cwd === undefined ? {} : { cwd }),
-      }
-    case 'mcp':
-      return tool === undefined ? undefined : {
-        ...common,
-        tool,
-        ...(isRecord(input.input) ? { input: input.input } : {}),
-      }
-    case 'http':
-      return url === undefined ? undefined : { ...common, url, ...(method === undefined ? {} : { method }) }
   }
 }
 
@@ -257,6 +201,7 @@ export const DEFAULT_REPO_ROOT = 'D:/open'
 export const DEFAULT_CONFIG: Config = {
   ...DEFAULT_DECISION_CONFIG,
   repoRoot: DEFAULT_REPO_ROOT,
+  model: '',
 }
 
 /**
@@ -272,6 +217,7 @@ export function normalizeConfig(input: unknown): Config {
   return {
     ...normalizeDecisionConfig(source),
     repoRoot: clamped(source.repoRoot, MAX_NAME_LENGTH) ?? DEFAULT_REPO_ROOT,
+    model: clamped(source.model, MAX_NAME_LENGTH) ?? '',
   }
 }
 

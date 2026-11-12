@@ -13,6 +13,7 @@
 import { Readable, Writable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
+import type { Task } from '@free-lzj/dsh-decision'
 import { registerRulesRoutes, type RulesEngine, type RulesRouteHost } from '../src/rules/index.ts'
 import {
   RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
@@ -90,6 +91,7 @@ const VIEW = {
   path: 'C:/dsh/dsh-console/rules/rules.yml',
   raw: '- id: first\n',
   dropped: [],
+  unassigned: 0,
   connector: true,
 }
 
@@ -98,12 +100,32 @@ const VIEW = {
  * @param overrides - engine verbs to replace (a refusal, a throwing read).
  * @returns the routes and what the engine saw.
  */
+/** 一条最小的任务：路由把任务折成页面读的形状，这里只关心它有的字段。 */
+function taskFixture(): Task {
+  const at = '2026-10-27T08:00:00.000Z'
+  return {
+    id: 'run-1',
+    connector: 'mail',
+    triggerId: 'mail:new',
+    key: 'mail:qq:INBOX:1',
+    title: '第一条',
+    at,
+    updatedAt: at,
+    status: 'done',
+    nodes: [
+      { id: 'n1', kind: 'trigger', at, ok: true, detail: '收到' },
+      { id: 'n2', kind: 'rule', at, ok: true, detail: '第一条', data: { ruleId: 'first', ruleName: '第一条' } },
+    ],
+    event: { type: 'mail.received', source: 'mail', payload: { subject: 'x' } },
+    vars: {},
+  }
+}
 function bench(overrides: Partial<RulesEngine> = {}): Bench {
   const routes = new Map<string, Handler>()
   const written: string[] = []
   const engaged: Engaged = { enabled: [], modes: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [] }
   const engine: RulesEngine = {
-    view: () => VIEW,
+    rules: () => VIEW,
     setEnabled: (ruleId, enabled) => {
       engaged.enabled.push({ ruleId, enabled })
       return Promise.resolve({ ok: true })
@@ -122,10 +144,7 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
     },
     listRuns: (since) => {
       engaged.since.push(since)
-      return [{
-        id: 'run-1', at: '2026-10-27T08:00:00.000Z', ruleId: 'first', ruleName: '第一条', label: '第一条',
-        event: { subject: 'x' }, actions: [], status: 'done' as const,
-      }]
+      return [taskFixture()]
     },
     acknowledge: (runId, acknowledged = true) => {
       engaged.acked.push({ runId, acknowledged })
@@ -133,11 +152,11 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
     },
     undo: (runId) => {
       engaged.undo.push(runId)
-      return Promise.resolve({ ok: true })
+      return Promise.resolve({ ok: true, message: '' })
     },
     test: (ref) => {
       engaged.tests.push(ref)
-      return Promise.resolve({ ok: true, result: { ruleId: 'first', ruleName: '第一条', actions: [], reason: '命中第一条。' } })
+      return Promise.resolve({ ok: true, result: { ruleId: 'first', ruleName: '第一条', actions: [], reason: '命中第一条。', attempts: [] } })
     },
     ...overrides,
   }
@@ -309,7 +328,7 @@ describe('the rule engine’s routes', () => {
   })
 
   it('keeps a throwing read inside the route and logs it', async () => {
-    const route = bench({ view: () => { throw new Error('disk on fire') } })
+    const route = bench({ rules: () => { throw new Error('disk on fire') } })
     const res = await call(route, request({ url: RULES_STATE_PATH }))
     expect(res.status).toBe(500)
     expect(route.written.some(line => line.includes('disk on fire'))).toBe(true)

@@ -13,7 +13,9 @@
  */
 
 import { useState, type ReactNode } from 'react'
-import { IconSearchOutlineRegular, Input, SegmentedControl } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconSearchOutlineRegular, Input, SegmentedControl, Switch,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConsoleLayout } from '../protocol.ts'
 import type { Translate } from './locales.ts'
 import { filterPanels, type PanelRow } from './registry.ts'
@@ -22,16 +24,28 @@ import { CLS } from './styles.ts'
 import type { WorkbenchFace } from './workbench/board.tsx'
 
 /**
- * Draw the connectors view: what comes in, what goes out, which agents exist.
+ * Draw the connectors view: which connectors feed the rules, what each one
+ * brings, and the switch that takes it out of the rule engine.
+ *
+ * 开关的粒度是「参不参与规则」，不是「插件装没装」：关掉邮件连接器，邮箱面板照常
+ * 能用，只是规则不再从新邮件里派活。所以这里列的是**注册上来的连接器**，不是已
+ * 加载的插件。
  * @param props.t - the translate seat.
- * @param props.face - the board face (the connectors are the board's own list).
- * @returns the connectors, their routing version, and the executors.
+ * @param props.face - the board face (it reads the task engine's connector list).
+ * @returns the connectors and their switches.
  */
 export function ConnectorsView({ t, face }: {
   readonly t: Translate
   readonly face: WorkbenchFace
 }): ReactNode {
   const state = face.useBoard((current) => current)
+  /** 正在写的那一条：按钮先锁住，避免连点把一个开关点成来回两次。 */
+  const [busy, setBusy] = useState('')
+  const toggle = (id: string, enabled: boolean): void => {
+    if (face.setConnector === undefined) return
+    setBusy(id)
+    void face.setConnector(id, enabled).finally(() => { setBusy('') })
+  }
   return (
     <section className={CLS.view}>
       <header className={CLS.viewHead}>
@@ -40,8 +54,9 @@ export function ConnectorsView({ t, face }: {
       </header>
       {state === undefined
         ? <p className={CLS.empty}>{t('boardLoading')}</p>
-        : (
-          <>
+        : state.connectors.length === 0
+          ? <p className={CLS.empty}>{t('connectorsEmpty')}</p>
+          : (
             <ul className={CLS.connectorList}>
               {state.connectors.map((connector) => (
                 <li key={connector.id} className={CLS.connectorItem}>
@@ -50,43 +65,29 @@ export function ConnectorsView({ t, face }: {
                     {connector.directions.map((direction) => (
                       <span key={direction} className={CLS.connectorDirection}>{direction}</span>
                     ))}
+                    {/* 它接什么事件、有什么动作：规则写不写得出来，就看这一行。 */}
+                    {connector.triggers.map((id) => (
+                      <span key={`t-${id}`} className={CLS.connectorDirection}>{id}</span>
+                    ))}
+                    {connector.actions.map((kind) => (
+                      <span key={`a-${kind}`} className={CLS.connectorDirection}>{kind}</span>
+                    ))}
                   </span>
                   <span className={CLS.connectorState}>
-                    {connector.enabled
-                      ? <span className={CLS.connectorOn}>{t('connectorEnabled')}</span>
-                      : <span className={CLS.connectorOff}>{t('connectorDisabled')}</span>}
                     {!connector.implemented && <span className={CLS.connectorOff}>{t('connectorPlaceholder')}</span>}
+                    <Switch
+                      checked={connector.enabled}
+                      label={connector.label}
+                      disabled={busy === connector.id || face.setConnector === undefined}
+                      title={connector.enabled ? t('connectorOnHint') : t('connectorOffHint')}
+                      onChange={(next: boolean) => { toggle(connector.id, next) }}
+                    />
                   </span>
                   {connector.note !== undefined && <span className={CLS.connectorNote}>{connector.note}</span>}
                 </li>
               ))}
             </ul>
-            <h3 className={CLS.viewSubheading}>{t('executorsTitle')}</h3>
-            <p className={CLS.viewHint}>{t('executorsHint')}</p>
-            {/* 真实执行器没接上时说清**差哪一项**：静默缺席会让人以为功能坏了。 */}
-            {state.executorNote === '' ? null : (
-              <p className={CLS.viewHint} role="status">
-                {state.executorNote === 'no-workspace' ? t('executorOffNoWorkspace') : t('executorOffNoSessionApi')}
-              </p>
-            )}
-            <ul className={CLS.connectorList}>
-              {state.executors.map((executor) => (
-                <li key={executor.id} className={CLS.connectorItem}>
-                  <span className={CLS.connectorName}>{executor.label}</span>
-                  <span className={CLS.connectorMeta}>
-                    <span className={CLS.connectorDirection}>{executor.id}</span>
-                  </span>
-                  <span className={CLS.connectorState}>
-                    <span className={CLS.connectorOn}>{t('executorReady')}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className={CLS.viewMeta}>
-              {t('routingVersion', { version: state.routingVersion })}
-            </p>
-          </>
-        )}
+          )}
     </section>
   )
 }

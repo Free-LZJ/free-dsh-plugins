@@ -100,6 +100,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
     path: 'C:/dsh/dsh-console/rules/rules.yml',
     dropped: [],
     connector: true,
+    unassigned: 0,
   })
   const source: TriageSource = {
     rules,
@@ -235,6 +236,7 @@ describe('the rules view on screen', () => {
         path: 'C:/dsh/dsh-console/rules/rules.yml',
         dropped: [],
         connector: false,
+        unassigned: 0,
       }),
     })
     render(<RulesView t={t} triage={source} />)
@@ -252,6 +254,7 @@ describe('the rules view on screen', () => {
         path: 'C:/dsh/dsh-console/rules/rules.yml',
         dropped: ['规则 2：priority 不是数字'],
         connector: true,
+        unassigned: 0,
       }),
     })
     render(<RulesView t={t} triage={source} />)
@@ -347,6 +350,7 @@ describe('changing a rule', () => {
         path: 'C:/dsh/dsh-console/rules/rules.yml',
         dropped: [],
         connector: true,
+        unassigned: 0,
         raw: 'rules:\n  - id: github\n',
       }),
     })

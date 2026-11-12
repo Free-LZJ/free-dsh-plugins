@@ -305,6 +305,14 @@ export interface Config {
    * 而不是试图猜一个目录。
    */
   readonly repoRoot: string
+  /**
+   * 分类节点用哪个模型（`provider/model`）。
+   *
+   * 空串 = 不分类：`classifier` 条件一律拿 `uncertain`，规则不会因此报错。这一版分类
+   * 走 `ctx.llm` 直调，**不再建一个常驻的分诊会话**——那种会话会掉进侧边栏的未分组，
+   * 而它本来就不该出现在工作区里。
+   */
+  readonly model: string
 }
 
 /** 解析或校验规则文件时的结构化错误；`line` 有值时页面能指到行。 */

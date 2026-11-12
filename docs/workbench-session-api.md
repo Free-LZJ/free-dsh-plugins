@@ -14,7 +14,7 @@
 | `sessions` | ✅ | 会话存储：`create` / `get` / `list` / `fork` / `prepare` / `enter` / `flush` / `liveEntryFor` / `messageProjections` |
 | `agents` | ✅ | 代理注册表：`create` / `resume` / `get` / `list` / `register` / `roots` / `requireFactory` / `withInitiator`；**没有 `createSession`** |
 | `sessionController` | ✅ | Host 可 `ctx.get('sessionController')`；`create({cwd, agentPreset?})` → `{sessionId}`，`resolveAgent(id)` → `{agent}` 或 `{error}`，另有 `rename({sessionId,title})` |
-| `workspaceRegistry` | ❌ | 不存在（工作区归属在会话 header 的 `cwd` 里） |
+| `workspaceRegistry` | ✅ | **2026-11-10 复核：存在**。`create(path,title)` / `resolveByPath(path)` / `list()`；`Workspace.attachSession(sessionId)` 才是「会话出现在某个工作区下」的实现。旧记录说它不存在，是宿主升级前的结论 |
 | `permissionPresets` | ❌ | 不存在（权限是会话上的 `permission/preset` 事件 + 进程级 catalog Remote） |
 | `uiSession` / `sessionStatus` | ❌ | 这个版本里没有这两个名字 |
 
@@ -28,7 +28,14 @@
 事件：`ctx.on('session/event', (session, event) => …)`；助手文本在 `event.data.message.content`，
 结束在 `event.type === 'turn/end'` 且 `event.data.reason.kind === 'completed'`。
 
-## 现在的落地位置
+## 现在的落地位置（2026-11-10 之后）
+
+- **工作台核心**（`@free-lzj/dsh-decision` 的 `TaskEngine`）：规则文件、任务链（`tasks.json`）、撤销窗口、到期执行。看板读的是任务，不再是「命中记录」。
+- **会话能力**：`packages/console/src/workbench/session-port.ts`（工具用）与 `packages/connector-dsh/src/ports.ts`（动作用）都在 `attachSession` 里登记工作区——**这是「会话掉进未分组」的唯一修法**。
+- **连接器**：`mail` 发事件（`mail.received`）并提供邮件域动作；`connector-dsh` 提供会话/投递/通知/脚本/MCP/HTTP/大模型。
+- `open_session` 工具建会话后发 `console.tool.invoked`，由 `console:tool` 触发器把这次派单变成一条任务。
+
+## 以下为旧记录（保留作踩坑）
 
 - **工作台**：`packages/console/src/workbench/session-port.ts` 把上面四步实现成 `SessionPort`，通过
   `ctx.console.sessions` 交给连接器；`open_session` 工具与真实执行器都走它。

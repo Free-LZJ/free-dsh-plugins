@@ -27,27 +27,20 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 // Type-only: the `ctx.webServer` service merge the routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { DecisionEngine } from '@free-lzj/dsh-decision'
+import { createDshConnector } from '@free-lzj/dsh-connector-dsh'
+import { TaskEngine } from '@free-lzj/dsh-decision'
 import { HANDED_TO_PAGE, registerBuiltinChannels } from './builtin-channels.ts'
 import { STATE_DIR } from './store.ts'
 import { ConsoleHost } from './console-host.ts'
 import { BUILTIN_CHANNELS, type ConsoleLayout, type RunningSession } from './protocol.ts'
 import { registerRoutes, type RouteHost } from './routes.ts'
+import { registerTasksRoutes } from './tasks-routes.ts'
 import { registerRulesRoutes, rulesHome } from './rules/index.ts'
 import { registerAgentTools } from './tools.ts'
-import { WorkbenchBoard, type ExecutorNote } from './workbench/board.ts'
-import { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
-import { LlmClassifier, modelRoute, type LlmPortLike } from './workbench/llm-classifier.ts'
-import { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
-import { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
 import {
-  createHarnessRunner, runningSessionsOf, titleOfSession, type HarnessAgentLike, type HarnessAgentsLike,
-  type HarnessSessionEventLike, type SessionRecordLike, type SessionTitleReaderLike,
+  runningSessionsOf, titleOfSession, type HarnessAgentsLike, type SessionRecordLike, type SessionTitleReaderLike,
 } from './workbench/harness-session.ts'
-import { RealSessionExecutor } from './workbench/real-session.ts'
-import { createWorkbenchSessionPort, type SessionControllerLike } from './workbench/session-port.ts'
-import { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
-import { registerWorkbenchRoutes } from './workbench/routes.ts'
+import { createWorkbenchSessionPort } from './workbench/session-port.ts'
 
 export { ConsoleHost } from './console-host.ts'
 export type { ConsoleEvent, ConsoleHostOptions } from './console-host.ts'
@@ -61,16 +54,8 @@ export * from './paths.ts'
 export * from './protocol.ts'
 export { STATE_DIR }
 export type { ConsolePrefs } from './store.ts'
-export { WorkbenchBoard } from './workbench/board.ts'
-export type { ActionResult, IngestResult, WorkbenchBoardOptions } from './workbench/board.ts'
-export { ClassifierRegistry, RULE_CLASSIFIER_ID, RuleClassifier } from './workbench/classifier.ts'
-export type { Classifier } from './workbench/classifier.ts'
-export { builtinConnectors, ConnectorRegistry } from './workbench/connectors.ts'
-export type { Connector } from './workbench/connectors.ts'
-export { ExecutorRegistry, SimulatedExecutor } from './workbench/executors.ts'
-export type { Executor, ExecutorHandle, SessionSink } from './workbench/executors.ts'
-export { defaultRoutingTable, RoutingTableStore } from './workbench/routing.ts'
-export type { RouteRule, RoutingTable } from './workbench/routing.ts'
+export { createWorkbenchSessionPort } from './workbench/session-port.ts'
+export type { WorkbenchSessionPort } from './workbench/session-port.ts'
 
 // Type-only: the `ctx.console` service every adopting plugin injects.
 declare module '@deepseek-ai/cordis' {
@@ -87,32 +72,24 @@ declare module '@deepseek-ai/cordis' {
 const CHANNEL_IDS = [...BUILTIN_CHANNELS]
 
 /** Connector ids accepted by the configuration, in the board's list order. */
-const CONNECTOR_IDS = builtinConnectors().map((connector) => connector.id)
 
 /** Configuration as written by a user, before the schema resolves defaults. */
 type ConfigInput = {
   channels?: string[]
   layout?: ConsoleLayout
-  workbenchConnectors?: string[]
-  workbenchClassifier?: string
-  workbenchWorkspace?: string
-  workbenchModel?: string
 }
 
-/** Live workbench configuration, resolved by the Loader row. */
+/**
+ * Live workbench configuration, resolved by the Loader row.
+ *
+ * 只有**外观**留在这里。看板用哪些连接器、跑什么动作，由注册上来的连接器自己决定
+ * （`ctx.console.tasks`），不再是工作台的一行配置——一枚开关管不到别人包里的实现。
+ */
 export interface Config {
   /** Notification channels the dispatcher runs, in selection order. */
   channels: string[]
   /** View the home list opens with. */
   layout: ConsoleLayout
-  /** Board connectors switched on; an id nobody implements is dropped with a warning. */
-  workbenchConnectors: string[]
-  /** Classifier id the board routes with; an unknown id falls back to the rule classifier. */
-  workbenchClassifier: string
-  /** Directory real runs happen in; empty means the `dsh` executor is not registered. */
-  workbenchWorkspace: string
-  /** `provider/model` the LLM classifier asks; empty leaves it without a route. */
-  workbenchModel: string
 }
 
 export const Config = Schema.object({
@@ -122,18 +99,6 @@ export const Config = Schema.object({
   layout: Schema.union(['grid', 'list', 'compact'] as const)
     .default('grid')
     .description('View the home list opens with.'),
-  workbenchConnectors: Schema.array(Schema.union(CONNECTOR_IDS.map((id) => Schema.const(id))))
-    .default(['mail', 'webhook'])
-    .description('Board connectors switched on (mail and webhook work in v0; dingtalk and jira are placeholders).'),
-  workbenchClassifier: Schema.string()
-    .default(RULE_CLASSIFIER_ID)
-    .description('Classifier id the board routes with.'),
-  workbenchWorkspace: Schema.string()
-    .default('')
-    .description('Directory real DSH sessions run in; empty leaves the dsh executor unregistered.'),
-  workbenchModel: Schema.string()
-    .default('')
-    .description('provider/model the LLM classifier asks (e.g. deepseek/deepseek-chat); empty names none.'),
 }) as Schema<ConfigInput, Config>
 
 /**
@@ -150,7 +115,7 @@ export function apply(ctx: Context, config: Config): void {
    * 仍然在，连接器（邮件…）把自己的词表与动作注册进来。**只有这一个实例**：连接器
    * 优先用它，这是「规则文件只有一份状态」的实现方式。
    */
-  const decision = new DecisionEngine({
+  const decision = new TaskEngine({
     home: rulesHome(home),
     log: (line) => { ctx.logger.info(line) },
     warn: (line) => { ctx.logger.warn(line) },
@@ -162,7 +127,7 @@ export function apply(ctx: Context, config: Config): void {
     channels: () => config.channels,
     layout: () => config.layout,
     runningSessions: async () => await readRunningSessions(ctx),
-    decision,
+    tasks: decision,
   })
 
   /**
@@ -173,105 +138,27 @@ export function apply(ctx: Context, config: Config): void {
    */
   registerBuiltinChannels(host.channels, { gate: host.presence, pages: HANDED_TO_PAGE })
 
-  // The board's assembly: implementations register here, the board itself
-  // never names one. A companion plugin adds an executor, a classifier, or a
-  // connector by registering with the registries on its own mount, not by
-  // editing this file — the same extension shape as the notification channels.
-  const classifiers = new ClassifierRegistry()
-  classifiers.register(new RuleClassifier())
-  // 模型分类器：宿主组合了 `llm` 且配置里点了模型时才注册。调用形状取自宿主自己的
-  // `dsh-session-title-llm`（prepareCall → stream 的 text-delta），不是猜的。
-  ctx.inject(['llm'], (inner) => {
-    const llm = inner.get('llm') as LlmPortLike | undefined
-    if (llm === undefined) return
-    classifiers.register(new LlmClassifier({
-      llm,
-      route: () => modelRoute(config.workbenchModel),
-      fallback: new RuleClassifier(),
-    }))
-    inner.logger.info(`console: llm classifier ${config.workbenchModel === '' ? 'registered (no model configured)' : `on (${config.workbenchModel})`}`)
-  })
-  const executors = new ExecutorRegistry()
-  // `dsh` 只有真实会话这一种实现：派给 DSH 就是把卡变成一条真实会话，没有模拟版。
-  // （`codex` 仍是模拟，等它的真实接入单独做。）
-  executors.register(new SimulatedExecutor('codex', 'Codex（模拟）'))
-  // 真实会话执行器：等 `sessionController` 服务就位之后才注册。
-  //
-  // 2026-10-30 真机复核（见 `docs/workbench-session-api.md`）：宿主里有
-  // `sessionController`，`create` / `resolveAgent` / `rename` / `followup` 可从 Host
-  // 调用；`agents.createSession` **不存在**。会话事件仍走 `ctx.on('session/event')`。
-  let realRegistered = false
-  /** 为什么没有真实执行器：给连接器页用，空串表示有。 */
-  let note: ExecutorNote = 'no-session-api'
-  // `sessionController` 是本机真正能建会话的服务（mail 的分类会话就是它建的）；
-  // `agents.createSession` 在这个宿主里不存在，按它写只会注册一个永远不触发的执行器。
-  ctx.inject(['sessionController'], (inner) => {
-    if (realRegistered) return
-    const controller = inner.get('sessionController') as SessionControllerLike | undefined
-    if (config.workbenchWorkspace === '') {
-      note = 'no-workspace'
-      return
-    }
-    if (controller === undefined) return
-    // 真实执行器只依赖「建会话 + 拿 agent」两个动词，二者都由 sessionController 提供。
-    const agents: HarnessAgentsLike = {
-      createSession: async (request) => {
-        const created = await controller.create(request)
-        const resolved = await controller.resolveAgent(created.sessionId)
-        if ('error' in resolved) {
-          throw new Error(`会话已建但取不到 agent：${describeError(resolved.error)}`)
-        }
-        return { agent: resolved.agent as unknown as HarnessAgentLike }
-      },
-    }
-    const runner = createHarnessRunner({
-      agents,
-      cwd: config.workbenchWorkspace,
-      // 事件类型是宿主自己的联合类型；消费方只关心 type 与 reason.kind，所以在边界上收窄一次。
-      subscribe: (listener) => inner.on('session/event', (session, event) => {
-        listener(session as { id?: string }, event as unknown as HarnessSessionEventLike)
-      }),
-      log: (line) => {
-        inner.logger.warn(line)
-      },
-    })
-    if (runner === undefined) {
-      inner.logger.info(`console: real executor off (workspace: ${config.workbenchWorkspace === '' ? '<empty>' : config.workbenchWorkspace})`)
-      return
-    }
-    executors.register(new RealSessionExecutor(runner))
-    realRegistered = true
-    note = ''
-    inner.logger.info(`console: real executor on (workspace: ${config.workbenchWorkspace})`)
-  })
-  const connectors = new ConnectorRegistry()
-  for (const connector of builtinConnectors()) connectors.register(connector)
-  const routing = new RoutingTableStore(join(home, STATE_DIR, 'routing.json'), defaultRoutingTable(), (line) => {
-    ctx.logger.warn(line)
-  })
-  // A user finds an editable routing document instead of an absent one; a
-  // failure only means the built-in table keeps serving.
-  void routing.ensureFile(defaultRoutingTable())
-  const board = new WorkbenchBoard({
-    homeDir: home,
-    classifiers,
-    executors,
-    executorNote: () => (realRegistered ? '' : note),
-    connectors,
-    routing,
-    enabledConnectors: () => config.workbenchConnectors,
-    classifierId: () => config.workbenchClassifier,
-    warn: (line) => {
-      ctx.logger.warn(line)
+  // 看板的真相是任务链：连接器通过 `ctx.console.tasks` 把事件喂进来，规则与编排在
+  // 引擎里。装配只做两件事——把会话能力挂给工具，把任务读写给页面。
+  host.attachSessions(createWorkbenchSessionPort(ctx, (line) => { ctx.logger.warn(line) }))
+  // 内置连接器：和工作台同生命周期，装工作台就有，不需要单独安装一个包。
+  // 它走的是同一套 ctx.console.tasks API——这条是边界的检验，不是特权。
+  ctx.effect(
+    () => decision.register(createDshConnector(ctx, { log: (line) => { ctx.logger.warn(line) } })),
+    'console: the built-in DSH connector',
+  )
+  registerTasksRoutes(ctx, {
+    view: () => {
+      const state = decision.view()
+      return { tasks: state.tasks, connectors: state.connectors, revision: state.revision }
     },
+    running: () => host.state().running,
+    rhythm: () => host.state().archiveRhythm,
+    undo: async (taskId) => await decision.undo(taskId),
+    acknowledge: async (taskId, acknowledged) => await decision.acknowledge(taskId, acknowledged),
+    applyDeferred: async (deferredId) => await decision.applyDeferred(deferredId),
+    setConnector: async (id, enabled) => await decision.setConnectorEnabled(id, enabled),
   })
-  host.attachWorkbench(board)
-  // 会话能力由工作台提供：连接器只负责「说什么、在哪个目录说」。
-  host.attachSessions(createWorkbenchSessionPort(ctx, board))
-  registerWorkbenchRoutes(ctx, { board })
-  // 卸载时把最后一次写等完再走：写是合并的（一次写 + 一次补写），如果这一层不先生效，
-  // 插件热重载/停用时最后那次改动就可能只留在内存里。
-  ctx.effect(() => () => { void board.flush() }, 'console: flush the board on unload')
 
   // The Loader row can be re-applied live; reflect the new view preference
   // without a restart.
@@ -319,7 +206,6 @@ export function apply(ctx: Context, config: Config): void {
   })
 
   ctx.logger.info(`console: workbench mounted (channels: ${host.channels.list().map((channel) => channel.id).join(', ')})`)
-  ctx.logger.info(`console: board mounted (connectors: ${connectors.list().map((connector) => connector.id).join(', ')})`)
 }
 
 /**
@@ -345,14 +231,4 @@ function readRunningSessions(ctx: Context): readonly RunningSession[] {
         ...(agent.cwd === undefined ? {} : { cwd: agent.cwd }),
       }
     })
-}
-
-/** One error as a sentence (the controller reports errors as values, not throws). */
-function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const message = (error as { readonly message?: unknown }).message
-    if (typeof message === 'string') return message
-  }
-  return String(error)
 }

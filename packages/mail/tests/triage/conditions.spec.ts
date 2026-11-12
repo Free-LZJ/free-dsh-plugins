@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { parseRuleFile } from '@free-lzj/dsh-decision'
 import { builtinConditions, headerCondition, regexCondition, fromCondition, classifierCondition, attachmentCondition } from '../../src/triage/conditions.ts'
-import { normalizeCondition } from '../../src/triage/config.ts'
-import { parseRules } from '../../src/triage/rules.ts'
+import { MAIL_VOCABULARY, normalizeCondition } from '../../src/triage/config.ts'
 import type { MailSummaryLike } from '../../src/triage/types.ts'
 
 /** 造一封摘要；头部按传入的来。 */
@@ -93,7 +93,7 @@ describe('header：最有价值的那个条件', () => {
 
 describe('regex：编译失败在加载期就被拦住', () => {
   it('写错的正则拒绝整份规则文件，并指出是哪条规则', () => {
-    const parsed = parseRules(`
+    const parsed = parseRuleFile(`
 - id: bad
   name: 坏正则
   when:
@@ -102,7 +102,7 @@ describe('regex：编译失败在加载期就被拦住', () => {
       pattern: "([unclosed"
   then:
     - kind: markRead
-`)
+`, MAIL_VOCABULARY)
     expect(parsed.ok).toBe(false)
     if (parsed.ok) return
     expect(parsed.error.message).toContain('坏正则')

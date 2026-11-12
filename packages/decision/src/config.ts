@@ -140,6 +140,7 @@ export interface NormalizedRules<TCondition, TAction> {
 export function normalizeRules<TCondition, TAction>(
   input: unknown,
   vocabulary: RuleVocabulary<TCondition, TAction>,
+  options?: { readonly connector?: string },
 ): NormalizedRules<TCondition, TAction> {
   const dropped: string[] = []
   if (!Array.isArray(input)) {
@@ -188,6 +189,8 @@ export function normalizeRules<TCondition, TAction>(
     }
     usedIds.add(id)
     const label = clamped(item.label, MAX_NAME_LENGTH)
+    // 规则级 connector 覆盖顶层；顶层也没写时由调用方给的缺省（第一个注册的连接器）。
+    const connector = clamped(item.connector, MAX_NAME_LENGTH) ?? options?.connector
     rules.push({
       id,
       name,
@@ -195,6 +198,7 @@ export function normalizeRules<TCondition, TAction>(
       priority: integer(item.priority, 0, 1_000_000) ?? index * 10,
       when: when as readonly TCondition[],
       ...(label === undefined ? {} : { label }),
+      ...(connector === undefined ? {} : { connector }),
       then: then as readonly TAction[],
       ...(typeof item.stopOnMatch === 'boolean' ? { stopOnMatch: item.stopOnMatch } : {}),
     })

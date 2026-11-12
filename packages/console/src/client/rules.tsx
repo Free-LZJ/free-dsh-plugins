@@ -19,10 +19,20 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
-  Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, Input, Menu, MenuItemButton, StateDot, Tag,
+  Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, Input, Menu, MenuItemButton,
+  SegmentedControl, StateDot, Tag,
   type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from './locales.ts'
+
+/** 筛选器上的域名字：* 是所有事件，
+one 是没写归属。 */
+function scopeLabel(name: string, t: Translate): string {
+  if (name === 'all') return t('rulesScopeAll')
+  if (name === 'none') return t('ruleUnassigned')
+  if (name === '*') return t('ruleScopeAll')
+  return name
+}
 import { CLS } from './styles.ts'
 
 /* ───────────────────────────── 端口：引擎的公开面 ───────────────────────────── */
@@ -49,6 +59,8 @@ export interface TriageAction {
 export interface TriageRule {
   readonly id: string
   readonly name: string
+  /** 这条规则属于哪个域：连接器 id、'*'（任何事件），或缺省（永不执行）。 */
+  readonly connector?: string
   readonly enabled: boolean
   readonly priority: number
   readonly when: readonly TriageCondition[]
@@ -103,6 +115,8 @@ export interface TriageRules {
   readonly source: 'file' | 'default'
   readonly path: string
   readonly dropped: readonly string[]
+  /** 没写归属、因而永不执行的规则条数。 */
+  readonly unassigned: number
   /** The file's own text, so the page can show what is really on disk. */
   readonly raw?: string
   /**
@@ -431,6 +445,12 @@ function TriageBody({ t, data, triage, act }: {
 }): ReactNode {
   const { rules, runs } = data
   const now = Date.now()
+  /** 按域筛选：一条规则只在它所属连接器的事件上生效，页面得能按这个维度看。 */
+  const [scope, setScope] = useState('all')
+  const scopes = ['all', ...new Set(rules.rules.map(rule => rule.connector ?? 'none'))]
+  const shown = scope === 'all'
+    ? rules.rules
+    : rules.rules.filter(rule => (rule.connector ?? 'none') === scope)
   /** The last copy's outcome: the confirmation, or the instruction itself. */
   const [notice, setNotice] = useState('')
   /** Dry-run answers, keyed by the run they were asked from. */
@@ -498,19 +518,41 @@ function TriageBody({ t, data, triage, act }: {
         </ul>
       )}
 
-      <h3 className={CLS.viewSubheading}>{t('rulesList', { count: rules.rules.length })}</h3>
+      {rules.unassigned > 0 && (
+        <p className={CLS.viewHint} role="status">
+          {t('rulesUnassigned', { count: rules.unassigned })}
+        </p>
+      )}
+
+      <h3 className={CLS.viewSubheading}>{t('rulesList', { count: shown.length })}</h3>
       {rules.rules.length === 0
         ? <p className={CLS.empty}>{t('rulesNone')}</p>
         : (
-          <ul className={CLS.ruleList} aria-label={t('rulesList', { count: rules.rules.length })}>
-            {rules.rules.map((rule, index) => (
-              <li key={rule.id} className={CLS.ruleItem}>
-                <div className={CLS.ruleHead}>
-                  <span className={CLS.ruleOrder}>{index + 1}</span>
-                  <span className={CLS.ruleName}>{rule.name}</span>
-                  <Tag tone={rule.enabled ? 'success' : 'outline'}>
-                    {rule.enabled ? t('ruleEnabled') : t('ruleDisabled')}
-                  </Tag>
+          <>
+            {/* 按域看规则：一条规则只在它所属连接器的事件上生效，这一点得看得见。 */}
+            <div className={CLS.ruleScopes}>
+              <SegmentedControl
+                id="dsh-console-rule-scope"
+                value={scope}
+                label={t('rulesScope')}
+                options={scopes.map(name => ({ value: name, label: scopeLabel(name, t) }))}
+                onChange={(next: string) => { setScope(next) }}
+              />
+            </div>
+            <ul className={CLS.ruleList} aria-label={t('rulesList', { count: shown.length })}>
+              {shown.map((rule, index) => (
+                <li key={rule.id} className={CLS.ruleItem}>
+                  <div className={CLS.ruleHead}>
+                    <span className={CLS.ruleOrder}>{index + 1}</span>
+                    <span className={CLS.ruleName}>{rule.name}</span>
+                    <Tag tone={rule.enabled ? 'success' : 'outline'}>
+                      {rule.enabled ? t('ruleEnabled') : t('ruleDisabled')}
+                    </Tag>
+                    <Tag tone={rule.connector === undefined ? 'danger' : 'quiet'}>
+                      {rule.connector === undefined
+                        ? t('ruleUnassigned')
+                        : rule.connector === '*' ? t('ruleScopeAll') : rule.connector}
+                    </Tag>
                   <span className={CLS.ruleTools}>
                     <Button
                       size="sm"
@@ -575,6 +617,7 @@ function TriageBody({ t, data, triage, act }: {
               </li>
             ))}
           </ul>
+          </>
         )}
 
       {rules.raw === undefined

@@ -194,7 +194,7 @@ function shellFace(
       // 规则视图读的是工作台自己的引擎；这一层的用例只关心导航，所以给空引擎。
       triage: {
         rules: async () => ({
-          rules: [], source: 'file' as const, path: 'C:/dsh/dsh-console/rules/rules.yml', dropped: [], connector: true,
+          rules: [], source: 'file' as const, path: 'C:/dsh/dsh-console/rules/rules.yml', dropped: [], unassigned: 0, connector: true,
         }),
         runs: async () => [],
         setEnabled: async () => ({ ok: true }),
@@ -428,11 +428,12 @@ describe('the workbench on screen', () => {
     // 的空卡叠在一起说同一件事。
     const { face } = shellFace([])
     const boards = {
-      triage: { runs: async () => [] } as unknown as BoardFace['triage'],
+      tasks: () => [],
       running: () => [],
       rhythm: () => 'immediate' as const,
       setRhythm: () => {},
       rhythmMs: () => 0,
+      undo: async () => ({ ok: true }),
       acknowledge: async () => ({ ok: true }),
       openRules: () => {},
     } satisfies BoardFace

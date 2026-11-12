@@ -155,6 +155,7 @@ export const CLS = {
   ruleRaw: 'dshc-rule-raw',
   ruleDropped: 'dshc-rule-dropped',
   ruleList: 'dshc-rule-list',
+  ruleScopes: 'dshc-rule-scopes',
   ruleItem: 'dshc-rule-item',
   ruleHead: 'dshc-rule-head',
   ruleOrder: 'dshc-rule-order',
@@ -388,6 +389,7 @@ const CSS = `
 .${CLS.ruleRawTitle}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);cursor:pointer}
 .${CLS.ruleRaw}{margin:6px 0 0;max-height:260px;overflow:auto;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;overflow-wrap:anywhere}
 .${CLS.ruleDropped}{margin:0;padding:0 0 0 16px;font-size:11px;line-height:16px;color:var(--dsw-alias-state-warn-primary)}
+.${CLS.ruleScopes}{margin:0 0 8px}
 .${CLS.ruleList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .${CLS.ruleItem}{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill)}
 .${CLS.ruleHead}{display:flex;flex-wrap:wrap;align-items:center;gap:8px}

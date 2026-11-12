@@ -46,6 +46,15 @@ export interface Condition<TSpec extends ConditionSpecLike, TContext, TKind exte
 /** 动作配置的最低要求：能被按 kind 分发。 */
 export interface ActionSpecLike {
   readonly kind: string
+  /**
+   * 三态：`auto` 直接做、`suggest` 只建议、`off` 关掉。缺省 `auto`。
+   *
+   * 放在这里而不是各连接器的词表里，因为它是**编排**的一部分：三态怎么解释由内核
+   * 决定，连接器只负责把它原样存回规则文件。
+   */
+  readonly mode?: 'auto' | 'suggest' | 'off'
+  /** 显式延迟秒数；缺省按动作有没有副作用加撤销窗口算。 */
+  readonly delaySeconds?: number
 }
 
 /** 一个动作的实现。 */
