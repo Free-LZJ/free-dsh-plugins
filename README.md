@@ -26,7 +26,7 @@
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**）；同时是**邮件 I/O 提供方**（`ctx.mail`）。再带一套**规则分诊**：把新邮件按邮件头 / 正则 / 附件 / 模型判断分流到已读、移动、开会话、脚本、MCP、HTTP，带**命中记录与撤销**——规则状态与界面在工作台，它作为连接器注册自己的条件与动作。装了工作台时它列在工作台里，不再单独占侧边栏 |
 | [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
 | [`@free-lzj/dsh-worktree`](packages/worktree/README.md) | `0.5.0` | **工作树管理页**：按**仓库**分组列出全部工作树，可配置检出目录（默认 `<仓库>/.agents/worktrees`）、可开关「创建前拉取上游更新」；会话标题栏与空会话首屏各有一个入口，直接在新检出里开会话，也能进入 / 删除已有检出（**任何** Git 已注册的检出都能删，不只是本插件建的那几个）。原检出不动；布局与官方实验 bundle「Git 工作树」一致 |
-| [`@free-lzj/dsh-browser-use`](packages/browser-use/README.md) | `0.1.0` | 用 `@` 提一个**你自己浏览器里已经开着的标签页**，然后让 agent 读它、点它、填它、上传下载、看控制台与网络——不是新开干净窗口，BrowserSkill 的扩展带着你已有的登录态。插件里嵌了整套 BrowserSkill 工具（`bsk_session` / `bsk_page` / `bsk_inspect` / `bsk_interact` / `bsk_tabs` / `bsk_assist`，以 `mcp__browser-skill__*` 暴露）和一个 `browser-use` 技能，装它就不必再装 `browser-skill` 技能；「加一类可 @ 的东西」在 Host 侧只是再写一个 provider
+| [`@free-lzj/dsh-browser-use`](packages/browser-use/README.md) | `0.1.1` | 用 `@` 提一个**你自己浏览器里已经开着的标签页**，然后让 agent 读它、点它、填它、上传下载、看控制台与网络——不是新开干净窗口，BrowserSkill 的扩展带着你已有的登录态。插件里嵌了整套 BrowserSkill 工具（`bsk_session` / `bsk_page` / `bsk_inspect` / `bsk_interact` / `bsk_tabs` / `bsk_assist`，以 `mcp__browser-skill__*` 暴露）和一个 `browser-use` 技能，装它就不必再装 `browser-skill` 技能；「加一类可 @ 的东西」在 Host 侧只是再写一个 provider
 
 每个包的安装步骤、配置字段、面板细节与已知限制都在它自己的 README 里（上表链接）。下面是这些包共有的约定，以及本仓库自身的开发说明。
 

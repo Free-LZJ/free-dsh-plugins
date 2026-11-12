@@ -67,25 +67,57 @@ function sectionLabel(group: MentionGroup, t: (key: BrowserUseKey) => string): s
 }
 
 /**
+ * What one lookup produced.
+ *
+ * `failures` is carried rather than dropped: when every group is empty, the
+ * reason is the only useful thing the menu can show.
+ */
+interface Lookup {
+  readonly groups: readonly MentionGroup[]
+  readonly failures: readonly string[]
+}
+
+/**
  * Ask the Host what can be mentioned.
  * @param query - text after `@`.
  * @param signal - the menu's cancellation.
- * @returns every reachable group; an unreachable Host yields no rows rather than an error.
+ * @returns every reachable group, plus the providers that could not answer.
  */
-async function fetchGroups(query: string, signal: AbortSignal): Promise<readonly MentionGroup[]> {
+async function fetchGroups(query: string, signal: AbortSignal): Promise<Lookup> {
   try {
     const response = await fetch(`${MENTIONS_PATH}?q=${encodeURIComponent(query)}`, {
       signal,
       headers: { accept: 'application/json' },
     })
-    if (!response.ok) return []
+    if (!response.ok) return { groups: [], failures: [] }
     const body = await response.json() as MentionsResult
-    return Array.isArray(body.groups) ? body.groups : []
+    return {
+      groups: Array.isArray(body.groups) ? body.groups : [],
+      failures: Array.isArray(body.failures) ? body.failures : [],
+    }
   } catch {
     // The menu stays open with the file/session group; a failed lookup is not a
-    // prompt to explain itself in the middle of typing.
-    return []
+    // prompt to explain itself in the middle of typing. The Host's own sentence
+    // is shown when it answers with a reason.
+    return { groups: [], failures: [] }
   }
+}
+
+/**
+ * One non-selectable row explaining why the browser group is missing.
+ * @param failure - the Host's sentence, ready to read.
+ * @param t - the namespace's translator.
+ * @returns a single row for the menu.
+ */
+function noticeRow(failure: string, t: (key: BrowserUseKey) => string): InputTriggerCandidate[] {
+  return [{
+    name: 'browser-use:unavailable',
+    label: t('unavailable'),
+    description: failure,
+    icon: 'file',
+    section: t('sectionBrowser'),
+    value: JSON.stringify({ notice: true }),
+  }]
 }
 
 /**
@@ -135,13 +167,24 @@ export function apply(ctx: ClientContext): void {
     async candidates(_session, req) {
       // `@"` is an open quoted path: that query belongs to files alone.
       if (req.quoted === true) return []
-      const groups = await fetchGroups(req.query, req.signal)
+      const { groups, failures } = await fetchGroups(req.query, req.signal)
       if (req.signal.aborted) return []
+      if (groups.length === 0) {
+        // Nothing to offer: say why instead of leaving the group empty. Silence
+        // here reads as "this feature is broken", which is the one message the
+        // menu must not send without a reason.
+        const first = failures[0]
+        return first === undefined ? [] : noticeRow(first, t)
+      }
       return groups.flatMap(group => rowsOf(group, sectionLabel(group, t)))
     },
     onPick({ candidate }): PickOutcome {
       const value = parseValue(candidate.value)
       if (value === undefined) return undefined
+      // A notice row is a sentence, not a reference: picking it closes the menu
+      // and leaves the draft alone.
+      if (value.notice === true) return undefined
+      if (value.ref === undefined || value.label === undefined) return undefined
       const mention = `@[${value.label}](${mentionAddress(value.ref)})`
       return {
         insert: {
@@ -165,15 +208,24 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => inputTriggers.registerSource(source), 'browser-use: @ source')
 }
 
+/** What one row carries: a reference to insert, or a notice to show. */
+interface PickValue {
+  readonly notice?: boolean
+  readonly ref?: string
+  readonly label?: string
+}
+
 /**
  * Read a row's pick payload.
  * @param value - the row's opaque `value`.
- * @returns the ref and label, or undefined when the row was not ours.
+ * @returns the payload, or undefined when the row was not ours.
  */
-function parseValue(value: string | undefined): { ref: string; label: string } | undefined {
+function parseValue(value: string | undefined): PickValue | undefined {
   if (value === undefined) return undefined
   try {
-    const parsed = JSON.parse(value) as { ref?: unknown; label?: unknown }
+    const parsed = JSON.parse(value) as { notice?: unknown; ref?: unknown; label?: unknown }
+    // A notice row carries no reference at all, so it is accepted on its own.
+    if (parsed.notice === true) return { notice: true }
     if (typeof parsed.ref !== 'string' || typeof parsed.label !== 'string') return undefined
     return { ref: parsed.ref, label: parsed.label }
   } catch {

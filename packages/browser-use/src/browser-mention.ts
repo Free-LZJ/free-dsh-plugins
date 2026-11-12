@@ -9,6 +9,7 @@
  */
 
 import type { BskMcpChannel } from './mcp-tabs.ts'
+import { explainBsk } from './diagnose.ts'
 import type { MentionProvider } from './mention.ts'
 import type { BrowserTab } from './protocol.ts'
 
@@ -68,7 +69,16 @@ export function browserMentionProvider(cli: BskMcpChannel): MentionProvider {
       const needle = query.trim().toLowerCase()
       // Listing starts a session the first time, which is the one call worth
       // abandoning when the user has already typed past this menu.
-      const tabs = await cli.listUserTabs(signal)
+      let tabs: readonly BrowserTab[]
+      try {
+        tabs = await cli.listUserTabs(signal)
+      } catch (error: unknown) {
+        // `bsk` writes a precise cause and no remedy; translated here so the
+        // registry stays ignorant of browsers and the menu can show the sentence
+        // where the rows would have been.
+        const diagnosis = explainBsk(error instanceof Error ? error.message : String(error))
+        throw new Error(`${diagnosis.reason}。${diagnosis.action}`)
+      }
       if (signal.aborted) return []
       return tabs.filter(tab => matches(tab, needle)).map(tab => ({
         ref: `${PROVIDER_ID}:${tab.tabId}`,

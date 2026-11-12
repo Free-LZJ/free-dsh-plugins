@@ -84,6 +84,8 @@ export class MentionRegistry {
         return { provider, items: await provider.candidates(query, signal), failure: undefined }
       } catch (error: unknown) {
         // A provider that cannot answer is a missing section, not a failed menu.
+        // Providers translate their own failures: the registry knows nothing
+        // about what a tab or a `bsk` daemon is.
         return { provider, items: [] as readonly MentionItem[], failure: `${provider.id}: ${messageOf(error)}` }
       }
     }))
