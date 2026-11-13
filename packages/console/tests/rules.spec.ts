@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 import type { Task } from '@free-lzj/dsh-decision'
 import { registerRulesRoutes, type RulesEngine, type RulesRouteHost } from '../src/rules/index.ts'
 import {
-  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../src/paths.ts'
 
@@ -68,7 +68,6 @@ function request(options: {
 /** What the fake engine was asked to do. */
 interface Engaged {
   readonly enabled: { ruleId: string; enabled: boolean }[]
-  readonly modes: { ruleId: string; actionIndex: number; mode: string }[]
   readonly conditions: { ruleId: string; conditionIndex: number; values: readonly string[] }[]
   readonly priority: { ruleId: string; direction: string }[]
   readonly undo: string[]
@@ -123,15 +122,11 @@ function taskFixture(): Task {
 function bench(overrides: Partial<RulesEngine> = {}): Bench {
   const routes = new Map<string, Handler>()
   const written: string[] = []
-  const engaged: Engaged = { enabled: [], modes: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [] }
+  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [] }
   const engine: RulesEngine = {
     rules: () => VIEW,
     setEnabled: (ruleId, enabled) => {
       engaged.enabled.push({ ruleId, enabled })
-      return Promise.resolve({ ok: true })
-    },
-    setMode: (ruleId, actionIndex, mode) => {
-      engaged.modes.push({ ruleId, actionIndex, mode })
       return Promise.resolve({ ok: true })
     },
     setConditionValues: (ruleId, conditionIndex, values) => {
@@ -207,7 +202,7 @@ describe('the rule engine’s routes', () => {
   it('mounts every path the page speaks to', () => {
     const { routes } = bench()
     expect([...routes.keys()].sort()).toEqual([
-      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
       RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
     ].sort())
   })
@@ -247,14 +242,12 @@ describe('the rule engine’s routes', () => {
   it('passes each write through to the engine with its arguments', async () => {
     const route = bench()
     expect((await write(route, RULES_ENABLE_PATH, { ruleId: 'first', enabled: false })).status).toBe(200)
-    expect((await write(route, RULES_MODE_PATH, { ruleId: 'first', actionIndex: 2, mode: 'suggest' })).status).toBe(200)
     expect((await write(route, RULES_CONDITION_PATH, { ruleId: 'first', conditionIndex: 1, values: ['a', 7] })).status).toBe(200)
     expect((await write(route, RULES_PRIORITY_PATH, { ruleId: 'first', direction: 'up' })).status).toBe(200)
     expect((await write(route, RULES_UNDO_PATH, { runId: 'run-1' })).status).toBe(200)
     expect((await write(route, RULES_ACK_PATH, { runId: 'run-1' })).status).toBe(200)
 
     expect(route.engaged.enabled).toEqual([{ ruleId: 'first', enabled: false }])
-    expect(route.engaged.modes).toEqual([{ ruleId: 'first', actionIndex: 2, mode: 'suggest' }])
     // 非字符串的值被丢掉，而不是让引擎拿到一个它读不懂的列表。
     expect(route.engaged.conditions).toEqual([{ ruleId: 'first', conditionIndex: 1, values: ['a'] }])
     expect(route.engaged.priority).toEqual([{ ruleId: 'first', direction: 'up' }])
@@ -277,7 +270,6 @@ describe('the rule engine’s routes', () => {
   it('rejects a write whose body is missing a required field', async () => {
     const route = bench()
     expect((await write(route, RULES_ENABLE_PATH, {})).status).toBe(400)
-    expect((await write(route, RULES_MODE_PATH, { ruleId: 'first', mode: 'auto' })).status).toBe(400)
     expect((await write(route, RULES_CONDITION_PATH, { ruleId: 'first' })).status).toBe(400)
     expect((await write(route, RULES_PRIORITY_PATH, { ruleId: 'first', direction: 'sideways' })).status).toBe(400)
     expect((await write(route, RULES_UNDO_PATH, {})).status).toBe(400)

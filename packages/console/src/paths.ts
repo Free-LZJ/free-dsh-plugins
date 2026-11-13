@@ -55,9 +55,6 @@ export const RULES_RUNS_PATH = `${RULES_PREFIX}/runs`
 /** Switch one rule on or off. */
 export const RULES_ENABLE_PATH = `${RULES_PREFIX}/enable`
 
-/** Change one action's three-state mode. */
-export const RULES_MODE_PATH = `${RULES_PREFIX}/mode`
-
 /** Replace one condition's match values. */
 export const RULES_CONDITION_PATH = `${RULES_PREFIX}/condition`
 

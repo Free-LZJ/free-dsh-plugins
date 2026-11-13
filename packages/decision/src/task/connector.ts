@@ -121,24 +121,6 @@ export interface Judge {
   plan(request: MatchRequest): MatchRuntime
 }
 
-/* ─────────────────────────────── 建议 ─────────────────────────────── */
-
-/** 一个「建议执行」要推给工作台条目。 */
-export interface SuggestInput {
-  readonly task: Task
-  readonly connector: string
-  readonly kind: string
-  /** 已本地化的一行标题。 */
-  readonly title: string
-  readonly body: string
-}
-
-/** 推出去的结果；没推出去就是 undefined，节点会记一行说明。 */
-export interface SuggestAnswer {
-  readonly itemId?: string
-  readonly detail: string
-}
-
 /* ─────────────────────────────── 迁移 ─────────────────────────────── */
 
 /**
@@ -192,8 +174,6 @@ export interface TaskConnector {
    * 一个引擎有多个连接器时，用第一个提供的那份。
    */
   readonly decisionConfig?: () => DecisionConfigBase
-  /** 「建议」怎么推出去（工作台条目）。没装工作台时返回 undefined。 */
-  readonly suggest?: (input: SuggestInput) => Promise<SuggestAnswer | undefined>
   /**
    * 拿一条真实事件试跑当前规则；引擎不认识事件，所以由连接器回答。
    *

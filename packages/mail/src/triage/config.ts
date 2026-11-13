@@ -18,7 +18,7 @@ import {
 } from '@free-lzj/dsh-decision'
 import { isRecord, text } from '@free-lzj/dsh-decision'
 import type {
-  ActionKind, ActionMode, ActionSpec, ConditionKind, ConditionSpec, Config, Rule,
+  ActionKind, ActionSpec, ConditionKind, ConditionSpec, Config, Rule,
 } from './types.ts'
 
 export { isRecord, text }
@@ -39,29 +39,6 @@ const CONDITION_KINDS = new Set<string>([
 const ACTION_KINDS = new Set<string>([
   'markRead', 'flag', 'move', 'archive',
 ] satisfies ActionKind[])
-
-/** 动作三态。 */
-const ACTION_MODES = new Set<string>(['auto', 'suggest', 'off'] satisfies ActionMode[])
-
-/**
- * 不可撤销的动作默认只「建议」。
- *
- * 判据是**能不能撤销**，不是「危险不危险」：标记已读可以标回去、移动可以移回来，
- * 而跑一个脚本、调一次 MCP、发一个 HTTP 请求都收不回来。默认值只是起点，规则
- * 里写 `mode` 就能覆盖。
- */
-const DEFAULT_MODE: Readonly<Record<ActionKind, ActionMode>> = {
-  markRead: 'auto',
-  flag: 'auto',
-  move: 'auto',
-  archive: 'auto',
-  notify: 'auto',
-  session: 'auto',
-  followup: 'auto',
-  script: 'suggest',
-  mcp: 'suggest',
-  http: 'suggest',
-}
 
 /**
  * 把一条条件收成可信形状。
@@ -129,12 +106,10 @@ export function normalizeAction(input: unknown): ActionSpec | undefined {
   if (!isRecord(input)) return undefined
   const kind = named<ActionKind>(input.kind, ACTION_KINDS)
   if (kind === undefined) return undefined
-  const mode = named<ActionMode>(input.mode, ACTION_MODES)
   const delaySeconds = integer(input.delaySeconds, 0, MAX_UNDO_WINDOW_SECONDS)
   const folder = clamped(input.folder, MAX_NAME_LENGTH)
   const common = {
     kind,
-    mode: mode ?? DEFAULT_MODE[kind],
     ...(delaySeconds === undefined ? {} : { delaySeconds }),
   }
   switch (kind) {

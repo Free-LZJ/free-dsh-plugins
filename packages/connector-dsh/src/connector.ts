@@ -30,12 +30,10 @@ function field(record: Readonly<Record<string, unknown>>, key: string, limit = 4
   return clamped(record[key], limit)
 }
 
-/** 三态与延迟：编排字段，原样透传。 */
+/** 编排字段：显式延迟，原样透传。 */
 function orchestration(record: Readonly<Record<string, unknown>>): Partial<ActionSpecLike> {
-  const mode = record['mode']
   const delay = record['delaySeconds']
   return {
-    ...(mode === 'auto' || mode === 'suggest' || mode === 'off' ? { mode } : {}),
     ...(typeof delay === 'number' && Number.isInteger(delay) && delay >= 0 ? { delaySeconds: delay } : {}),
   }
 }
@@ -196,16 +194,5 @@ export function createDshConnector(ctx: ServiceLookup, options: DshConnectorOpti
       normalizeAction: normalizeDshAction,
     },
     defaultRules: '',
-    suggest: async (input) => {
-      const consolePort = ports.console
-      if (consolePort?.notify === undefined) return undefined
-      try {
-        await consolePort.notify({ title: input.title, body: input.body, tone: 'info', source: input.connector })
-        return { detail: `已建议执行 ${input.kind}` }
-      } catch (error: unknown) {
-        log(`推送建议失败：${error instanceof Error ? error.message : String(error)}`)
-        return undefined
-      }
-    },
   }
 }

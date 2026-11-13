@@ -183,7 +183,8 @@ export const llmAction: ActionNode<LlmSpec, TaskContext> = defineAction({
       let text = ''
       for await (const chunk of call.stream({
         ...(typeof call.config === 'object' && call.config !== null ? call.config as object : {}),
-        messages: [{ role: 'user', content: prompt }],
+        // 宿主的 `Message.content` 是块数组；字符串不会被拒，只会被当成空消息发出去。
+        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
         ...(spec.system === undefined ? {} : { system: spec.system }),
         purpose: 'workbench-llm',
         signal: controller.signal,

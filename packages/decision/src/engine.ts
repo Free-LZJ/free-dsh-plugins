@@ -29,7 +29,7 @@ import { runDueActions } from './actions/due.ts'
 import { undoRunById } from './actions/undo.ts'
 import type { DecisionConfigBase, RuleVocabulary } from './config.ts'
 import type { PendingRecord, PendingStore } from './pending.ts'
-import { loadRuleFile, setActionMode, setConditionValues, setRuleEnabled, swapPriority, type EditResult } from './rules.ts'
+import { loadRuleFile, setConditionValues, setRuleEnabled, swapPriority, type EditResult } from './rules.ts'
 import {
   ActionRegistry, ConditionRegistry, registerAll, type Action, type ActionSpecLike, type Condition,
   type ConditionSpecLike,
@@ -320,20 +320,6 @@ export class DecisionEngine {
    */
   async setEnabled(id: string, enabled: boolean): Promise<EngineEdit> {
     return await this.applyEdit(raw => setRuleEnabled(raw, id, enabled))
-  }
-
-  /**
-   * 改一条规则里某个动作的三态。
-   * @param id - 规则 id。
-   * @param actionIndex - 动作在 `then` 里的下标。
-   * @param mode - 目标三态。
-   * @returns 结果。
-   */
-  async setMode(id: string, actionIndex: number, mode: string): Promise<EngineEdit> {
-    if (mode !== 'auto' && mode !== 'suggest' && mode !== 'off') {
-      return { ok: false, message: `不认识的动作三态：${mode}` }
-    }
-    return await this.applyEdit(raw => setActionMode(raw, id, actionIndex, mode))
   }
 
   /**

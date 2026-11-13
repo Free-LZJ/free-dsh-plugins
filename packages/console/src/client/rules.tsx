@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
-  Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, Input, Menu, MenuItemButton,
+  Button, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, Input,
   SegmentedControl, StateDot, Tag,
   type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -48,10 +48,9 @@ export interface TriageCondition {
   readonly extensions?: readonly string[]
 }
 
-/** One action of a rule, with the three-state mode a human may flip. */
+/** One action of a rule. 动作没有开关：列在这里就会执行。 */
 export interface TriageAction {
   readonly kind: string
-  readonly mode?: 'auto' | 'suggest' | 'off'
   readonly folder?: string
 }
 
@@ -153,7 +152,6 @@ export interface TriageSource {
   runs(): Promise<readonly TriageRun[]>
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
-  setMode(ruleId: string, actionIndex: number, mode: 'auto' | 'suggest' | 'off'): Promise<TriageResult>
   /**
    * Replace one condition's match values.
    *
@@ -229,7 +227,6 @@ export function createTriageSource(): TriageSource {
     runs: async () => (await read<{ runs: readonly TriageRun[] }>('/runs')).runs,
     setEnabled: async (ruleId, enabled) => await write('/enable', { ruleId, enabled }),
     movePriority: async (ruleId, direction) => await write('/priority', { ruleId, direction }),
-    setMode: async (ruleId, actionIndex, mode) => await write('/mode', { ruleId, actionIndex, mode }),
     setCondition: async (ruleId, conditionIndex, values) =>
       await write('/condition', { ruleId, conditionIndex, values }),
     undo: async (runId) => await write('/undo', { runId }),
@@ -259,11 +256,6 @@ interface TriageSnapshot {
 
 /** How many hit records the page draws before it stops and says how many are left. */
 export const RUNS_SHOWN = 20
-
-/** Locale key naming the three action modes. */
-function modeKey(mode: 'auto' | 'suggest' | 'off'): Parameters<Translate>[0] {
-  return mode === 'suggest' ? 'ruleModeSuggest' : mode === 'off' ? 'ruleModeOff' : 'ruleModeAuto'
-}
 
 /** Locale key naming one run status. */
 function runStatusKey(status: string): Parameters<Translate>[0] {
@@ -603,15 +595,12 @@ function TriageBody({ t, data, triage, act }: {
                 <div className={CLS.ruleThen}>
                   <span className={CLS.ruleWhenLabel}>{t('ruleThen')}</span>
                   {rule.then.map((action, position) => (
-                    <ActionMode
-                      key={`${action.kind}-${String(position)}`}
-                      t={t}
-                      rule={rule}
-                      action={action}
-                      index={position}
-                      act={act}
-                      triage={triage}
-                    />
+                    <span key={`${action.kind}-${String(position)}`} className={CLS.ruleAction}>
+                      <Tag tone="outline">{action.kind}</Tag>
+                      {action.folder === undefined ? null : (
+                        <span className={CLS.ruleWhenValue}>{action.folder}</span>
+                      )}
+                    </span>
                   ))}
                 </div>
               </li>
@@ -705,56 +694,4 @@ function TriageBody({ t, data, triage, act }: {
   )
 }
 
-/**
- * One action of one rule, with a menu for its three-state mode.
- *
- * `suggest` is the interesting one: it queues the action and waits for a human,
- * so a rule can propose without touching the mailbox.
- * @param props - the rule, the action's position in it, and what a write does.
- * @returns the action line.
- */
-function ActionMode(props: {
-  readonly t: Translate
-  readonly rule: TriageRule
-  readonly action: TriageAction
-  readonly index: number
-  readonly act: (work: Promise<TriageResult>) => void
-  readonly triage: TriageSource
-}): ReactNode {
-  const [open, setOpen] = useState(false)
-  const mode = props.action.mode ?? 'auto'
-  return (
-    <span className={CLS.ruleAction}>
-      <Tag tone="outline">{props.action.kind}</Tag>
-      {props.action.folder !== undefined && <span className={CLS.ruleWhenValue}>{props.action.folder}</span>}
-      <Menu
-        open={open}
-        onClose={() => { setOpen(false) }}
-        align="end"
-        portal
-        anchor={(
-          <Button
-            size="sm"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            onClick={() => { setOpen((value) => !value) }}
-          >
-            {props.t(modeKey(mode))}
-          </Button>
-        )}
-      >
-        {(['auto', 'suggest', 'off'] as const).map((next) => (
-          <MenuItemButton
-            key={next}
-            onSelect={() => {
-              setOpen(false)
-              props.act(props.triage.setMode(props.rule.id, props.index, next))
-            }}
-          >
-            {props.t(modeKey(next))}
-          </MenuItemButton>
-        ))}
-      </Menu>
-    </span>
-  )
-}
+/* 动作行现在是纯展示：没有三态、没有菜单。要它不跑，就把动作从 `then` 里删掉。 */

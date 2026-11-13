@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises'
 import { isSeq, parseDocument, YAMLParseError, type Document } from 'yaml'
 import { isRecord, normalizeRules, type RuleVocabulary } from './config.ts'
 import { writeTextFile } from './store.ts'
-import type { ActionMode, Rule, RuleFileError } from './types.ts'
+import type { Rule, RuleFileError } from './types.ts'
 
 /** 规则文件里认识的版本号；不认识的版本拒绝加载而不是猜。 */
 export const RULES_VERSION = 1
@@ -34,6 +34,8 @@ export interface LoadedRules<TCondition, TAction> {
   readonly source: 'file' | 'default'
   /** 被丢弃的条目说明（写歪的规则），进日志用。 */
   readonly dropped: readonly string[]
+  /** 文件里还写着已废弃 `mode` 的动作数（见 `NormalizedRules.legacyModes`）。 */
+  readonly legacyModes: number
 }
 
 /** 从 yaml 的错误里取出行号（1 基，页面直接用）。 */
@@ -62,7 +64,7 @@ export function parseRuleFile<TCondition, TAction>(
   source: string,
   vocabulary: RuleVocabulary<TCondition, TAction>,
   defaultConnector?: string,
-): { ok: true; rules: readonly Rule<TCondition, TAction>[]; dropped: readonly string[] } | { ok: false; error: RuleFileError } {
+): { ok: true; rules: readonly Rule<TCondition, TAction>[]; dropped: readonly string[]; legacyModes: number } | { ok: false; error: RuleFileError } {
   let document: Document
   try {
     document = parseDocument(source)
@@ -93,7 +95,7 @@ export function parseRuleFile<TCondition, TAction>(
   const normalized = normalizeRules(root['rules'] ?? [], vocabulary, connector === undefined ? {} : { connector })
   const problem = vocabulary.validate?.(normalized.rules)
   if (problem !== undefined) return { ok: false, error: problem }
-  return { ok: true, rules: normalized.rules, dropped: normalized.dropped }
+  return { ok: true, rules: normalized.rules, dropped: normalized.dropped, legacyModes: normalized.legacyModes }
 }
 
 /**
@@ -120,18 +122,18 @@ export async function loadRuleFile<TCondition, TAction>(
     const parsed = parseRuleFile(fallback, vocabulary, defaultConnector)
     if (!parsed.ok) {
       // 发货内容自己坏了，是打包事故而不是用户配置错误，必须显式暴露。
-      return { rules: [], error: { message: `内置默认规则无法解析：${parsed.error.message}` }, source: 'default', dropped: [] }
+      return { rules: [], error: { message: `内置默认规则无法解析：${parsed.error.message}` }, source: 'default', dropped: [], legacyModes: 0 }
     }
     try {
       await writeTextFile(path, fallback)
     } catch {
       // 写不出去（只读挂载等）不影响本次生效，下一次启动再试。
     }
-    return { rules: parsed.rules, source: 'default', dropped: parsed.dropped }
+    return { rules: parsed.rules, source: 'default', dropped: parsed.dropped, legacyModes: parsed.legacyModes }
   }
   const parsed = parseRuleFile(raw, vocabulary, defaultConnector)
-  if (!parsed.ok) return { rules: [], error: parsed.error, source: 'file', dropped: [] }
-  return { rules: parsed.rules, source: 'file', dropped: parsed.dropped }
+  if (!parsed.ok) return { rules: [], error: parsed.error, source: 'file', dropped: [], legacyModes: 0 }
+  return { rules: parsed.rules, source: 'file', dropped: parsed.dropped, legacyModes: parsed.legacyModes }
 }
 
 /* ─────────────────────────── 定向修改（保留注释） ─────────────────────────── */
@@ -267,28 +269,6 @@ export function setConditionValues(
       return `规则 ${id} 的第 ${String(conditionIndex + 1)} 个条件是正则，暂不支持在这里改`
     }
     document.setIn(base, values.map(value => String(value)))
-    return undefined
-  })
-}
-
-/**
- * 改一条规则里某个动作的三态。
- * @param source - 当前文件全文。
- * @param id - 规则 id。
- * @param actionIndex - 动作在 `then` 里的下标。
- * @param mode - 目标三态。
- * @returns 新文本，或失败原因。
- */
-export function setActionMode(source: string, id: string, actionIndex: number, mode: ActionMode): EditResult {
-  return editDocument(source, (document) => {
-    const index = indexOfRule(document, id)
-    if (index === undefined) return `找不到规则 ${id}`
-    const then = document.getIn([...arrayPath(document), index, 'then'], true)
-    const items = (then as { items?: readonly unknown[] } | undefined)?.items
-    if (items === undefined || actionIndex < 0 || actionIndex >= items.length) {
-      return `规则 ${id} 没有第 ${String(actionIndex + 1)} 个动作`
-    }
-    document.setIn([...arrayPath(document), index, 'then', actionIndex, 'mode'], mode)
     return undefined
   })
 }

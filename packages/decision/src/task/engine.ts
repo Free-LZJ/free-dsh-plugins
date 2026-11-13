@@ -20,7 +20,7 @@ import type { DecisionConfigBase, RuleVocabulary } from '../config.ts'
 import { DEFAULT_DECISION_CONFIG, isRecord } from '../config.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../registry.ts'
 import {
-  loadRuleFile, setActionMode, setConditionValues, setRuleEnabled, swapPriority, type EditResult,
+  loadRuleFile, setConditionValues, setRuleEnabled, swapPriority, type EditResult,
 } from '../rules.ts'
 import type { Rule, RuleFileError } from '../types.ts'
 import { existsSync } from 'node:fs'
@@ -403,13 +403,6 @@ export class TaskEngine {
     return await this.applyEdit(raw => setRuleEnabled(raw, id, enabled))
   }
 
-  async setMode(id: string, actionIndex: number, mode: string): Promise<TaskEdit> {
-    if (mode !== 'auto' && mode !== 'suggest' && mode !== 'off') {
-      return { ok: false, message: `不认识的动作三态：${mode}` }
-    }
-    return await this.applyEdit(raw => setActionMode(raw, id, actionIndex, mode))
-  }
-
   async setConditionValues(id: string, conditionIndex: number, values: readonly string[]): Promise<TaskEdit> {
     return await this.applyEdit(raw => setConditionValues(raw, id, conditionIndex, values))
   }
@@ -453,6 +446,13 @@ export class TaskEngine {
     }
     this.dropped = loaded.dropped
     this.rulesError = undefined
+    if (loaded.legacyModes > 0) {
+      this.warn(
+        `任务引擎: 规则文件里还有 ${String(loaded.legacyModes)} 个动作写着已移除的 mode——`
+        + '动作开关没有了：mode: off 的动作按删除处理，其它值按照常执行处理。'
+        + '要让一个动作不跑，把它从 then 里删掉。',
+      )
+    }
     for (const note of this.dropped) this.warn(`任务引擎: 丢弃了一条规则（${note}）`)
     this.log(`任务引擎: 已加载 ${String(this.currentRules.length)} 条规则（来源：${this.rulesSource}）`)
     this.bump()

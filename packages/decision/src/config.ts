@@ -126,6 +126,14 @@ export interface NormalizedRules<TCondition, TAction> {
   readonly rules: readonly Rule<TCondition, TAction>[]
   /** 每条被丢弃的条目一句话，包含它在文件里的位置。 */
   readonly dropped: readonly string[]
+  /**
+   * 规则文件里还写着已废弃的 `mode: off` 的动作数。
+   *
+   * 那些动作已被当成「不存在」丢掉（与以前的语义一致：关掉 = 不做），所以要报一次，
+   * 否则文件里的开关会静默失效。`mode: auto` / `suggest` 也一样不再有意义，但它们
+   * 等于「照常执行」，不改变行为，因此只在这里一起计数、不单独区分。
+   */
+  readonly legacyModes: number
 }
 
 /**
@@ -143,8 +151,9 @@ export function normalizeRules<TCondition, TAction>(
   options?: { readonly connector?: string },
 ): NormalizedRules<TCondition, TAction> {
   const dropped: string[] = []
+  let legacyModes = 0
   if (!Array.isArray(input)) {
-    return { rules: [], dropped: ['规则文件的顶层必须是一个数组（每条规则一个元素）'] }
+    return { rules: [], dropped: ['规则文件的顶层必须是一个数组（每条规则一个元素）'], legacyModes }
   }
   const rules: Rule<TCondition, TAction>[] = []
   const usedIds = new Set<string>()
@@ -172,7 +181,20 @@ export function normalizeRules<TCondition, TAction>(
       dropped.push(`${where}（${name}）：then 必须是数组`)
       return
     }
-    const then = item.then.map(entry => vocabulary.normalizeAction(entry))
+    // 删掉的那个开关（`mode`）。旧文件里写着它的一律不计入动作：
+    // `mode: off` 的语义本来就是「不做」，按「不存在这个动作」处理最忠实；
+    // 其它值只是当初的「自动」，忽略即等于照常执行。整条规则仍然保留——
+    // 一条规则里关掉一个动作，不该连带关掉同一条规则里别的动作。
+    const rawThen = item.then.filter((entry) => {
+      if (!isRecord(entry) || entry['mode'] === undefined) return true
+      legacyModes += 1
+      return entry['mode'] !== 'off'
+    })
+    if (rawThen.length === 0 && item.then.length > 0) {
+      dropped.push(`${where}（${name}）：then 里的动作都被已废弃的 mode 关掉了，整条规则已跳过`)
+      return
+    }
+    const then = rawThen.map(entry => vocabulary.normalizeAction(entry))
     if (then.some(action => action === undefined)) {
       dropped.push(`${where}（${name}）：then 里有写歪的动作，整条规则已跳过`)
       return
@@ -204,7 +226,7 @@ export function normalizeRules<TCondition, TAction>(
     })
   })
   rules.sort((left, right) => left.priority - right.priority)
-  return { rules, dropped }
+  return { rules, dropped, legacyModes }
 }
 
 /**

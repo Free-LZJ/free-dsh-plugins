@@ -36,7 +36,7 @@ const RULES: readonly TriageRule[] = [
     enabled: true,
     priority: 10,
     when: [{ kind: 'subject', any: ['[Free-LZJ/', 'Run failed'] }],
-    then: [{ kind: 'archive', mode: 'auto' }, { kind: 'mark-read' }],
+    then: [{ kind: 'archive' }, { kind: 'mark-read' }],
   },
   {
     id: 'promo',
@@ -44,7 +44,7 @@ const RULES: readonly TriageRule[] = [
     enabled: false,
     priority: 20,
     when: [{ kind: 'header', name: 'list-id', any: ['promo.example'] }],
-    then: [{ kind: 'move', mode: 'suggest', folder: '其他文件夹/广告' }],
+    then: [{ kind: 'move', folder: '其他文件夹/广告' }],
   },
 ]
 
@@ -90,7 +90,6 @@ function engine(overrides: Partial<TriageSource> = {}) {
   const calls = {
     enabled: [] as { ruleId: string; enabled: boolean }[],
     priority: [] as { ruleId: string; direction: string }[],
-    mode: [] as { ruleId: string; index: number; mode: string }[],
     undo: [] as string[],
     tested: [] as { accountId: string; folder: string; uid: number }[],
   }
@@ -111,10 +110,6 @@ function engine(overrides: Partial<TriageSource> = {}) {
     },
     movePriority: async (ruleId, direction): Promise<TriageResult> => {
       calls.priority.push({ ruleId, direction })
-      return { ok: true }
-    },
-    setMode: async (ruleId, index, mode): Promise<TriageResult> => {
-      calls.mode.push({ ruleId, index, mode })
       return { ok: true }
     },
     setCondition: async (): Promise<TriageResult> => ({ ok: true }),
@@ -158,9 +153,10 @@ describe('the rules view on screen', () => {
     // 条件用规则文件自己的词：kind + 值，不做一层会误导人的翻译。
     expect(screen.getByText('[Free-LZJ/ · Run failed')).toBeTruthy()
     expect(screen.getByText('list-id: promo.example')).toBeTruthy()
-    // 动作与三态。
-    expect(screen.getByRole('button', { name: t('ruleModeSuggest') })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: t('ruleModeAuto') }).length).toBe(2)
+    // 动作是纯展示：列出来就会执行，没有开关可点。
+    expect(screen.getByText('archive')).toBeTruthy()
+    expect(screen.getByText('其他文件夹/广告')).toBeTruthy()
+    expect(screen.queryByRole('menuitem')).toBeNull()
     // 启停状态是文字，不是只有颜色。
     expect(screen.getByText(t('ruleEnabled'))).toBeTruthy()
     expect(screen.getByText(t('ruleDisabled'))).toBeTruthy()
@@ -192,14 +188,6 @@ describe('the rules view on screen', () => {
     expect((within(second).getByRole('button', { name: t('ruleDown') }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(within(second).getByRole('button', { name: t('ruleUp') }))
     await waitFor(() => { expect(calls.priority).toEqual([{ ruleId: 'promo', direction: 'up' }]) })
-  })
-
-  it('turns one action into a suggestion', async () => {
-    const { calls, source } = engine()
-    await draw(source)
-    fireEvent.click(screen.getAllByRole('button', { name: t('ruleModeAuto') })[0] as HTMLElement)
-    fireEvent.click(screen.getByRole('menuitem', { name: t('ruleModeSuggest') }))
-    await waitFor(() => { expect(calls.mode).toEqual([{ ruleId: 'github', index: 0, mode: 'suggest' }]) })
   })
 
   it('shows what it did, and offers undo only while the window is open', async () => {

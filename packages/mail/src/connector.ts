@@ -643,10 +643,8 @@ function emptyTask(event: TaskEvent): import('@free-lzj/dsh-decision').Task {
 
 /** 一句人话描述一个动作会做什么。 */
 function describeAction(action: ActionSpecLike): string {
-  const mode = action.mode ?? 'auto'
-  const label = mode === 'suggest' ? '建议' : mode === 'off' ? '关闭' : '自动'
   const folder = (action as { readonly folder?: string }).folder
-  return folder === undefined ? `${label}：${action.kind}` : `${label}：${action.kind} → ${folder}`
+  return folder === undefined ? action.kind : `${action.kind} → ${folder}`
 }
 
 /* ─────────────────────────────── 组装 ─────────────────────────────── */

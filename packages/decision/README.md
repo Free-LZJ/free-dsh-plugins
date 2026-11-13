@@ -10,10 +10,10 @@
 |---|---|
 | `DecisionEngine` | **可实例化的规则引擎**：规则文件读写与监听、命中记录、待确认队列、撤销、到期执行，外加两个注册表。一个引擎接一个连接器（`use()`）；没有连接器时 `view().connector === false`——那是一种说得出、也不写文件的状态 |
 | `createRunStore` | 命中记录的仓：追加、按 id 取、改状态（撤销）、按「先天数后条数」裁剪；文件读坏了回落成空历史 |
-| `createPendingStore` | 待撤销队列：按到期时间排队、取消、到期取走；**只取 `undo`，`suggest` 永远等**（否则一条建议会在两分钟后自己执行） |
+| `createPendingStore` | 待撤销队列：按到期时间排队、取消、到期取走；**只取 `undo`，`suggest` 永远等**（`suggest` 是旧数据遗留，现在已没有产生它的入口） |
 | `ConditionRegistry` / `ActionRegistry` / `registerAll` | 按 `kind` 注册与取出。泛型参数是连接器填的（配置类型、上下文类型、结果类型），所以内核不认识任何一种具体条件或动作；`clear()` 供连接器卸载时用 |
 | `parseRuleFile` / `loadRuleFile` | 规则文件：YAML 解析、版本检查、两种顶层形态（裸数组 / `version` + `rules`）、整份文件级的额外校验（由连接器提供） |
-| `setRuleEnabled` / `setActionMode` / `swapPriority` / `setConditionValues` | 保留注释的定向修改：改 `priority` 值而不是重排文件；只改条件的值、不改种类 |
+| `setRuleEnabled` / `swapPriority` / `setConditionValues` | 保留注释的定向修改：改 `priority` 值而不是重排文件；只改条件的值、不改种类 |
 | `normalizeRules` / `normalizeDecisionConfig` | 结构归一化：顶层是不是数组、`name` 有没有、id 重不重复、`priority` 是不是整数；条件与动作的字段校验由连接器注入的 `RuleVocabulary` 决定 |
 | `writeTextFile` / `readJson` / `serialWriter` | 落盘：临时文件 + rename 的原子写；串行写链（按钮与轮询可能同时在写） |
 | `runDueActions` / `undoRunById` | 到期执行与撤销的骨——引擎已经在用它们；要自己排一遍的调用方才直接调 |
@@ -72,8 +72,11 @@ engine.unuse() / engine.stop()         // 连接器卸载 / 插件停下；三�
 |---|---|
 | `setRuleEnabled(source, id, enabled)` | 一条规则的开关 |
 | `swapPriority(source, id, parsed, 'up' \| 'down')` | 与相邻规则的先后顺序 |
-| `setActionMode(source, id, actionIndex, mode)` | 一个动作的三态（auto / suggest / off） |
 | `setConditionValues(source, id, conditionIndex, values)` | 一个条件**匹配的值列表**（不动条件种类；标准形态与 `- from: [...]` 简写都认） |
+
+动作没有开关：写进 `then` 就执行，不要就删掉那一行。旧文件里的 `mode:` 在加载时被忽略，
+其中 `mode: off` 的动作按不存在处理（与以前「关掉 = 不做」一致），`legacyModes` 会报出
+还剩几个这样的动作。
 
 `setConditionValues` 的边界是刻意的：换一种判据等于换一条规则，不该在旧规则上原地改——否则
 这条规则的历史（命中记录挂在 id 上）就说不清是哪种判据产生的。

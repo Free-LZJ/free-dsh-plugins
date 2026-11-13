@@ -9,7 +9,7 @@
  */
 
 import type {
-  ActionMode, PendingRecord as CorePending, Rule as CoreRule, Run as CoreRun,
+  PendingRecord as CorePending, Rule as CoreRule, Run as CoreRun,
 } from '@free-lzj/dsh-decision'
 
 /* ───────────────────────── 对 mail 插件的结构依赖 ───────────────────────── */
@@ -140,18 +140,12 @@ export type ActionKind =
   | 'http'
 
 /**
- * 一个动作的三态。
+ * 一个动作的配置。字段名是契约，`src/actions/*` 按名字读。
  *
- * `auto` 直接做，`suggest` 只通知并等人点，`off` 跳过。默认值按「能不能撤销」
- * 定：IMAP 动作与开会话都可逆或有记录，所以 `auto`；跑脚本、调 MCP、发 HTTP
- * 不可撤销，所以默认 `suggest`。
+ * 动作没有开关：写在这条规则的 `then` 里就执行，不想要就从 `then` 里删掉。
  */
-export type { ActionMode } from '@free-lzj/dsh-decision'
-
-/** 一个动作的配置。字段名是契约，`src/actions/*` 按名字读。 */
 export interface ActionSpec {
   readonly kind: ActionKind
-  readonly mode?: ActionMode
   /** 覆盖全局撤销窗口；0 = 立即执行。 */
   readonly delaySeconds?: number
   /** `move` / `archive`：目标文件夹路径。 */

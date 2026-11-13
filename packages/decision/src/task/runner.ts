@@ -337,7 +337,6 @@ export class TaskRunner {
     const config = this.deps.config()
     const nodeId = `node-${randomUUID()}`
     const at = this.deps.now().toISOString()
-    const mode = spec.mode ?? 'auto'
     const write = async (ok: boolean, detail: string, extra: Partial<TaskNodeRecord> = {}): Promise<void> => {
       await this.deps.store.appendNode(taskId, {
         id: nodeId,
@@ -348,15 +347,11 @@ export class TaskRunner {
         actionIndex,
         ...(extra.failure === undefined ? {} : { failure: extra.failure }),
         ...(extra.sessionId === undefined ? {} : { sessionId: extra.sessionId }),
-        data: { mode, ...(extra.data ?? {}) },
+        data: { ...(extra.data ?? {}) },
       })
       this.deps.changed()
     }
 
-    if (mode === 'off') {
-      await write(true, '按配置关闭')
-      return true
-    }
     if (config.dryRun) {
       await write(true, '试运行：只记录，未执行')
       return true
@@ -366,26 +361,6 @@ export class TaskRunner {
     if (action === undefined) {
       await write(false, `本部署没有实现动作 ${spec.kind}`, { failure: 'config' })
       return false
-    }
-
-    if (mode === 'suggest') {
-      const title = `建议处理：${task.title}`
-      const body = `规则建议执行 ${spec.kind}`
-      const answer = connector.suggest === undefined
-        ? undefined
-        : await connector.suggest({ task, connector: connector.id, kind: spec.kind, title, body })
-      const dueAt = new Date(this.deps.now().getTime() + 365 * 24 * 3600 * 1000).toISOString()
-      await this.deps.deferred.add({
-        taskId,
-        nodeId,
-        connector: connector.id,
-        kind: 'suggest',
-        spec,
-        dueAt,
-        ...(answer?.itemId === undefined ? {} : { itemId: answer.itemId }),
-      })
-      await write(true, answer?.detail ?? `已建议执行 ${spec.kind}`)
-      return true
     }
 
     const delay = spec.delaySeconds ?? (action.sideEffect === true ? config.undoWindowSeconds : 0)

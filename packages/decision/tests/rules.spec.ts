@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  parseRuleFile, loadRuleFile, setActionMode, setConditionValues, setRuleEnabled, swapPriority, RULES_VERSION,
+  parseRuleFile, loadRuleFile, setConditionValues, setRuleEnabled, swapPriority, RULES_VERSION,
 } from '../src/rules.ts'
 import type { RuleVocabulary } from '../src/config.ts'
 import type { Rule } from '../src/types.ts'
@@ -205,17 +205,24 @@ describe('targeted edits keep the file readable', () => {
     expect(result).toEqual({ ok: false, error: '找不到规则 missing' })
   })
 
-  it('changes one action\u2019s mode by its position', () => {
-    const result = setActionMode(SOURCE, 'github', 1, 'suggest')
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(reread(result.text).find(rule => rule.id === 'github')?.then[1]?.mode).toBe('suggest')
-    expect(result.text).toContain('# 动作上的注释')
-  })
+  it('把写着已废弃 mode: off 的动作当成不存在，规则其余部分照旧', () => {
+    const text = [
+      'version: 1',
+      'rules:',
+      '  - name: 两条动作',
+      '    when: []',
+      '    then:',
+      '      - kind: keep',
+      '      - kind: skipped',
+      '        mode: off',
+    ].join('\n')
 
-  it('refuses an action index the rule does not have', () => {
-    const result = setActionMode(SOURCE, 'github', 9, 'auto')
-    expect(result).toEqual({ ok: false, error: '规则 github 没有第 10 个动作' })
+    const parsed = parseRuleFile(text, vocabulary)
+
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.rules[0]?.then.map(action => action.kind)).toEqual(['keep'])
+    expect(parsed.legacyModes).toBe(1)
   })
 
   it('swaps priority with the neighbour rather than reordering the file', () => {

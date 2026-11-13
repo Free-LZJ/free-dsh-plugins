@@ -220,7 +220,7 @@ function ruleOf(input: {
     '    when:',
     ...when.map(condition => `      - kind: ${condition.kind}${condition.label === undefined ? '' : `\n        label: ${condition.label}`}`),
     '    then:',
-    ...input.then.map(action => `      - kind: ${action.kind}${action.mode === undefined ? '' : `\n        mode: ${action.mode}`}`),
+    ...input.then.map(action => `      - kind: ${action.kind}`),
   ].join('\n')
 }
 
@@ -354,21 +354,7 @@ describe('规则层：首命中与 stopOnMatch', () => {
   })
 })
 
-describe('动作五分支', () => {
-  it('off 只记一行，不调用实现', async () => {
-    const calls: string[] = []
-    const { engine } = harness({
-      calls,
-      rules: rulesFile([ruleOf({ name: 'r', then: [{ kind: 'ok', mode: 'off' }] })]),
-    })
-    await engine.start()
-    await engine.emit({ type: 'fake.received', source: 'fake', payload: { id: 'd' } })
-    await engine.flush()
-    expect(calls).toEqual([])
-    expect(engine.view().tasks[0]?.nodes.some(node => node.detail === '按配置关闭')).toBe(true)
-    engine.stop()
-  })
-
+describe('动作分支', () => {
   it('dryRun 记「试运行」且不执行', async () => {
     const calls: string[] = []
     const { engine } = harness({

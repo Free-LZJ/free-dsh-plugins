@@ -69,7 +69,7 @@ await ctx.console?.notify({
 
 ### 4. 规则视图
 
-工作台第四个入口以外的那一页（`规则`）：**规则文件里现在有哪些规则**、每条规则的条件与动作（动作带 `自动 / 建议 / 关闭` 三态）、规则顺序与启停，以及引擎最近对哪些事件做了什么、还能不能撤销（含试跑）。
+工作台第四个入口以外的那一页（`规则`）：**规则文件里现在有哪些规则**、每条规则的条件与动作（动作只展示，不带开关）、规则顺序与启停，以及引擎最近对哪些事件做了什么、还能不能撤销（含试跑）。
 
 **规则状态归工作台。** 规则文件、命中记录、待确认队列、撤销与到期执行都在 [`@free-lzj/dsh-decision`](../decision/README.md) 的 `DecisionEngine` 里，由本包的 Host 半边实例化并持有，通过 `ctx.console.decision` 露给连接器；页面读的是它自己的 `/dsh-console/rules/*`，写完立刻回读，所以页面上看到的永远是引擎手上的那一份。
 
@@ -114,7 +114,7 @@ await ctx.console?.notify({
 ```ts
 const item = await ctx.console?.raise({
   title: '建议归档这封推广邮件',
-  body: '规则「推广与电子报」建议执行 move',
+  body: '规则「推广与电子报」把 1 封邮件移到了「推广」',
   source: 'mail',
   kind: 'mail',                     // 谁举起的：点按钮时路由回它
   actions: [
@@ -249,7 +249,7 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 
 ## 数据边界
 
-- **路由**：`/dsh-console/state`（读快照）、`/dsh-console/events`（SSE：状态与通知）、`/dsh-console/config`（写配置）。读路由只回答同源请求；写路由额外要求 `x-dsh-console: 1` 与 JSON content-type——跨站表单发不出这个自定义头。看板另有三条：`/dsh-console/workbench/state`（读看板）、`/dsh-console/workbench/ingest`（投递事件）、`/dsh-console/workbench/action`（派单 / 移卡 / 插话 / 暂停 / 继续 / 结束），同一套守卫；其中 ingest 目前只接受同源请求，外部 webhook 接入要先补签名校验。规则引擎另有八条：`/dsh-console/rules/state`、`/rules/runs`、`/rules/enable`、`/rules/mode`、`/rules/condition`、`/rules/priority`、`/rules/undo`、`/rules/test`，同一套守卫。
+- **路由**：`/dsh-console/state`（读快照）、`/dsh-console/events`（SSE：状态与通知）、`/dsh-console/config`（写配置）。读路由只回答同源请求；写路由额外要求 `x-dsh-console: 1` 与 JSON content-type——跨站表单发不出这个自定义头。看板另有三条：`/dsh-console/workbench/state`（读看板）、`/dsh-console/workbench/ingest`（投递事件）、`/dsh-console/workbench/action`（派单 / 移卡 / 插话 / 暂停 / 继续 / 结束），同一套守卫；其中 ingest 目前只接受同源请求，外部 webhook 接入要先补签名校验。规则引擎另有七条：`/dsh-console/rules/state`、`/rules/runs`、`/rules/enable`、`/rules/condition`、`/rules/priority`、`/rules/undo`、`/rules/test`，同一套守卫。
 - **状态**：`$DSH_HOME/dsh-console/prefs.json`（置顶 id 列表 + 当前视图），权限 `0600`，写盘走临时文件 + `rename`；读到坏 JSON 回落为空而不是让插件起不来。当前视图只有四个值住在 `main:console` 里，`focus` 对应第二个 `main` 面板 `console-focus`——切到它是 `ctx.layout.selectPanel`，而布局不持久化，所以刷新后靠这个字段恢复。看板另有 `$DSH_HOME/dsh-console/workbench.json`（卡片与会话，同一写法）和 `routing.json`（路由表，缺失时写入默认表，改坏时沿用上一版并告警）。注意力队列与自动化日志在 `records.json`（同一写法，一次落一份快照）。
 - **规则状态**：`$DSH_HOME/dsh-console/rules/` 下的 `rules.yml`（规则文件）、`runs.json`（命中记录）、`pending.json`（待确认队列：撤销窗口里的动作与等人批准的建议）。三份都是 `0600`、原子写；坏 JSON 回落成空，规则文件解析失败时**保留上一份可用规则**并报错。规则文件被监听，改完下一件事就用新规则，不用重启。首次启动时若上一版的 `$DSH_HOME/mail/triage/` 或更早的 `$DSH_HOME/mailflow/` 还在，三份文件被搬过来（**只搬不删**，旧目录留着）。
 - **通知**：条目与自动化日志落在 `records.json`（最多 50 条条目、100 条日志，旧的被挤出），重启后原样读回；不对外发送。

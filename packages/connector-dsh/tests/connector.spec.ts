@@ -211,9 +211,9 @@ describe('console:tool 触发器与词表', () => {
     expect(outcome.seed?.title).toBe('Jira 派单')
   })
 
-  it('词表只认自己的七个动作，并保留三态', () => {
+  it('词表只认自己的七个动作，动作开关不再透传', () => {
     expect(normalizeDshAction({ kind: 'session', workspace: '/tmp/x', mode: 'suggest' }))
-      .toMatchObject({ kind: 'session', workspace: '/tmp/x', mode: 'suggest' })
+      .toMatchObject({ kind: 'session', workspace: '/tmp/x' })
     expect(normalizeDshAction({ kind: 'markRead' })).toBeUndefined()
     expect(normalizeDshAction({ kind: 'llm', model: 'deepseek/deepseek-chat', maxTokens: 256 }))
       .toMatchObject({ kind: 'llm', model: 'deepseek/deepseek-chat', maxTokens: 256 })

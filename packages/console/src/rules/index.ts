@@ -24,7 +24,7 @@ import type { Task, TaskEngine } from '@free-lzj/dsh-decision'
 import { isMutationRequest, isSameOrigin, readJsonBody, respond } from '../routes.ts'
 import { STATE_DIR } from '../store.ts'
 import {
-  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_MODE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../paths.ts'
 
@@ -48,7 +48,7 @@ export function rulesHome(dshHome: string): string {
  */
 export type RulesEngine = Pick<
   TaskEngine,
-  'rules' | 'setEnabled' | 'setMode' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
+  'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -154,16 +154,6 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       if (ruleId === undefined) return { ok: false, error: 'ruleId must not be empty' }
       const enabled = (body as Record<string, unknown>)['enabled'] === true
       return { ok: true, command: async engine => await engine.setEnabled(ruleId, enabled) }
-    })
-
-    registerWrite(RULES_MODE_PATH, 'changing an action mode', (body) => {
-      const ruleId = textOf(body, 'ruleId')
-      const actionIndex = intOf(body, 'actionIndex')
-      const mode = textOf(body, 'mode')
-      if (ruleId === undefined || actionIndex === undefined || mode === undefined) {
-        return { ok: false, error: 'ruleId, actionIndex and mode are all required' }
-      }
-      return { ok: true, command: async engine => await engine.setMode(ruleId, actionIndex, mode) }
     })
 
     registerWrite(RULES_CONDITION_PATH, 'editing condition values', (body) => {
