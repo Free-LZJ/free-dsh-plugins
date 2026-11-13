@@ -301,13 +301,28 @@ function buildClassifyPrompt(spec: ClassifySpec, payload: MailEventPayload, body
   ].join('\n')
 }
 
-/** 从模型回答里挑一个合法类别。 */
-function pickLabel(answer: string, labels: readonly string[]): { label: string; confidence: number } {
-  const text = answer.toLowerCase()
-  for (const label of labels) {
-    if (text.includes(label.toLowerCase())) return { label, confidence: 0.8 }
-  }
-  return { label: 'uncertain', confidence: 0 }
+/**
+ * 从模型回答里挑一个合法类别。
+ *
+ * 分三档，从严到松：整段就是一个标签（直连模型最常给的形状）→ 去掉标点后相等
+ * → 文本里包含。先严后松是因为「回答里含标签词」并不可靠：走了带记忆注入的
+ * 网关时，回答前面会多出几行工具痕迹（实测出现过 `> OpenViking read: … done`），
+ * 按包含匹配就会被那些无关字样带偏。
+ * @param answer - 模型原始回答。
+ * @param labels - 规则声明的标签集。
+ * @returns 选中的标签与置信度；一个都没认出来时是 `uncertain`。
+ */
+export function pickLabel(answer: string, labels: readonly string[]): { label: string; confidence: number } {
+  const text = answer.toLowerCase().trim()
+  const lastLine = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '').pop() ?? ''
+  const bare = (value: string): string => value.replace(/[`"'.,!?;:()[\]{}<>\s。、，；：！？（）【】《》]+/g, '')
+  const wanted = lastLine === '' ? text : lastLine
+
+  const exact = labels.find(label => bare(label) !== '' && bare(wanted) === bare(label))
+  if (exact !== undefined) return { label: exact, confidence: 0.9 }
+
+  const loose = labels.find(label => text.includes(label.toLowerCase()))
+  return loose === undefined ? { label: 'uncertain', confidence: 0 } : { label: loose, confidence: 0.8 }
 }
 
 /**
@@ -347,21 +362,36 @@ export function createMailClassify(deps: MailConnectorDeps): ClassifyPlan {
       const body = detail?.text ?? ''
       const controller = new AbortController()
       try {
-        const call = await llm.prepareCall({ ...route, maxTokens: 32 }, controller.signal, current => current)
+        // 输出预算给足：reasoning 模型会先把预算花在思考上（实测 maxTokens 32 时
+        // 32 个 token 全是 reasoning、`finish_reason: length`、正文为空）。答案本身
+        // 只有几个字，这里买的是「思考能跑完」。
+        const call = await llm.prepareCall({ ...route, maxTokens: 4096 }, controller.signal, current => current)
         let answer = ''
+        // 收到的块按类型计数：这一层最难查的失败是「调用没报错、但一个 text-delta 都没有」，
+        // 那时唯一能区分「预算不够」和「适配器给的是别的类型」的就是这份计数。
+        const chunks = new Map<string, number>()
         for await (const chunk of call.stream({
           ...(typeof call.config === 'object' && call.config !== null ? call.config as object : {}),
-          messages: [{ role: 'user', content: buildClassifyPrompt(spec, payload, body) }],
+          // `content` 必须是块数组（宿主的 `Message.content` 是 `ContentBlock[]`）。给字符串
+          // 不会有异常，只会被当成空消息发出去——表现就是「调用成功、一个 text-delta 都没有」。
+          messages: [{ role: 'user', content: [{ type: 'text', text: buildClassifyPrompt(spec, payload, body) }] }],
           purpose: 'mail-classify',
           signal: controller.signal,
         })) {
+          const type = typeof chunk.type === 'string' ? chunk.type : '(none)'
+          chunks.set(type, (chunks.get(type) ?? 0) + 1)
           if (chunk.type === 'text-delta' && typeof chunk.text === 'string') answer += chunk.text
         }
+        const seen = [...chunks].map(([type, count]) => `${type}×${String(count)}`).join(', ')
         const picked = pickLabel(answer, spec.labels)
         return {
           status: 'continue',
           ok: picked.confidence > 0,
-          detail: picked.confidence > 0 ? `判为 ${picked.label}` : `模型没有给出可用类别（回答：${answer.trim().slice(0, 60)}）`,
+          detail: picked.confidence > 0
+            ? `判为 ${picked.label}`
+            : answer.trim() === ''
+              ? `模型没有返回文本（收到的块：${seen === '' ? '无' : seen}）`
+              : `模型没有给出可用类别（回答：${answer.trim().slice(0, 60)}）`,
           label: picked.label,
           confidence: picked.confidence,
           model,
@@ -383,16 +413,27 @@ export function createMailClassify(deps: MailConnectorDeps): ClassifyPlan {
   return {
     node,
     plan(rules) {
+      // 没配模型 = 主动选择不分类：整段跳过，链里不出现分类节点，也不会多出一条红的
+      // 「没配分类模型」。`uncertain` 仍然会传给规则，`classifier` 条件照旧不命中。
+      if (deps.config().model === '') return undefined
       const labels: string[] = []
+      // 规则里写的 `prompt` 是**标签含义**（规则文件用 YAML 锚点让几条规则共用同一段），
+      // 必须一起交给模型：只给标签名，模型只能按字面猜，`todo` 和 `dev` 这种近邻类别
+      // 就会答错。多段不同的说明按出现顺序拼接、相同文本只留一份。
+      const notes: string[] = []
       for (const rule of rules) {
         for (const condition of rule.when) {
           if (condition.kind !== 'classifier') continue
-          for (const label of (condition as { labels?: readonly string[] }).labels ?? []) {
+          const spec = condition as { labels?: readonly string[]; prompt?: unknown }
+          for (const label of spec.labels ?? []) {
             if (!labels.includes(label)) labels.push(label)
           }
+          const note = typeof spec.prompt === 'string' ? spec.prompt.trim() : ''
+          if (note !== '' && !notes.includes(note)) notes.push(note)
         }
       }
-      return labels.length === 0 ? undefined : { labels }
+      if (labels.length === 0) return undefined
+      return notes.length === 0 ? { labels } : { labels, prompt: notes.join('\n\n') }
     },
   }
 }

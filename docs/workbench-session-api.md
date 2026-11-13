@@ -70,10 +70,15 @@
 
 ```js
 const call = await ctx.llm.prepareCall({ ...route, maxTokens }, signal, (controls) => controls)
+const messages = [{ role: 'user', content: [{ type: 'text', text: prompt }] }]
 for await (const chunk of call.stream({ ...call.config, messages, system, purpose, signal })) {
   if (chunk.type === 'text-delta') text += chunk.text
 }
 ```
+
+**`content` 必须是块数组**（宿主的 `Message.content` 是 `ContentBlock[]`）。写字符串不会被
+拒，也不会抛错——它会被当成空消息发出去，于是你看到「调用成功、一个 `text-delta` 都没有、
+回答是空串」。这个坑踩过两次（mail 的分类、DSH 连接器的 `llm` 动作）。
 
 provider 名写错会得到 `no adapter registered for provider "..."`。真实的可选值只有两个：
 
