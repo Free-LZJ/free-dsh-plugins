@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-browser-use",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Drive the browser you are already signed into: mention an open tab with @, then read and operate it through BrowserSkill's own tools",
   "repository": {
     "type": "git",
