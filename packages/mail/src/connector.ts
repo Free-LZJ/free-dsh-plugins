@@ -28,6 +28,7 @@ import type {
 } from '@free-lzj/dsh-decision'
 import type { ConditionKind, ConditionSpec, Config, MailSummaryLike } from './triage/types.ts'
 import { builtinConditions, type ClassifyRequest, type ClassifyResult, type MatchContext } from './triage/conditions.ts'
+import { createMailFlowNodes } from './nodes.ts'
 import { MAIL_VOCABULARY } from './triage/config.ts'
 
 /** 事件类型名。 */
@@ -232,6 +233,7 @@ export function createMailJudge(mail: () => MailOpsLike | undefined): Judge {
           summary: payload === undefined ? emptySummary() : summaryOf(payload),
           accountName: payload?.accountName ?? '',
           ...(state.body === undefined ? {} : { body: state.body }),
+          ...(request.facts === undefined ? {} : { facts: request.facts }),
           classify: async (input: ClassifyRequest): Promise<ClassifyResult> => {
             const answer = await request.classification()
             // 条件只关心「模型说是哪一类」；置信度低于阈值按未命中处理（沿用旧语义）。
@@ -705,6 +707,7 @@ export function createMailConnector(deps: MailConnectorDeps): TaskConnector {
     note: '事件来自邮箱扫描；动作只有邮件域那四个（已读/星标/移动/归档），会话与投递归 DSH 连接器。',
     triggers: [createMailTrigger(() => deps.config().repoRoot)],
     actions: mailActions(),
+    nodes: createMailFlowNodes(deps),
     judge,
     classify: createMailClassify(deps),
     ports: createMailPorts(deps),

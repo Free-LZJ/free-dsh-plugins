@@ -16,7 +16,10 @@ import { describe, expect, it } from 'vitest'
 import type { Task } from '@free-lzj/dsh-decision'
 import { registerRulesRoutes, type RulesEngine, type RulesRouteHost } from '../src/rules/index.ts'
 import {
-  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
+  RULES_FLOW_NODE_PATH,
+  RULES_NODE_TYPES_PATH,
+  RULES_PRIORITY_PATH, RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../src/paths.ts'
 
@@ -72,6 +75,7 @@ interface Engaged {
   readonly priority: { ruleId: string; direction: string }[]
   readonly undo: string[]
   readonly acked: { runId: string; acknowledged: boolean }[]
+  readonly flowSaves: { nodeId: string }[]
   readonly tests: { accountId: string; folder: string; uid: number }[]
   readonly since: (string | undefined)[]
 }
@@ -122,7 +126,7 @@ function taskFixture(): Task {
 function bench(overrides: Partial<RulesEngine> = {}): Bench {
   const routes = new Map<string, Handler>()
   const written: string[] = []
-  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [] }
+  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [], flowSaves: [] }
   const engine: RulesEngine = {
     rules: () => VIEW,
     setEnabled: (ruleId, enabled) => {
@@ -153,6 +157,15 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
       engaged.tests.push(ref)
       return Promise.resolve({ ok: true, result: { ruleId: 'first', ruleName: '第一条', actions: [], reason: '命中第一条。', attempts: [] } })
     },
+    flowView: () => ({ flows: [] }),
+    saveFlowNode: (input) => {
+      engaged.flowSaves.push(input)
+      return Promise.resolve({ ok: true })
+    },
+    addFlowNode: () => Promise.resolve({ ok: true }),
+    removeFlowNode: () => Promise.resolve({ ok: true }),
+    relinkFlowEdge: () => Promise.resolve({ ok: true }),
+    nodeTypes: () => [],
     ...overrides,
   }
   const host: RulesRouteHost = { engine }
@@ -202,9 +215,45 @@ describe('the rule engine’s routes', () => {
   it('mounts every path the page speaks to', () => {
     const { routes } = bench()
     expect([...routes.keys()].sort()).toEqual([
-      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
+  RULES_FLOW_NODE_PATH,
+      RULES_NODE_TYPES_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
       RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
     ].sort())
+  })
+
+  it('answers the flow graph', async () => {
+    const route = bench()
+    const res = await call(route, request({ url: RULES_FLOW_PATH, headers: { 'sec-fetch-site': 'same-origin' } }))
+    expect(res.status).toBe(200)
+    expect(res.json).toMatchObject({ flows: [] })
+  })
+
+  it('answers the node type catalogue', async () => {
+    const route = bench()
+    const res = await call(route, request({ url: RULES_NODE_TYPES_PATH, headers: { 'sec-fetch-site': 'same-origin' } }))
+    expect(res.status).toBe(200)
+    expect(res.json).toMatchObject({ types: [] })
+  })
+
+  it('saves one node and passes only the fields it was given', async () => {
+    const route = bench()
+    const res = await write(route, RULES_FLOW_SAVE_PATH, {
+      nodeId: 'classify',
+      config: { labels: ['dev'] },
+      pos: { x: 10, y: 20 },
+    })
+    expect(res.status).toBe(200)
+    expect(route.engaged.flowSaves).toEqual([
+      { nodeId: 'classify', config: { labels: ['dev'] }, pos: { x: 10, y: 20 } },
+    ])
+  })
+
+  it('refuses a save without a node id', async () => {
+    const route = bench()
+    const res = await write(route, RULES_FLOW_SAVE_PATH, { config: {} })
+    expect(res.status).toBe(400)
+    expect(route.engaged.flowSaves).toEqual([])
   })
 
   it('answers the rule file to a same-origin read', async () => {

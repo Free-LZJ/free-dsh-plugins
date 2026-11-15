@@ -204,6 +204,12 @@ function shellFace(
         undo: async () => ({ ok: true }),
     acknowledge: async () => ({ ok: true }),
         testRun: async () => ({ ok: true as const, result: { ruleId: '(none)', ruleName: '没有规则命中', actions: [], reason: '试跑' } }),
+    flow: async () => ({ flows: [] }),
+    nodeTypes: async () => [],
+    saveFlowNode: async () => ({ ok: true }),
+    addFlowNode: async () => ({ ok: true }),
+    removeFlowNode: async () => ({ ok: true }),
+    relinkFlowEdge: async () => ({ ok: true }),
       },
     },
   }
@@ -306,6 +312,15 @@ describe('the workbench on screen', () => {
     render(<ConsoleShell {...face} />)
     fireEvent.click(screen.getByRole('button', { name: t('viewRules') }))
     expect(screen.getByText(t('rulesHint'))).toBeTruthy()
+    // 默认是编排视图；引擎没有图时它说「还没有节点图」，而不是给一个空壳。
+    return screen.findByText('还没有节点图。')
+  })
+
+  it('switches to the rule list and reports an empty rule file', () => {
+    const { face } = shellFace([row('mail', '邮件')])
+    render(<ConsoleShell {...face} />)
+    fireEvent.click(screen.getByRole('button', { name: t('viewRules') }))
+    fireEvent.click(screen.getByRole('button', { name: '规则列表' }))
     // 引擎回的是空规则表：页面说「一条规则也没有」，不是空壳。
     return screen.findByText(t('rulesNone'))
   })

@@ -172,42 +172,6 @@ importers:
         specifier: ~4.4.7
         version: 4.4.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1)
 
-  packages/browser-tabs:
-    devDependencies:
-      '@deepseek-ai/cordis':
-        specifier: 4.0.5
-        version: 4.0.5
-      '@deepseek-ai/dsh-client-locale':
-        specifier: 0.2.1-rc.3
-        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
-      '@deepseek-ai/dsh-client-ui-conversation':
-        specifier: 0.2.1-rc.3
-        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
-      '@deepseek-ai/dsh-client-ui-input-trigger':
-        specifier: 0.2.1-rc.3
-        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
-      '@deepseek-ai/dsh-client-ui-slots':
-        specifier: 0.2.1-rc.3
-        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
-      '@deepseek-ai/dsh-host-webserver':
-        specifier: 0.2.1-rc.3
-        version: 0.2.1-rc.3(@deepseek-ai/cordis@4.0.5)
-      '@deepseek-ai/dsh-tools':
-        specifier: 0.2.1-rc.3
-        version: 0.2.1-rc.3(216a232736cc22d421973382c4e97320)
-      '@types/node':
-        specifier: ^22.20.0
-        version: 22.20.4
-      tsdown:
-        specifier: ^0.22.2
-        version: 0.22.14(typescript@6.0.3)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.8
-        version: 4.1.11(@types/node@22.20.4)(jsdom@29.1.1)(vite@8.3.1(@types/node@22.20.4)(yaml@2.9.1))
-
   packages/browser-use:
     devDependencies:
       '@deepseek-ai/cordis':
@@ -353,6 +317,9 @@ importers:
 
   packages/decision:
     dependencies:
+      bpmn-engine:
+        specifier: 26.0.6
+        version: 26.0.6(bpmn-elements@18.1.2)(bpmn-moddle@10.3.1)(debug@4.4.3)(moddle-context-serializer@6.0.2(bpmn-moddle@10.3.1))(smqp@15.0.0)
       yaml:
         specifier: ^2.8.1
         version: 2.9.1
@@ -529,6 +496,10 @@ importers:
         version: 4.1.11(@types/node@22.20.4)(jsdom@29.1.1)(vite@8.3.1(@types/node@22.20.4)(yaml@2.9.1))
 
 packages:
+
+  '@0dep/piso@6.0.1':
+    resolution: {integrity: sha512-bUjJkEXx/wUnqRahoCta2RlsrxhR0L9zmCKkg1UuoSa3jmRaFFrgnHr7Xdew6WY8XW2d6RtAFdAxsIYryorItw==}
+    engines: {node: '>=14'}
 
   '@asamuzakjp/css-color@5.1.11':
     resolution: {integrity: sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg==}
@@ -2116,6 +2087,22 @@ packages:
   bidi-js@1.1.0:
     resolution: {integrity: sha512-fX1Onk0tdVPC7obPWB5EbJ1z7NVhLq4m2xZLq2YXBkxzMXIGRpNMU88n0EPgWseKl12J7zXs7qrDxPK4sRs2fg==}
 
+  bpmn-elements@18.1.2:
+    resolution: {integrity: sha512-Xr1r1A3EW8Tp1kapcdHMNknD58fd8/1yUa6O1Iqb7GBM3EqiR9GO7mRjVCcKaxrcEcfWO8A63/Ge2hPo3NgPsQ==}
+
+  bpmn-engine@26.0.6:
+    resolution: {integrity: sha512-cbSBkwGRroZOQ14BbU65bRIEdtJV6oHU3CRVpZZTLA4JMsPxQ0VFFWkUdSO5TK/JVuLJ+WXNUoXg6FOoNjLVtg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      bpmn-elements: '>=18.0.25'
+      bpmn-moddle: '>=9'
+      debug: '>=4'
+      moddle-context-serializer: '>=6'
+      smqp: '>=15'
+
+  bpmn-moddle@10.3.1:
+    resolution: {integrity: sha512-xjJ8GzseRkjjM0MX/rODVB6iv+rhGLt8FCHJIovLAjJsDEAUjITfyiJZYczJ4pp3wmesbY3sQR7eRT+q5uroVA==}
+
   bytes@3.1.2:
     resolution: {integrity: sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==}
     engines: {node: '>= 0.8'}
@@ -2657,6 +2644,23 @@ packages:
     resolution: {integrity: sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A==}
     engines: {node: '>=18'}
 
+  min-dash@5.1.0:
+    resolution: {integrity: sha512-HAvN6XzmCQj+js43G9sJRRw8kj/7DvoxN7qhoIN9Xo5ZN1NMljtpyKs/NunXmw0QSWwlgZzNv6tLeEa4xaZ0tg==}
+
+  moddle-context-serializer@6.0.2:
+    resolution: {integrity: sha512-LfoNK60T4BHnkuEy15aNEmF1BENz6nKMIbPldlQVtLoJXhUb/ihkAX0JkoLrpm+mZPmLPdGeKcxCYIF8gxUFcw==}
+    peerDependencies:
+      bpmn-moddle: '>=6'
+
+  moddle-xml@12.3.2:
+    resolution: {integrity: sha512-fo6DSZdLr7Lr4ydgpHbEQEXu63QxxRPNmu5k2n3B/+oRTT9ybBLrcxo/hIK6Bo16ORVtw8FoZbwRCwZRr5l19g==}
+    engines: {node: '>= 18'}
+    peerDependencies:
+      moddle: '>= 6.2.0'
+
+  moddle@8.2.1:
+    resolution: {integrity: sha512-20qzO/ZpMGO9j9gdQgXk9bfGxb9wA3JKnGth/21YZKODLrZE4RW/uVMIL5pTskYm34Z61DucBEPkq93qByNsBQ==}
+
   ms@2.0.0:
     resolution: {integrity: sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==}
 
@@ -2888,6 +2892,10 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
+  saxen@11.2.0:
+    resolution: {integrity: sha512-2bG564AAJcm/3vyZC0Uhs/mACrH+4AHMaKHKAB2M5xMqomUZa27FQ7MYaQGFKVcJk/MVzSEQ34A8QZWW+eiWEw==}
+    engines: {node: '>= 20.12'}
+
   saxes@6.0.0:
     resolution: {integrity: sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==}
     engines: {node: '>=v12.22.7'}
@@ -2925,6 +2933,10 @@ packages:
   smart-buffer@4.2.0:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
+
+  smqp@15.0.0:
+    resolution: {integrity: sha512-C/jnHLiWCsTOJeK73rccPAnSUh8+eVdFIlbOaH6lfrjLDWeJgbG+KfLGANxCH3iPg9iCRyBK8xihVLUoYnAvqw==}
+    engines: {node: '>=18'}
 
   socks@2.8.10:
     resolution: {integrity: sha512-e0VyvkVTwVYViNovRkZ9aodhxVlyoMn7eJhVUPxZ+eK9P/7CBkxvvsBOHqFPEH416726W8tLXXXjKwqgTErrCQ==}
@@ -3270,6 +3282,8 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@0dep/piso@6.0.1': {}
 
   '@asamuzakjp/css-color@5.1.11':
     dependencies:
@@ -4793,6 +4807,25 @@ snapshots:
     dependencies:
       require-from-string: 2.0.2
 
+  bpmn-elements@18.1.2:
+    dependencies:
+      '@0dep/piso': 6.0.1
+      smqp: 15.0.0
+
+  bpmn-engine@26.0.6(bpmn-elements@18.1.2)(bpmn-moddle@10.3.1)(debug@4.4.3)(moddle-context-serializer@6.0.2(bpmn-moddle@10.3.1))(smqp@15.0.0):
+    dependencies:
+      bpmn-elements: 18.1.2
+      bpmn-moddle: 10.3.1
+      debug: 4.4.3
+      moddle-context-serializer: 6.0.2(bpmn-moddle@10.3.1)
+      smqp: 15.0.0
+
+  bpmn-moddle@10.3.1:
+    dependencies:
+      min-dash: 5.1.0
+      moddle: 8.2.1
+      moddle-xml: 12.3.2(moddle@8.2.1)
+
   bytes@3.1.2: {}
 
   cac@7.0.0: {}
@@ -5497,6 +5530,22 @@ snapshots:
     dependencies:
       mime-db: 1.54.0
 
+  min-dash@5.1.0: {}
+
+  moddle-context-serializer@6.0.2(bpmn-moddle@10.3.1):
+    dependencies:
+      bpmn-moddle: 10.3.1
+
+  moddle-xml@12.3.2(moddle@8.2.1):
+    dependencies:
+      min-dash: 5.1.0
+      moddle: 8.2.1
+      saxen: 11.2.0
+
+  moddle@8.2.1:
+    dependencies:
+      min-dash: 5.1.0
+
   ms@2.0.0: {}
 
   ms@2.1.3: {}
@@ -5712,6 +5761,8 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
+  saxen@11.2.0: {}
+
   saxes@6.0.0:
     dependencies:
       xmlchars: 2.2.0
@@ -5748,6 +5799,8 @@ snapshots:
   simple-icons@16.31.0: {}
 
   smart-buffer@4.2.0: {}
+
+  smqp@15.0.0: {}
 
   socks@2.8.10:
     dependencies:

@@ -24,6 +24,7 @@ import {
   type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Translate } from './locales.ts'
+import { FlowView } from './flow-view.tsx'
 
 /** 筛选器上的域名字：* 是所有事件，
 one 是没写归属。 */
@@ -101,6 +102,14 @@ export interface TriageRun {
     readonly uid?: number
   }
   readonly actions: readonly TriageRunAction[]
+  /** 图上的足迹：带节点 id，画布用它标出哪些方块跑过。 */
+  readonly nodes?: readonly {
+    readonly nodeId?: string
+    readonly kind: string
+    readonly ok: boolean
+    readonly detail: string
+    readonly failure?: string
+  }[]
   readonly status: string
   readonly undoableUntil?: string
   /** 人已经说过「这条我看到了」：它不再占待办。 */
@@ -146,10 +155,75 @@ export type TriageTestAnswer =
   | { readonly ok: true; readonly result: TriageTest }
   | { readonly ok: false; readonly message: string }
 
+/** 图上的一个节点，按页面需要的形状。 */
+export interface TriageFlowNode {
+  readonly id: string
+  readonly type: string
+  readonly label?: string
+  readonly config?: Readonly<Record<string, unknown>>
+  readonly out?: readonly {
+    readonly to: string
+    readonly when?: readonly Readonly<Record<string, unknown>>[]
+    readonly mode?: string
+  }[]
+  readonly enabled?: boolean
+  readonly pos?: { readonly x: number; readonly y: number }
+}
+
+/** 一张流程图。 */
+export interface TriageFlow {
+  readonly id: string
+  readonly name: string
+  readonly connector: string
+  readonly nodes: readonly TriageFlowNode[]
+}
+
+/** 一种节点的配置字段声明。 */
+export interface TriageFieldSpec {
+  readonly type: string
+  readonly label?: string
+  readonly required?: boolean
+  readonly default?: unknown
+  readonly options?: readonly { readonly value: string; readonly label: string }[]
+  readonly placeholder?: string
+  readonly hint?: string
+}
+
+/** 一种节点：能放什么、要填什么。 */
+export interface TriageNodeType {
+  readonly type: string
+  readonly label: string
+  readonly group: string
+  readonly sideEffect: boolean
+  readonly config?: Readonly<Record<string, TriageFieldSpec>>
+  readonly outputs?: readonly { readonly key: string; readonly label?: string; readonly persist?: boolean }[]
+}
+
+/** 改一节节点的输入。 */
+export interface TriageFlowPatch {
+  readonly nodeId: string
+  readonly config?: Readonly<Record<string, unknown>>
+  readonly pos?: { readonly x: number; readonly y: number }
+  readonly label?: string
+  readonly enabled?: boolean
+}
+
 /** What the view needs from wherever the engine lives. */
 export interface TriageSource {
   rules(): Promise<TriageRules>
   runs(): Promise<readonly TriageRun[]>
+  /** 当前生效的图，坐标已算好。 */
+  flow(): Promise<{ readonly flows: readonly TriageFlow[]; readonly error?: string }>
+  /** 能放什么、每种要填什么。 */
+  nodeTypes(): Promise<readonly TriageNodeType[]>
+  /** 改一个节点；只写这一处。 */
+  saveFlowNode(patch: TriageFlowPatch): Promise<TriageResult>
+  /** 在 after 之后插一个节点；不传 after 表示接到末尾。 */
+  addFlowNode(input: { after?: string; type: string }): Promise<TriageResult & { nodeId?: string }>
+  /** 删一个节点，入边接到它的出边。 */
+  removeFlowNode(nodeId: string): Promise<TriageResult>
+  /** 改一条出边指向谁；	o 省略就是删掉这条边。 */
+  relinkFlowEdge(input: { from: string; index: number; to?: string }): Promise<TriageResult>
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
   /**
@@ -225,6 +299,12 @@ export function createTriageSource(): TriageSource {
   return {
     rules: async () => await read<TriageRules>('/state'),
     runs: async () => (await read<{ runs: readonly TriageRun[] }>('/runs')).runs,
+    flow: async () => await read<{ flows: readonly TriageFlow[]; error?: string }>('/flow'),
+    nodeTypes: async () => (await read<{ types: readonly TriageNodeType[] }>('/node-types')).types,
+    saveFlowNode: async (patch) => await write('/flow/save', patch),
+    addFlowNode: async (input) => await write('/flow/node', { action: 'add', ...input }),
+    removeFlowNode: async (nodeId) => await write('/flow/node', { action: 'remove', nodeId }),
+    relinkFlowEdge: async (input) => await write('/flow/node', { action: 'link', ...input }),
     setEnabled: async (ruleId, enabled) => await write('/enable', { ruleId, enabled }),
     movePriority: async (ruleId, direction) => await write('/priority', { ruleId, direction }),
     setCondition: async (ruleId, conditionIndex, values) =>
@@ -373,6 +453,8 @@ export function RulesView({ t, triage }: {
   const [unavailable, setUnavailable] = useState('')
   /** Why the last read or write did not take, or empty. */
   const [failure, setFailure] = useState('')
+  /** 编排还是列表。默认编排——规则页的第一件事是让人看懂流程。 */
+  const [view, setMode] = useState<'flow' | 'list'>('flow')
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -407,16 +489,36 @@ export function RulesView({ t, triage }: {
       <header className={CLS.viewHead}>
         <h2 className={CLS.viewHeading}>{t('rulesTitle')}</h2>
         <p className={CLS.viewHint}>{t('rulesHint')}</p>
+        <nav style={{ display: 'flex', gap: 18, marginTop: 4 }}>
+          {(['flow', 'list'] as const).map(mode => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => { setMode(mode) }}
+              style={{
+                fontSize: 13, lineHeight: '20px', padding: '2px 0', border: 'none', background: 'transparent', cursor: 'pointer',
+                color: view === mode ? 'var(--dsw-alias-text-brand, #2a4bd8)' : 'var(--dsw-alias-text-3, #8b8f99)',
+                borderBottom: view === mode ? '2px solid var(--dsw-alias-line-brand, #6b8cff)' : '2px solid transparent',
+              }}
+            >
+              {mode === 'flow' ? '编排' : '规则列表'}
+            </button>
+          ))}
+        </nav>
       </header>
       {failure === '' ? null : <p className={CLS.boardFailure} role="status">{failure}</p>}
       {unavailable !== ''
         ? <p className={CLS.empty}>{unavailable}</p>
         : data === undefined
           ? <p className={CLS.empty}>{t('boardLoading')}</p>
-          : data.rules.connector
-            ? <TriageBody t={t} data={data} triage={triage} act={act} />
-            // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把规则喂给它。
-            : <p className={CLS.empty}>{t('rulesNoConnector')}</p>}
+          : view === 'flow'
+            // 编排视图自己读图，因为图与规则列表是同一份文件的两种读法；
+            // 没有连接器时它也照样能显示（文件里可能已经有 v2 的图）。
+            ? <FlowView t={t as never} triage={triage} />
+            : data.rules.connector
+              ? <TriageBody t={t} data={data} triage={triage} act={act} />
+              // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把规则喂给它。
+              : <p className={CLS.empty}>{t('rulesNoConnector')}</p>}
     </section>
   )
 }

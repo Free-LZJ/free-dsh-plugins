@@ -74,3 +74,20 @@ export const RULES_ACK_PATH = `${RULES_PREFIX}/ack`
 
 /** Run the current rules against one event without touching it. */
 export const RULES_TEST_PATH = `${RULES_PREFIX}/test`
+
+/**
+ * 节点图：带坐标的 nodes/edges，画布直接渲染。
+ *
+ * 与 {@link RULES_STATE_PATH} 分开：那份是「规则列表」的视角，这份是「图」的视角。
+ * 同一份文件，两种读法——迁移期两者都得在，画布才不会因为文件是 v1 就打不开。
+ */
+export const RULES_FLOW_PATH = `${RULES_PREFIX}/flow`
+
+/** 改图上一个节点（配置 / 坐标 / 名字 / 启用）。只写这一处，不整图覆盖。 */
+export const RULES_FLOW_SAVE_PATH = `${RULES_PREFIX}/flow/save`
+
+/** 增删图上的节点。插入时新节点接管前一步的出路，删时把入边接到出边。 */
+export const RULES_FLOW_NODE_PATH = `${RULES_PREFIX}/flow/node`
+
+/** 已注册的节点类型：能放什么、每种要填什么。属性面板据此生成表单。 */
+export const RULES_NODE_TYPES_PATH = `${RULES_PREFIX}/node-types`

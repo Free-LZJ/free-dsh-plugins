@@ -104,6 +104,12 @@ function engine(overrides: Partial<TriageSource> = {}) {
   const source: TriageSource = {
     rules,
     runs: async () => runs(),
+    flow: overrides.flow ?? (async () => ({ flows: [] })),
+    nodeTypes: overrides.nodeTypes ?? (async () => []),
+    saveFlowNode: overrides.saveFlowNode ?? (async () => ({ ok: true })),
+    addFlowNode: overrides.addFlowNode ?? (async () => ({ ok: true })),
+    removeFlowNode: overrides.removeFlowNode ?? (async () => ({ ok: true })),
+    relinkFlowEdge: overrides.relinkFlowEdge ?? (async () => ({ ok: true })),
     setEnabled: async (ruleId, enabled): Promise<TriageResult> => {
       calls.enabled.push({ ruleId, enabled })
       return { ok: true }
@@ -130,7 +136,16 @@ function engine(overrides: Partial<TriageSource> = {}) {
 /** Render the view and wait for the first read to land. */
 async function draw(source: TriageSource): Promise<void> {
   render(<RulesView t={t} triage={source} />)
+  // 规则页默认落在编排视图；这些用例讲的是列表，所以先切过去。
+  fireEvent.click(await screen.findByRole('button', { name: '规则列表' }))
   await screen.findByRole('list', { name: t('rulesList', { count: 2 }) })
+}
+
+/** 渲染规则页并切到列表视图；多数用例讲的是列表。 */
+async function renderList(source: TriageSource): Promise<{ readonly container: HTMLElement }> {
+  const { container } = render(<RulesView t={t} triage={source} />)
+  fireEvent.click(await screen.findByRole('button', { name: '规则列表' }))
+  return { container }
 }
 
 /** The rule list, as opposed to the hit records that repeat the same names. */
@@ -146,16 +161,17 @@ function ruleOf(name: string): HTMLElement {
 describe('the rules view on screen', () => {
   it('draws each rule with its conditions and its actions', async () => {
     const { source } = engine()
-    render(<RulesView t={t} triage={source} />)
+    await renderList(source)
     await screen.findByRole('list', { name: t('rulesList', { count: 2 }) })
     expect(within(ruleList()).getByText('GitHub 通知')).toBeTruthy()
     expect(within(ruleList()).getByText('推广与电子报')).toBeTruthy()
     // 条件用规则文件自己的词：kind + 值，不做一层会误导人的翻译。
-    expect(screen.getByText('[Free-LZJ/ · Run failed')).toBeTruthy()
-    expect(screen.getByText('list-id: promo.example')).toBeTruthy()
+    // 限定在列表里找：流程图上也会出现同样的文字，那是同一份数据画两遍。
+    expect(within(ruleList()).getByText('[Free-LZJ/ · Run failed')).toBeTruthy()
+    expect(within(ruleList()).getByText('list-id: promo.example')).toBeTruthy()
     // 动作是纯展示：列出来就会执行，没有开关可点。
-    expect(screen.getByText('archive')).toBeTruthy()
-    expect(screen.getByText('其他文件夹/广告')).toBeTruthy()
+    expect(within(ruleList()).getByText('archive')).toBeTruthy()
+    expect(within(ruleList()).getByText('其他文件夹/广告')).toBeTruthy()
     expect(screen.queryByRole('menuitem')).toBeNull()
     // 启停状态是文字，不是只有颜色。
     expect(screen.getByText(t('ruleEnabled'))).toBeTruthy()
@@ -164,7 +180,7 @@ describe('the rules view on screen', () => {
 
   it('says where the rules came from without printing a local path', async () => {
     const { source } = engine()
-    render(<RulesView t={t} triage={source} />)
+    await renderList(source)
     // 抬头只说「来自文件」；本机绝对路径收进 title，点开原文时才在折叠区里看到。
     const line = await screen.findByText(t('rulesSource', { source: t('rulesSourceFile') }))
     expect(line.getAttribute('title')).toBe('C:/dsh/dsh-console/rules/rules.yml')
@@ -209,7 +225,7 @@ describe('the rules view on screen', () => {
     const { source } = engine({
       rules: async () => { throw new TriageUnavailable(500) },
     })
-    render(<RulesView t={t} triage={source} />)
+    await renderList(source)
     expect(await screen.findByText(t('rulesUnavailable'))).toBeTruthy()
     expect(screen.queryByText(t('rulesNone'))).toBeNull()
     expect(screen.queryByText(t('rulesNoConnector'))).toBeNull()
@@ -227,7 +243,7 @@ describe('the rules view on screen', () => {
         unassigned: 0,
       }),
     })
-    render(<RulesView t={t} triage={source} />)
+    await renderList(source)
     expect(await screen.findByText(t('rulesNoConnector'))).toBeTruthy()
     expect(screen.queryByText(t('rulesNone'))).toBeNull()
     expect(screen.queryByText(t('rulesUnavailable'))).toBeNull()
@@ -245,7 +261,7 @@ describe('the rules view on screen', () => {
         unassigned: 0,
       }),
     })
-    render(<RulesView t={t} triage={source} />)
+    await renderList(source)
     expect(await screen.findByText(new RegExp(t('rulesParseError', { message: 'unexpected key "whenn"' })))).toBeTruthy()
     expect(screen.getByText(new RegExp(t('rulesLine', { line: 12 })))).toBeTruthy()
     expect(screen.getByText(new RegExp('priority 不是数字'))).toBeTruthy()

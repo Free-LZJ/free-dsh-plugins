@@ -24,7 +24,11 @@ import type { Task, TaskEngine } from '@free-lzj/dsh-decision'
 import { isMutationRequest, isSameOrigin, readJsonBody, respond } from '../routes.ts'
 import { STATE_DIR } from '../store.ts'
 import {
-  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_FLOW_PATH,
+  RULES_FLOW_SAVE_PATH,
+  RULES_FLOW_NODE_PATH,
+  RULES_NODE_TYPES_PATH,
+  RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../paths.ts'
 
@@ -48,7 +52,8 @@ export function rulesHome(dshHome: string): string {
  */
 export type RulesEngine = Pick<
   TaskEngine,
-  'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
+  | 'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
+  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -143,6 +148,79 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
     register(RULES_STATE_PATH, guard((_req, res) => {
       respond(res, 200, host.engine.rules())
     }, 'reading rule file'), 'console.rules-state-route')
+
+    // 节点图：画布要的那一份。坐标在这里就算好，前端只管画。
+    register(RULES_FLOW_PATH, guard((_req, res) => {
+      respond(res, 200, host.engine.flowView())
+    }, 'reading flow graph'), 'console.rules-flow-route')
+
+    // 能放什么。属性面板靠它生成表单，所以字段表也一并给出去。
+    register(RULES_NODE_TYPES_PATH, guard((_req, res) => {
+      respond(res, 200, { types: host.engine.nodeTypes() })
+    }, 'reading node types'), 'console.rules-node-types-route')
+
+    // 改一个节点。坐标、配置、名字、启用都走这里；整图不交上来，避免覆盖别人的改动。
+    registerWrite(RULES_FLOW_SAVE_PATH, 'saving a flow node', (body) => {
+      const nodeId = textOf(body, 'nodeId')
+      if (nodeId === undefined) return { ok: false, error: 'nodeId must not be empty' }
+      const record = isObject(body) ? body : {}
+      const config = record['config']
+      const rawPos = record['pos']
+      const x = isObject(rawPos) ? rawPos['x'] : undefined
+      const y = isObject(rawPos) ? rawPos['y'] : undefined
+      const label = record['label']
+      const enabled = record['enabled']
+      return {
+        ok: true,
+        command: engine => engine.saveFlowNode({
+          nodeId,
+          ...(isObject(config) ? { config } : {}),
+          ...(typeof x === 'number' && typeof y === 'number' ? { pos: { x, y } } : {}),
+          ...(typeof label === 'string' ? { label } : {}),
+          ...(typeof enabled === 'boolean' ? { enabled } : {}),
+        }),
+      }
+    })
+
+    // 增删节点与改边指向。插入时新节点接管前一步的出路，删除时入边接到出边——
+    // 都不用手动连线；要换指向就单独说一条边。
+    registerWrite(RULES_FLOW_NODE_PATH, 'editing the flow structure', (body) => {
+      const record = isObject(body) ? body : {}
+      if (record['action'] === 'link') {
+        const from = textOf(body, 'from')
+        const index = intOf(body, 'index')
+        if (from === undefined || index === undefined) {
+          return { ok: false, error: 'from and index are required' }
+        }
+        const to = textOf(body, 'to')
+        return {
+          ok: true,
+          command: engine => engine.relinkFlowEdge({
+            from,
+            index,
+            ...(to === undefined ? {} : { to }),
+          }),
+        }
+      }
+      if (record['action'] === 'remove') {
+        const nodeId = textOf(body, 'nodeId')
+        if (nodeId === undefined) return { ok: false, error: 'nodeId must not be empty' }
+        return { ok: true, command: engine => engine.removeFlowNode(nodeId) }
+      }
+      if (record['action'] !== 'add') return { ok: false, error: 'action must be add or remove' }
+      const type = textOf(body, 'type')
+      if (type === undefined) return { ok: false, error: 'type must not be empty' }
+      const after = textOf(body, 'after')
+      const config = record['config']
+      return {
+        ok: true,
+        command: engine => engine.addFlowNode({
+          type,
+          ...(after === undefined ? {} : { after }),
+          ...(isObject(config) ? { config } : {}),
+        }),
+      }
+    })
 
     register(RULES_RUNS_PATH, guard((req, res) => {
       const since = queryOf(req).get('since')
@@ -268,6 +346,19 @@ function toRunView(task: Task): Record<string, unknown> {
       : (typeof ruleData.label === 'string' ? ruleData.label : ''),
     event: task.event.payload,
     actions,
+    /**
+     * 图上的足迹：每一格带着它在图里的节点 id，画布据此把方块标成成了还是失败了。
+     *
+     * 与 ctions 分开：那一份是「这条规则做了什么」，筛掉了触发与分类，给列表看；
+     * 这一份是「图上哪些方块跑过了」，给画布看，一格都不筛。
+     */
+    nodes: task.nodes.map(node => ({
+      ...(node.nodeId === undefined ? {} : { nodeId: node.nodeId }),
+      kind: node.kind,
+      ok: node.ok,
+      detail: node.detail,
+      ...(node.failure === undefined ? {} : { failure: node.failure }),
+    })),
     status: task.status,
     ...(task.undoableUntil === undefined ? {} : { undoableUntil: task.undoableUntil }),
     ...(task.acknowledged === true ? { acknowledged: true } : {}),
@@ -280,6 +371,12 @@ function textOf(body: unknown, key: string): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
   return trimmed === '' ? undefined : trimmed
+}
+
+/** 一个 JSON 对象字段是不是对象；
+ull 与数组都不算。 */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** One non-negative integer field, or undefined (a JSON number or the text a form sends). */

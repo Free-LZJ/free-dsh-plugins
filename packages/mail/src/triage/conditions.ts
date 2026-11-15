@@ -28,6 +28,12 @@ export interface MatchContext {
   readonly body?: string
   /** 分类通道；只有 `classifier` 会调它。 */
   readonly classify?: (request: ClassifyRequest) => Promise<ClassifyResult>
+  /**
+   * 已经算好的分类结果（节点图里的 classify 节点产出）。
+   *
+   * 有它时 `classifier` 条件不再调模型——图里已经花过那一次调用了。
+   */
+  readonly facts?: { readonly label?: string; readonly confidence?: number }
 }
 
 /** 交给分类通道的东西。 */
@@ -203,16 +209,22 @@ export const classifierCondition: Condition = {
   needsBody: true,
   async: true,
   test: async (spec, context) => {
-    if (context.classify === undefined) return false
     const labels = spec.labels ?? []
-    const body = context.body ?? context.summary.snippet
-    const result = await context.classify({
-      summary: context.summary,
-      accountName: context.accountName,
-      body,
-      labels,
-      ...(spec.prompt === undefined ? {} : { prompt: spec.prompt }),
-    })
+    // 节点图里已经由 classify 节点问过模型了：直接用结果，别再花一次调用。
+    // 旧规则列表路径没有预判结果，就现问。
+    const known = context.facts?.label
+    const result = known !== undefined && known !== ''
+      ? { label: known }
+      : context.classify === undefined
+        ? undefined
+        : await context.classify({
+          summary: context.summary,
+          accountName: context.accountName,
+          body: context.body ?? context.summary.snippet,
+          labels,
+          ...(spec.prompt === undefined ? {} : { prompt: spec.prompt }),
+        })
+    if (result === undefined) return false
     // 声明了标签集就要求答案落在集合里；没声明则任何非空标签都算命中。
     if (labels.length > 0 && !labels.includes(result.label)) return false
     return result.label !== '' && result.label !== 'uncertain'

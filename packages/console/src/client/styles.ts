@@ -155,6 +155,17 @@ export const CLS = {
   ruleRaw: 'dshc-rule-raw',
   ruleDropped: 'dshc-rule-dropped',
   ruleList: 'dshc-rule-list',
+  ruleTree: 'dshc-rule-tree',
+  ruleTreeTrigger: 'dshc-rule-tree-trigger',
+  ruleTreeStem: 'dshc-rule-tree-stem',
+  ruleTreeFan: 'dshc-rule-tree-fan',
+  ruleTreeCol: 'dshc-rule-tree-col',
+  ruleTreeNode: 'dshc-rule-tree-node',
+  ruleTreeNodeOff: 'dshc-rule-tree-node-off',
+  ruleTreeName: 'dshc-rule-tree-name',
+  ruleTreeWhen: 'dshc-rule-tree-when',
+  ruleTreeActions: 'dshc-rule-tree-actions',
+  ruleTreeAction: 'dshc-rule-tree-action',
   ruleScopes: 'dshc-rule-scopes',
   ruleItem: 'dshc-rule-item',
   ruleHead: 'dshc-rule-head',
@@ -249,7 +260,22 @@ const CSS = `
 .${CLS.body}{display:flex;flex:1;flex-direction:column;gap:16px;min-height:0;overflow-y:auto;padding:16px 28px 32px 20px}
 .${CLS.body}>*{width:100%;max-width:1440px;margin-right:auto;margin-left:auto}
 .${CLS.view}{display:flex;flex-direction:column;gap:10px}
-.${CLS.viewHead}{display:flex;flex-direction:column;gap:2px}
+/* 规则树：一个触发节点，横排到每条规则，再竖排到它自己的动作。连线只有 0.5px
+   细线——横线是一条贯穿的「总线」，每列从它上面垂下一根。规则多到挤不下时整棵树
+   横向滚动，而不是把节点压扁。 */
+.${CLS.ruleTree}{display:flex;flex-direction:column;align-items:center;overflow-x:auto;padding:6px 0 10px}
+.${CLS.ruleTreeTrigger}{padding:6px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill);font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}
+.${CLS.ruleTreeStem}{width:0;height:14px;border-left:0.5px solid var(--dsw-alias-border-l3)}
+.${CLS.ruleTreeFan}{position:relative;display:flex;align-items:flex-start;gap:20px;padding-top:14px}
+.${CLS.ruleTreeFan}::before{content:'';position:absolute;top:0;left:0;right:0;border-top:0.5px solid var(--dsw-alias-border-l3)}
+.${CLS.ruleTreeCol}{position:relative;display:flex;flex-direction:column;align-items:center;min-width:0}
+.${CLS.ruleTreeCol}::before{content:'';position:absolute;top:0;left:50%;height:14px;border-left:0.5px solid var(--dsw-alias-border-l3)}
+.${CLS.ruleTreeNode}{box-sizing:border-box;width:176px;padding:6px 8px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-settings-card-fill);font-size:12px;line-height:18px}
+.${CLS.ruleTreeNodeOff}{opacity:0.55}
+.${CLS.ruleTreeName}{display:block;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.ruleTreeWhen}{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}
+.${CLS.ruleTreeActions}{display:flex;flex-direction:column;gap:4px;width:100%;padding-top:10px}
+.${CLS.ruleTreeAction}{padding:3px 8px;border:0.5px dashed var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);text-align:center}.${CLS.viewHead}{display:flex;flex-direction:column;gap:2px}
 .${CLS.viewHeading}{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.viewHint}{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.viewMeta}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
