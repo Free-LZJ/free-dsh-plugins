@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="draw.io">
+  <diagram name="旧规则列表与新节点图对照" id="rule-orch-old-new">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1180" pageHeight="740" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="spacer" value="" style="fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1160" height="720" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="旧：规则列表 + then 数组     →     新：节点图（动作是节点）" style="text;html=1;align=center;fontSize=16;fontStyle=1;fontColor=#1a237e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1080" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="oldBox" value="旧结构（version: 1）" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="330" height="530" as="geometry"/>
+        </mxCell>
+        <mxCell id="o1" value="rules:&#xa;  - id: github-do&#xa;    priority: 12&#xa;    when:&#xa;      - from: notifications@github.com&#xa;      - classifier: [github-action]&#xa;    then:&#xa;      - markRead&#xa;      - session&#xa;      - notify" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#ffffff;strokeColor=#666666;fontSize=10;fontFamily=Courier New;" vertex="1" parent="oldBox"><mxGeometry x="20" y="45" width="290" height="170" as="geometry"/></mxCell>
+        <mxCell id="o2" value="rules:&#xa;  - id: promo&#xa;    priority: 20&#xa;    when:&#xa;      - header: list-unsubscribe&#xa;    then:&#xa;      - markRead&#xa;      - move: 推广" style="rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#ffffff;strokeColor=#666666;fontSize=10;fontFamily=Courier New;" vertex="1" parent="oldBox"><mxGeometry x="20" y="235" width="290" height="130" as="geometry"/></mxCell>
+        <mxCell id="o3" value="问题：&#xa;· 动作是数组元素，没有端口、连不了线&#xa;· 分支藏在 priority 排序里，是隐式 goto&#xa;· 一条规则内不能再分叉&#xa;· 没有循环、并行、子流程&#xa;· 图只能从顺序反推，画出来是死的" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="oldBox"><mxGeometry x="20" y="385" width="290" height="120" as="geometry"/></mxCell>
+
+        <mxCell id="arrow" value="迁移" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1a237e;strokeWidth=3;fontColor=#1a237e;fontSize=12;fontStyle=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="oldBox" target="newBox"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="newBox" value="新结构（version: 2）" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="70" width="720" height="530" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="n1" value="trigger&#xa;mail.received" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="20" y="45" width="130" height="46" as="geometry"/></mxCell>
+        <mxCell id="n2" value="classify&#xa;labels + prompt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="185" y="45" width="130" height="46" as="geometry"/></mxCell>
+        <mxCell id="n3" value="mail.fetch&#xa;正文 → memory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="350" y="45" width="130" height="46" as="geometry"/></mxCell>
+        <mxCell id="n4" value="switch" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="520" y="30" width="140" height="76" as="geometry"/></mxCell>
+
+        <mxCell id="n5" value="session&#xa;runner: dsh-session" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="70" y="190" width="150" height="46" as="geometry"/></mxCell>
+        <mxCell id="n6" value="notify" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="270" y="190" width="130" height="46" as="geometry"/></mxCell>
+        <mxCell id="n7" value="markRead" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="70" y="300" width="150" height="46" as="geometry"/></mxCell>
+        <mxCell id="n8" value="move&#xa;folder: 推广" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="270" y="300" width="130" height="46" as="geometry"/></mxCell>
+        <mxCell id="n9" value="end" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="newBox"><mxGeometry x="460" y="300" width="120" height="46" as="geometry"/></mxCell>
+
+        <mxCell id="q1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="newBox" source="n1" target="n2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="q2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="newBox" source="n2" target="n3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="q3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="newBox" source="n3" target="n4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="q4" value="label in [github-action]" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;fontColor=#333;fontSize=10;exitX=0.2;exitY=1;entryX=0.85;entryY=0;" edge="1" parent="newBox" source="n4" target="n5"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="548" y="150"/><mxPoint x="198" y="150"/></Array></mxGeometry></mxCell>
+        <mxCell id="q5" value="header: list-unsubscribe" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d6b656;strokeWidth=2;fontColor=#333;fontSize=10;exitX=0.2;exitY=1;entryX=0.85;entryY=0;" edge="1" parent="newBox" source="n4" target="n7"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="528" y="265"/><mxPoint x="198" y="265"/></Array></mxGeometry></mxCell>
+        <mxCell id="q6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="newBox" source="n5" target="n6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="q7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="newBox" source="n7" target="n8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="q8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="newBox" source="n6" target="n9"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="470" y="213"/><mxPoint x="520" y="213"/></Array></mxGeometry></mxCell>
+        <mxCell id="q9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" edge="1" parent="newBox" source="n8" target="n9"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="452" y="323"/><mxPoint x="520" y="323"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="note" value="动作成为节点后才有端口与入出边：可以插条件、可以被 loop 包住、可以并行扇出后 join 汇合、可以被 call 引用的子流程复用。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="60" y="620" width="1020" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="note2" value="classify 与 mail.fetch 都是动作节点：它们有成本、会失败、要看到结果。做成节点后，switch 的条件是纯函数——只读上下文，不做 IO。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#d6b656;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="60" y="650" width="1020" height="24" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

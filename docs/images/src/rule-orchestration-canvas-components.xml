@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="draw.io">
+  <diagram name="流程编排页组件树" id="rule-orch-canvas">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1140" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="spacer" value="" style="fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1120" height="740" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="流程编排页 — 组件结构与交互" style="text;html=1;align=center;fontSize=16;fontStyle=1;fontColor=#1a237e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1040" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="frame" value="规则页（rules.tsx）" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="1040" height="560" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="tabs" value="顶部切换：列表 | 编排（默认落在编排）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="frame"><mxGeometry x="20" y="40" width="400" height="36" as="geometry"/></mxCell>
+
+        <mxCell id="listView" value="列表视图&#xa;（现有 RulesView 保留）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=11;dashed=1;" vertex="1" parent="frame"><mxGeometry x="20" y="90" width="220" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="flowView" value="编排视图" style="swimlane;startSize=26;fillColor=#e1d5e7;strokeColor=#9673a6;html=1;fontSize=12;fontStyle=1;" vertex="1" parent="frame"><mxGeometry x="260" y="90" width="760" height="440" as="geometry"/></mxCell>
+
+        <mxCell id="palette" value="palette.tsx&#xa;节点库&#xa;────────&#xa;trigger&#xa;control&#xa;（switch / parallel /&#xa; join / loop / call / end）&#xa;action&#xa;（classify / mail.fetch /&#xa; markRead / move / notify /&#xa; session / script / mcp / http）&#xa;────────&#xa;来源：GET /rules/node-types" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=4;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="flowView"><mxGeometry x="14" y="36" width="180" height="300" as="geometry"/></mxCell>
+
+        <mxCell id="canvas" value="canvas.tsx&#xa;React Flow 画布&#xa;────────&#xa;· 从节点库拖入&#xa;· 节点右圆点拖到另一节点连线&#xa;· 点节点 → 面板&#xa;· 双击标题改名&#xa;· Delete 删节点与边&#xa;· 滚轮缩放 / 空白平移&#xa;────────&#xa;布局：resolvePositions()&#xa;有 pos 的用 pos，其余 dagre 补" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=4;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="flowView"><mxGeometry x="210" y="36" width="300" height="300" as="geometry"/></mxCell>
+
+        <mxCell id="inspector" value="inspector.tsx&#xa;属性面板&#xa;────────&#xa;· 按 config schema 生成表单&#xa;· string / text / number /&#xa;  boolean / enum / json&#xa;· runners 下拉（换实现）&#xa;· 无 schema → JSON 编辑&#xa;────────&#xa;来源：该节点的 NodeType" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=4;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="flowView"><mxGeometry x="530" y="36" width="212" height="300" as="geometry"/></mxCell>
+
+        <mxCell id="toolbar" value="工具栏：保存 · 撤销 · 重新布局 · 试跑 · 运行痕迹开关" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="flowView"><mxGeometry x="14" y="352" width="728" height="36" as="geometry"/></mxCell>
+
+        <mxCell id="serialize" value="serialize.ts：画布状态 → Flow 结构 → POST /rules/flow/save（带 revision，冲突返回 409）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="frame"><mxGeometry x="260" y="540" width="760" height="30" as="geometry"/></mxCell>
+
+        <mxCell id="io" value="数据来源" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="650" width="1040" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="io1" value="GET /rules/flow&#xa;图 + 布局" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="io"><mxGeometry x="20" y="36" width="130" height="34" as="geometry"/></mxCell>
+        <mxCell id="io2" value="GET /rules/node-types&#xa;可用节点与 schema" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="io"><mxGeometry x="175" y="36" width="170" height="34" as="geometry"/></mxCell>
+        <mxCell id="io3" value="GET /rules/runs&#xa;执行痕迹（高亮）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="io"><mxGeometry x="370" y="36" width="160" height="34" as="geometry"/></mxCell>
+        <mxCell id="io4" value="SSE rules.changed&#xa;文件变更自动刷新" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="io"><mxGeometry x="555" y="36" width="170" height="34" as="geometry"/></mxCell>
+        <mxCell id="io5" value="POST /rules/flow/save&#xa;写回 YAML（Document 增量）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="io"><mxGeometry x="750" y="36" width="200" height="34" as="geometry"/></mxCell>
+
+        <mxCell id="c1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="tabs" target="listView"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="c2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="tabs" target="flowView"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="c3" value="拖入" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9673a6;strokeWidth=2;fontColor=#333;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="palette" target="canvas"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="c4" value="选中后配置" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9673a6;strokeWidth=2;fontColor=#333;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="canvas" target="inspector"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

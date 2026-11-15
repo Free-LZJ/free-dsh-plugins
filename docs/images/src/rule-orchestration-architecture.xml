@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="draw.io">
+  <diagram name="规则可编排化 系统分层架构" id="rule-orch-arch">
+    <mxGraphModel dx="1300" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1160" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="spacer" value="" style="fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1140" height="800" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="规则可编排化 — 系统分层架构" style="text;html=1;align=center;fontSize=16;fontStyle=1;fontColor=#1a237e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1060" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="L1" value="浏览器半边（console/client/flow）" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="1060" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="L1a" value="canvas.tsx&#xa;React Flow 画布" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L1"><mxGeometry x="20" y="42" width="150" height="52" as="geometry"/></mxCell>
+        <mxCell id="L1b" value="palette.tsx&#xa;节点库" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L1"><mxGeometry x="190" y="42" width="130" height="52" as="geometry"/></mxCell>
+        <mxCell id="L1c" value="inspector.tsx&#xa;schema 驱动表单" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L1"><mxGeometry x="340" y="42" width="150" height="52" as="geometry"/></mxCell>
+        <mxCell id="L1d" value="serialize.ts&#xa;画布 ↔ YAML 结构" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L1"><mxGeometry x="510" y="42" width="160" height="52" as="geometry"/></mxCell>
+        <mxCell id="L1e" value="link.ts&#xa;保存 + SSE 订阅" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="L1"><mxGeometry x="690" y="42" width="150" height="52" as="geometry"/></mxCell>
+        <mxCell id="L1f" value="resolvePositions&#xa;人工 pos 优先" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L1"><mxGeometry x="860" y="42" width="170" height="52" as="geometry"/></mxCell>
+
+        <mxCell id="L2" value="Host 路由（console/src/routes）" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="210" width="1060" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="L2a" value="/rules/state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L2"><mxGeometry x="20" y="40" width="120" height="40" as="geometry"/></mxCell>
+        <mxCell id="L2b" value="/rules/flow&#xa;图 + 布局" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L2"><mxGeometry x="160" y="40" width="130" height="40" as="geometry"/></mxCell>
+        <mxCell id="L2c" value="/rules/node-types" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L2"><mxGeometry x="310" y="40" width="140" height="40" as="geometry"/></mxCell>
+        <mxCell id="L2d" value="/rules/flow/save&#xa;rev 冲突检测" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L2"><mxGeometry x="470" y="40" width="150" height="40" as="geometry"/></mxCell>
+        <mxCell id="L2e" value="/rules/runs&#xa;执行痕迹" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L2"><mxGeometry x="640" y="40" width="130" height="40" as="geometry"/></mxCell>
+        <mxCell id="L2f" value="SSE rules.changed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="L2"><mxGeometry x="790" y="40" width="140" height="40" as="geometry"/></mxCell>
+
+        <mxCell id="L3" value="内核（decision/src/flow）" style="swimlane;startSize=30;fillColor=#e1d5e7;strokeColor=#9673a6;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="340" width="1060" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="L3a" value="types.ts&#xa;Flow / Node / Edge" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="20" y="42" width="150" height="48" as="geometry"/></mxCell>
+        <mxCell id="L3b" value="parse.ts&#xa;YAML → FlowGraph&#xa;+ 校验" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="190" y="42" width="150" height="48" as="geometry"/></mxCell>
+        <mxCell id="L3c" value="registry.ts&#xa;节点插件契约" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="360" y="42" width="150" height="48" as="geometry"/></mxCell>
+        <mxCell id="L3d" value="execute.ts&#xa;图执行器&#xa;FlowContext" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;" vertex="1" parent="L3"><mxGeometry x="530" y="42" width="150" height="48" as="geometry"/></mxCell>
+        <mxCell id="L3e" value="layout.ts&#xa;dagre 分层" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="700" y="42" width="140" height="48" as="geometry"/></mxCell>
+        <mxCell id="L3f" value="serialize.ts&#xa;Document 增量写回" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="860" y="42" width="170" height="48" as="geometry"/></mxCell>
+        <mxCell id="L3g" value="nodes/&#xa;switch · parallel · join · loop · call · end" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="20" y="102" width="380" height="36" as="geometry"/></mxCell>
+        <mxCell id="L3h" value="连接器节点：classify · mail.fetch · markRead · move · notify · session(dsh-session | llm-once | dsh-followup)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="L3"><mxGeometry x="420" y="102" width="610" height="36" as="geometry"/></mxCell>
+
+        <mxCell id="L4" value="运行与存储" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;html=1;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="520" width="1060" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="L4a" value="TaskEngine" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=11;" vertex="1" parent="L4"><mxGeometry x="20" y="42" width="130" height="44" as="geometry"/></mxCell>
+        <mxCell id="L4b" value="rules.yml&#xa;唯一真相" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="L4"><mxGeometry x="190" y="42" width="140" height="44" as="geometry"/></mxCell>
+        <mxCell id="L4c" value="tasks.db&#xa;任务 + 节点记录" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;size=10;" vertex="1" parent="L4"><mxGeometry x="370" y="38" width="150" height="52" as="geometry"/></mxCell>
+        <mxCell id="L4d" value="deferred.json&#xa;延迟动作（参数已固化）" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;size=10;" vertex="1" parent="L4"><mxGeometry x="560" y="38" width="180" height="52" as="geometry"/></mxCell>
+        <mxCell id="L4e" value="memory 层&#xa;正文 / HTML / 附件&#xa;不落盘" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;" vertex="1" parent="L4"><mxGeometry x="780" y="38" width="180" height="52" as="geometry"/></mxCell>
+
+        <mxCell id="e1" value="读图" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="L1a" target="L2b">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="保存" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;exitX=0.5;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="L1d" target="L2d">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="解析" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="L2b" target="L3b">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="执行" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#666;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="L3d" target="L4a">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;dashed=1;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" edge="1" parent="1" source="L4b" target="L3b">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="历史高亮" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;dashed=1;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="L2e" target="L1a">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="变更推送" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;dashed=1;exitX=0.85;exitY=0;entryX=0.6;entryY=1;" edge="1" parent="1" source="L2f" target="L1e">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="note" value="要点：YAML 是唯一真相；画布只是它的编辑器。memory 层（正文）永不落盘，动作参数在排队时固化，所以重放不依赖正文。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="660" width="1060" height="40" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

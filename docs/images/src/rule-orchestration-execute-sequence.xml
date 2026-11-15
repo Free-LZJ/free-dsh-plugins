@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="draw.io">
+  <diagram name="规则执行时序" id="rule-orch-sequence">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1120" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="spacer" value="" style="fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1100" height="800" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="规则执行时序 — 一条事件穿过节点图" style="text;html=1;align=center;fontSize=16;fontStyle=1;fontColor=#1a237e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1020" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="p1" value="runner&#xa;（TaskRunner）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="60" y="80" width="140" height="46" as="geometry"/></mxCell>
+        <mxCell id="p2" value="executeFlow&#xa;（图执行器）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="250" y="80" width="140" height="46" as="geometry"/></mxCell>
+        <mxCell id="p3" value="FlowContext&#xa;（vars / memory）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="440" y="80" width="160" height="46" as="geometry"/></mxCell>
+        <mxCell id="p4" value="Node&#xa;（classify / mail.fetch / …）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="650" y="80" width="180" height="46" as="geometry"/></mxCell>
+        <mxCell id="p5" value="TaskStore&#xa;（tasks.db）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="880" y="80" width="140" height="46" as="geometry"/></mxCell>
+
+        <mxCell id="l1" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#adb5bd;strokeWidth=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="130" y="126" as="sourcePoint"/><mxPoint x="130" y="740" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="l2" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#adb5bd;strokeWidth=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="126" as="sourcePoint"/><mxPoint x="320" y="740" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="l3" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#adb5bd;strokeWidth=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="520" y="126" as="sourcePoint"/><mxPoint x="520" y="740" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="l4" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#adb5bd;strokeWidth=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="740" y="126" as="sourcePoint"/><mxPoint x="740" y="740" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="l5" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#adb5bd;strokeWidth=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="950" y="126" as="sourcePoint"/><mxPoint x="950" y="740" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="m1" value="executeFlow(flow, deps)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontColor=#333;fontSize=11;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="p1" target="p2"><mxGeometry relative="1" as="geometry"><mxPoint x="130" y="170" as="sourcePoint"/><mxPoint x="320" y="170" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m2" value="建上下文（event 投影，vars 空）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#82b366;strokeWidth=2;fontColor=#333;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="210" as="sourcePoint"/><mxPoint x="520" y="210" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="m3" value="loop  就绪队列非空" style="text;html=1;align=left;fontSize=11;fontColor=#b85450;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="320" y="240" width="220" height="20" as="geometry"/></mxCell>
+
+        <mxCell id="m4" value="run(config, context)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;strokeWidth=2;fontColor=#333;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="280" as="sourcePoint"/><mxPoint x="740" y="280" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m5" value="读 {subject} / 写输出" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#82b366;strokeWidth=2;fontColor=#333;fontSize=11;dashed=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="740" y="310" as="sourcePoint"/><mxPoint x="520" y="310" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m6" value="{ ok, output?, next? }" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;strokeWidth=2;fontColor=#333;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="740" y="350" as="sourcePoint"/><mxPoint x="320" y="350" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m7" value="output 合并进 vars / memory" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#82b366;strokeWidth=2;fontColor=#333;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="390" as="sourcePoint"/><mxPoint x="520" y="390" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m8" value="appendNode(记录)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673a6;strokeWidth=2;fontColor=#333;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="430" as="sourcePoint"/><mxPoint x="950" y="430" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="m9" value="按 next 标记出边；入边齐的节点入队" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#b85450;strokeWidth=1;fontColor=#333;fontSize=11;dashed=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="470" as="sourcePoint"/><mxPoint x="320" y="500" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="m10" value="FlowResult（命中节点 + 状态）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6c8ebf;strokeWidth=2;fontColor=#333;fontSize=11;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="320" y="540" as="sourcePoint"/><mxPoint x="130" y="540" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="m11" value="读执行痕迹（GET /rules/runs）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#adb5bd;strokeWidth=1;fontColor=#666;fontSize=11;dashed=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="950" y="600" as="sourcePoint"/><mxPoint x="130" y="600" as="targetPoint"/></mxGeometry></mxCell>
+
+        <mxCell id="warn" value="延迟动作：排队前把参数渲染好写进 deferred.json —— memory 在重放时为空，所以不能等到重放再解析变量。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#b85450;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="60" y="650" width="960" height="34" as="geometry"/>
+        </mxCell>
+        <mxCell id="note" value="并行：同批节点 Promise.all 并发；join 不需要特殊实现——它就是入度大于 1 的普通节点，入边齐了才入队。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="60" y="700" width="960" height="34" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

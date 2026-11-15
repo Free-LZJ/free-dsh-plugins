@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="draw.io">
+  <diagram name="运行时数据流闭环" id="rule-orch-runtime">
+    <mxGraphModel dx="1200" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1180" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="spacer" value="" style="fillColor=none;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1160" height="680" as="geometry"/>
+        </mxCell>
+        <mxCell id="title" value="运行时数据流 — 从改规则到看见执行路径" style="text;html=1;align=center;fontSize=16;fontStyle=1;fontColor=#1a237e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1080" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="g1" value="① 编辑" style="swimlane;startSize=28;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="250" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="g1a" value="画布：拖节点 · 连线 · 填参数" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="g1"><mxGeometry x="20" y="42" width="210" height="36" as="geometry"/></mxCell>
+        <mxCell id="g1b" value="agent：只改结构，不写坐标" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="g1"><mxGeometry x="20" y="90" width="210" height="36" as="geometry"/></mxCell>
+        <mxCell id="g1c" value="人拖过的节点写 pos 并保留" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="g1"><mxGeometry x="20" y="138" width="210" height="32" as="geometry"/></mxCell>
+
+        <mxCell id="g2" value="② 保存" style="swimlane;startSize=28;fillColor=#d5e8d4;strokeColor=#82b366;html=1;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="330" y="70" width="230" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="g2a" value="serialize：画布 → Flow 结构" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="g2"><mxGeometry x="20" y="42" width="190" height="36" as="geometry"/></mxCell>
+        <mxCell id="g2b" value="Document 增量写回&#xa;保注释 / 保锚点 / 保顺序" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=11;" vertex="1" parent="g2"><mxGeometry x="20" y="90" width="190" height="46" as="geometry"/></mxCell>
+        <mxCell id="g2c" value="revision 冲突 → 409" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="g2"><mxGeometry x="20" y="146" width="190" height="24" as="geometry"/></mxCell>
+
+        <mxCell id="g3" value="③ 热加载" style="swimlane;startSize=28;fillColor=#fff2cc;strokeColor=#d6b656;html=1;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="70" width="240" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="g3a" value="rules.yml 变更（watch）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="g3"><mxGeometry x="20" y="42" width="200" height="36" as="geometry"/></mxCell>
+        <mxCell id="g3b" value="parse + validate&#xa;失败则保留上一份" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="g3"><mxGeometry x="20" y="90" width="200" height="46" as="geometry"/></mxCell>
+        <mxCell id="g3c" value="SSE rules.changed → 页面自动刷新" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="g3"><mxGeometry x="20" y="146" width="200" height="24" as="geometry"/></mxCell>
+
+        <mxCell id="g4" value="④ 执行" style="swimlane;startSize=28;fillColor=#e1d5e7;strokeColor=#9673a6;html=1;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="880" y="70" width="240" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="g4a" value="事件到达 → 触发器 → 任务" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="g4"><mxGeometry x="20" y="42" width="200" height="36" as="geometry"/></mxCell>
+        <mxCell id="g4b" value="executeFlow 逐节点&#xa;（分支 / 并行 / 循环）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="g4"><mxGeometry x="20" y="90" width="200" height="46" as="geometry"/></mxCell>
+        <mxCell id="g4c" value="每步落 TaskNodeRecord" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="g4"><mxGeometry x="20" y="146" width="200" height="24" as="geometry"/></mxCell>
+
+        <mxCell id="store" value="rules.yml（唯一真相）" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;size=12;" vertex="1" parent="1">
+          <mxGeometry x="390" y="300" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="taskdb" value="tasks.db&#xa;任务 + 节点记录" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;size=12;" vertex="1" parent="1">
+          <mxGeometry x="900" y="300" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="highlight" value="⑤ 叠加高亮" style="swimlane;startSize=28;fillColor=#f8cecc;strokeColor=#b85450;html=1;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="430" width="240" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="h1" value="走过的边加粗 · 失败标红" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="highlight"><mxGeometry x="20" y="40" width="200" height="32" as="geometry"/></mxCell>
+        <mxCell id="h2" value="排队中的节点显示倒计时" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;fontSize=11;" vertex="1" parent="highlight"><mxGeometry x="20" y="84" width="200" height="32" as="geometry"/></mxCell>
+
+        <mxCell id="a1" value="改图" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#adb5bd;strokeWidth=2;fontColor=#333;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="g1" target="g2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a2" value="写回" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#82b366;strokeWidth=2;fontColor=#333;exitX=0.5;exitY=1;entryX=0.8;entryY=0;" edge="1" parent="1" source="g2" target="store"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a3" value="变更" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#d6b656;strokeWidth=2;fontColor=#333;exitX=1;exitY=0;entryX=0.2;entryY=1;" edge="1" parent="1" source="store" target="g3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a5" value="执行图" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9673a6;strokeWidth=2;fontColor=#333;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="g3" target="g4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a6" value="落一条" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9673a6;strokeWidth=2;fontColor=#333;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="g4" target="taskdb"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="a7" value="读痕迹" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;fontColor=#333;dashed=1;exitX=0.2;exitY=1;entryX=0.9;entryY=0;" edge="1" parent="1" source="taskdb" target="highlight"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="936" y="400"/><mxPoint x="816" y="400"/></Array></mxGeometry></mxCell>
+        <mxCell id="a8" value="回到画布（闭环）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;strokeWidth=2;fontColor=#b85450;fontStyle=1;exitX=0;exitY=0.5;entryX=0.5;entryY=1;" edge="1" parent="1" source="highlight" target="g1"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="560" y="495"/><mxPoint x="165" y="495"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="note" value="闭环的意义：改规则 → 立刻看见结构；跑一次 → 立刻看见真实路径。两者用同一份数据（YAML），不再有「文件说的」和「页面画的」两套东西。" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="40" y="600" width="1080" height="34" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
