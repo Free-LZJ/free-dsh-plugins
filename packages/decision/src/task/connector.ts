@@ -23,6 +23,7 @@ import type { TaskContext } from './context.ts'
 import type { MatchState } from '../match.ts'
 import type { TaskEvent, TaskTrigger } from './event.ts'
 import type { ActionNode, FailureKind, NodeOutcome, TaskNode } from './node.ts'
+import type { FlowNode } from '../flow/types.ts'
 import type { Task } from './record.ts'
 import type { OwnedRegistry } from './registry.ts'
 
@@ -109,6 +110,13 @@ export interface MatchRequest {
   readonly ports: Readonly<Record<string, unknown>>
   /** 分类通道：一次任务只问一次，答案来自已经跑过的分类节点。 */
   readonly classification: () => Promise<{ readonly label: string; readonly confidence: number }>
+  /**
+   * 已经算好的分类结果。
+   *
+   * 节点图里 classify 是**一个节点**，它跑完就把结果放在这里；条件读到它就别再调
+   * 一次模型。旧规则列表路径没有这个字段，条件会走 classification() 现问。
+   */
+  readonly facts?: { readonly label?: string; readonly confidence?: number }
 }
 
 /**
@@ -156,8 +164,15 @@ export interface TaskConnector {
 
   /** 它监听外部世界并 `emit` 的那些入口。 */
   readonly triggers: readonly TaskTrigger[]
-  /** 它提供的动作节点。 */
+  /** 它提供的动作节点（旧链式模型）。 */
   readonly actions: readonly ActionNode<ActionSpecLike, TaskContext>[]
+  /**
+   * 它贡献的**图节点**。
+   *
+   * 与 ctions 并存是过渡期的形态：旧规则列表走 ctions，节点图走这里。迁移完成、
+   * 	hen 数组消失之后，ctions 会一起退役。
+   */
+  readonly nodes?: readonly FlowNode[]
   /** 它的条件词表与匹配计划；没有条件的连接器可以省略。 */
   readonly judge?: Judge
   /** 它的分类阶段；不分类的连接器可以省略。 */

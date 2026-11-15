@@ -13,7 +13,9 @@
  */
 
 import { readJson, serialWriter } from '../store.ts'
+import { isRecord } from '../config.ts'
 import type { NodePatch, Task, TaskNodeRecord, TaskPatch, TaskStatus } from './record.ts'
+import type { FlowProgress } from '../flow/types.ts'
 
 /** `tasks.json` 的形状。 */
 interface TasksFile {
@@ -80,6 +82,8 @@ function parseTask(value: unknown): Task | undefined {
     ...(task['awaitingConfirmation'] === true ? { awaitingConfirmation: true } : {}),
     ...(task['acknowledged'] === true ? { acknowledged: true } : {}),
     ...(typeof task['undoableUntil'] === 'string' ? { undoableUntil: task['undoableUntil'] } : {}),
+    ...(isRecord(task['progress']) ? { progress: task['progress'] as unknown as FlowProgress } : {}),
+    ...(typeof task['runId'] === 'string' ? { runId: task['runId'] } : {}),
   }
 }
 
@@ -164,6 +168,8 @@ export function createTaskStore(path: string): TaskStore {
         ...(patch.awaitingConfirmation === undefined ? {} : { awaitingConfirmation: patch.awaitingConfirmation }),
         ...(patch.acknowledged === undefined ? {} : { acknowledged: patch.acknowledged }),
         ...(patch.undoableUntil === undefined ? {} : { undoableUntil: patch.undoableUntil }),
+        ...(patch.progress === undefined ? {} : { progress: patch.progress }),
+        ...(patch.runId === undefined ? {} : { runId: patch.runId }),
         updatedAt: patch.updatedAt ?? new Date().toISOString(),
       }))
       if (updated !== undefined) await persist()

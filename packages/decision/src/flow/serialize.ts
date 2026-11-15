@@ -1,0 +1,65 @@
+/**
+ * 把图写回 YAML。
+ *
+ * 输出**只有结构和已定稿的渲染信息**：节点的 `pos` 会写进去（人摆过的位置要留住），
+ * 但自动布局算出来的坐标不写——它每次都能重算，写进去只会让文件随刷新变脏。
+ *
+ * @module @free-lzj/dsh-decision/flow/serialize
+ */
+
+import { Document } from 'yaml'
+import type { Flow, FlowNodeSpec } from './types.ts'
+
+/** 写文件的选项。 */
+export interface SerializeOptions {
+  /** 文件顶层的缺省连接器；每张图自己的 `connector` 优先。 */
+  readonly connector?: string
+}
+
+/**
+ * 序列化一份图文件。
+ * @param flows - 图列表。
+ * @param options - 顶层缺省值。
+ * @returns YAML 文本。字段顺序固定，便于 diff。
+ */
+export function stringifyFlowFile(flows: readonly Flow[], options: SerializeOptions = {}): string {
+  const doc = new Document({
+    version: FLOW_FILE_VERSION,
+    ...(options.connector === undefined ? {} : { connector: options.connector }),
+    flows: flows.map(flow => ({
+      id: flow.id,
+      name: flow.name,
+      connector: flow.connector,
+      nodes: flow.nodes.map(serializeNode),
+    })),
+  })
+  // 长边（`{ to, when }`）写成单行更好读；`config` 保持块状。
+  doc.contents = doc.createNode(doc.toJS())
+  return doc.toString({ lineWidth: 0 })
+}
+
+/** 当前文件版本。 */
+export const FLOW_FILE_VERSION = 2
+
+/** 只把有值的字段写出去——空数组、undefined 都不该在文件里占一行。 */
+function serializeNode(node: FlowNodeSpec): Record<string, unknown> {
+  return {
+    id: node.id,
+    type: node.type,
+    ...(node.label === undefined ? {} : { label: node.label }),
+    ...(node.config === undefined || Object.keys(node.config).length === 0 ? {} : { config: node.config }),
+    ...(node.runner === undefined ? {} : { runner: node.runner }),
+    ...(node.enabled === false ? { enabled: false } : {}),
+    ...(node.pos === undefined ? {} : { pos: node.pos }),
+    ...(node.body === undefined ? {} : { body: { nodes: node.body.nodes.map(serializeNode) } }),
+    ...(node.out === undefined || node.out.length === 0
+      ? {}
+      : {
+          out: node.out.map(edge => ({
+            to: edge.to,
+            ...(edge.when === undefined || edge.when.length === 0 ? {} : { when: edge.when }),
+            ...(edge.mode === undefined ? {} : { mode: edge.mode }),
+          })),
+        }),
+  }
+}

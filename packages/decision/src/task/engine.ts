@@ -16,6 +16,7 @@
 
 import { join } from 'node:path'
 import { readFileSync, watch, type FSWatcher } from 'node:fs'
+import { parseDocument as parseYaml } from 'yaml'
 import type { DecisionConfigBase, RuleVocabulary } from '../config.ts'
 import { DEFAULT_DECISION_CONFIG, isRecord } from '../config.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../registry.ts'
@@ -33,6 +34,12 @@ import { OwnedRegistry, RegistrationConflict, TriggerRegistry } from './registry
 import { TaskRunner, type UndoResult } from './runner.ts'
 import { createTaskStore, forwardingStore, openTaskStore, type TaskStore } from './store.ts'
 import { createDeferredStore, type DeferredStore } from './deferred.ts'
+import { actionsToFlowNodes } from '../flow/adapt.ts'
+import { createControlNodes } from '../flow/control.ts'
+import { parseFlowFile } from '../flow/parse.ts'
+import { resolvePositions } from '../flow/layout.ts'
+import { FlowNodeRegistry } from '../flow/registry.ts'
+import type { Flow } from '../flow/types.ts'
 import type { TaskContext } from './context.ts'
 
 /** connectors.json 的形状：哪些连接器参与规则。 */
@@ -114,6 +121,10 @@ export class TaskEngine {
   private readonly connectors = new Map<string, TaskConnector>()
   /** 每个连接器参不参与规则；缺省在，关掉就是 false。 */
   private readonly enabled = new Map<string, boolean>()
+  /** 图节点类型：内置控制流 + 各连接器贡献的。 */
+  private readonly nodes = new FlowNodeRegistry()
+  /** 当前生效的流程图；v1 文件时为空数组。 */
+  private currentFlows: readonly Flow[] = []
   private readonly runner: TaskRunner
   private readonly undos = new Map<string, (() => Promise<void>)[]>()
   /** 有多少条规则没写归属（它们不会执行）。 */
@@ -144,6 +155,7 @@ export class TaskEngine {
     this.storeImpl = createTaskStore(this.tasksPath)
     this.store = forwardingStore(() => this.storeImpl)
     this.deferred = createDeferredStore(this.deferredPath)
+    this.nodes.registerAll('core', createControlNodes())
     this.runner = new TaskRunner({
       store: this.store,
       deferred: this.deferred,
@@ -151,6 +163,8 @@ export class TaskEngine {
       actions: this.actions,
       connectors: this.connectors,
       rules: () => this.currentRules,
+      flows: () => this.currentFlows,
+      nodes: this.nodes,
       config: () => this.configOf(),
       log: line => this.log(line),
       warn: line => this.warn(line),
@@ -169,6 +183,7 @@ export class TaskEngine {
     const previous = this.connectors.get(connector.id)
     if (previous !== undefined) this.unregister(connector.id)
     this.connectors.set(connector.id, connector)
+    this.registerNodes(connector)
     if (!this.applyRegistration(connector)) {
       // 冲突时整块回退，并且**不留在连接器列表里**：一个什么都没注册成功的条目，
       // 在页面上只会被读成「它在这儿、只是没生效」。
@@ -185,6 +200,29 @@ export class TaskEngine {
   }
 
   /**
+   * 试着把同一份文件读成节点图。
+   *
+   * 读不出来时**返回空**而不是报错：迁移完成前 ersion: 1 是合法状态，此时走旧的
+   * 规则列表路径。真正的语法错误由上面的 loadRuleFile 报，这里只负责能不能读成图。
+   * @param raw - 规则文件原文。
+   * @param vocabulary - 合并后的词表。
+   * @returns 图列表；v1 或读不出时为空。
+   */
+  private parseFlows(raw: string, vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>): readonly Flow[] {
+    if (raw.trim() === '') return []
+    const parsed = parseFlowFile(raw, this.nodes, vocabulary)
+    if (parsed.error !== undefined) {
+      if (parsed.legacy !== true) this.warn('任务引擎: 流程图读不出来（继续用旧规则）：' + parsed.error.message)
+      return []
+    }
+    for (const note of parsed.dropped) this.warn('任务引擎: 流程图里丢弃了一项（' + note + '）')
+    if (parsed.flows.length > 0) {
+      this.log('任务引擎: 已加载 ' + String(parsed.flows.length) + ' 张流程图')
+    }
+    return parsed.flows
+  }
+
+  /**
    * 按开关状态把连接器的触发器与动作装进注册表（或撤掉）。
    *
    * 关掉一个连接器**不动插件**：它的面板、它的邮箱连接都还在，只是规则不再从它的
@@ -193,6 +231,29 @@ export class TaskEngine {
    * @param connector - 连接器。
    * @returns 装上了（或本来就该是空的）就 true；冲突回退就 false。
    */
+  /**
+   * 把连接器贡献的图节点装进注册表。
+   *
+   * 冲突（另一个连接器已经占了同名 type）时**只告警不中断**：它的旧动作仍然可用，
+   * 一条图节点的重名不该让整个连接器消失。
+   * @param connector - 连接器。
+   */
+  private registerNodes(connector: TaskConnector): void {
+    // 显式注册的图节点 + 旧动作适配出来的节点。少了后半截，notify / session 这些
+    // 只有 action 没有 node 的动作在迁移后的图上就会「没有注册」。
+    const nodes = [...(connector.nodes ?? []), ...actionsToFlowNodes(connector.actions)]
+    if (nodes.length === 0) return
+    try {
+      this.nodes.registerAll(connector.id, nodes)
+    } catch (error: unknown) {
+      this.warn(
+        '任务引擎: 连接器 ' + connector.id + ' 的图节点没有全部注册：'
+        + (error instanceof Error ? error.message : String(error)),
+      )
+      // 回退到「已注册成功的那部分」——registerAll 冲突时自己删掉了本轮新增。
+    }
+  }
+
   private applyRegistration(connector: TaskConnector): boolean {
     this.triggers.clear(connector.id)
     this.actions.clear(connector.id)
@@ -307,8 +368,7 @@ export class TaskEngine {
   }
 
   /** 回写一格的状态（会话 turn/end、外部进度）。 */
-  async patchNode(taskId: string, nodeId: string, patch: NodePatch): Promise<boolean> {
-    const updated = await this.store.patchNode(taskId, nodeId, patch)
+  async patchNode(taskId: string, nodeId: string, patch: NodePatch): Promise<boolean> {    const updated = await this.store.patchNode(taskId, nodeId, patch)
     if (updated === undefined) return false
     this.bump()
     return true
@@ -407,6 +467,51 @@ export class TaskEngine {
     return await this.applyEdit(raw => setConditionValues(raw, id, conditionIndex, values))
   }
 
+  /**
+   * 当前生效的图，带**算好的坐标**，给画布。
+   *
+   * 人摆过的 `pos` 原样返回；没有的用 `resolvePositions` 补——补出来的坐标不进文件，
+   * 所以刷新一次不会把文件写脏。
+   * @returns 图列表与错误说明。
+   */
+  flowView(): { readonly flows: readonly Flow[]; readonly error?: string } {
+    const flows = this.currentFlows.map(flow => {
+      const positions = resolvePositions(flow)
+      return {
+        ...flow,
+        nodes: flow.nodes.map(node => ({
+          ...node,
+          pos: node.pos ?? positions.get(node.id) ?? { x: 0, y: 0 },
+        })),
+      }
+    })
+    return this.rulesError === undefined ? { flows } : { flows, error: this.rulesError.message }
+  }
+
+  /**
+   * 已注册的节点类型清单，给属性面板与「能放什么」。
+   * @returns 每种节点的标签、类别、配置表与产出。
+   */
+  nodeTypes(): readonly {
+    readonly type: string
+    readonly label: string
+    readonly group: string
+    readonly sideEffect: boolean
+    readonly config?: Record<string, unknown>
+    readonly outputs?: readonly { readonly key: string; readonly label?: string; readonly persist?: boolean }[]
+    readonly runners?: readonly { readonly id: string; readonly label: string }[]
+  }[] {
+    return this.nodes.list().map(node => ({
+      type: node.type,
+      label: node.label,
+      group: node.group,
+      sideEffect: node.sideEffect === true,
+      ...(node.config === undefined ? {} : { config: { ...node.config } }),
+      ...(node.outputs === undefined ? {} : { outputs: node.outputs }),
+      ...(node.runners === undefined ? {} : { runners: node.runners.map(runner => ({ id: runner.id, label: runner.label })) }),
+    }))
+  }
+
   async movePriority(id: string, direction: 'up' | 'down'): Promise<TaskEdit> {
     return await this.applyEdit(raw => swapPriority(raw, id, this.currentRules, direction))
   }
@@ -426,6 +531,22 @@ export class TaskEngine {
   private async reloadRules(): Promise<void> {
     const vocabulary = this.combinedVocabulary()
     if (vocabulary === undefined) return
+
+    // **先看是不是节点图**。v2 文件没有 `rules:` 数组，走下面的 loadRuleFile 会被判成
+    // 「顶层不是数组」而整份拒绝——所以顺序不能反：能读成图就只走图。
+    const raw = this.rawRules()
+    const flows = this.parseFlows(raw, vocabulary)
+    this.currentFlows = flows
+    if (flows.length > 0) {
+      this.currentRules = []
+      this.unassigned = 0
+      this.dropped = []
+      this.rulesError = undefined
+      this.rulesSource = 'file'
+      this.bump()
+      return
+    }
+
     // 不猜归属：没有 connector 的规则**永不执行**，并在下面如实告警。猜一次就会把
     // 邮件规则挂到别的域上，跑出一堆莫名其妙的失败动作。
     const loaded = await loadRuleFile(this.rulesPath, this.combinedDefaultRules(), vocabulary)
@@ -585,6 +706,220 @@ export class TaskEngine {
   }
 
   /** 把规则文件改一处并立刻生效。 */
+  /**
+   * 改图上一个节点。
+   *
+   * 只改**指定的那个节点、指定的那几个字段**：整图交上来再写回去会覆盖别人同时做的
+   * 改动，也会把文件里现有的注释与锚点冲掉。用 YAML 的 `Document` 就地改，注释、
+   * 键序、`&anchor` 都原样留着。
+   *
+   * 改完立刻生效（重新解析并推送），不需要人再点一次刷新。
+   * @param input - 哪个节点、改什么。
+   * @returns 成功，或为什么没改成。
+   */
+  async saveFlowNode(input: {
+    readonly nodeId: string
+    readonly config?: Readonly<Record<string, unknown>>
+    readonly pos?: { readonly x: number; readonly y: number }
+    readonly label?: string
+    readonly enabled?: boolean
+  }): Promise<TaskEdit> {
+    const raw = this.rawRules()
+    if (raw === '') return { ok: false, message: `读不到规则文件：${this.rulesPath}` }
+
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: `规则文件读不出来：${error instanceof Error ? error.message : String(error)}` }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: `规则文件有语法错误，先修好它：${doc.errors[0]?.message ?? ''}` }
+    }
+
+    const found = locateNode(doc, input.nodeId)
+    if (found === undefined) {
+      return { ok: false, message: `文件里找不到节点「${input.nodeId}」——它可能刚被别处删掉了` }
+    }
+    const { flowIndex, nodeIndex } = found
+    const at = (key: string): (string | number)[] => ['flows', flowIndex, 'nodes', nodeIndex, key]
+
+    if (input.config !== undefined) doc.setIn(at('config'), input.config)
+    if (input.pos !== undefined) doc.setIn(at('pos'), { x: input.pos.x, y: input.pos.y })
+    if (input.label !== undefined) doc.setIn(at('label'), input.label)
+    if (input.enabled !== undefined) {
+      // 启用时不写 `enabled: true`——文件里只该出现「关掉了」这个例外。
+      if (input.enabled) doc.deleteIn(at('enabled'))
+      else doc.setIn(at('enabled'), false)
+    }
+
+    await writeTextFile(this.rulesPath, doc.toString())
+    await this.reloadRules()
+    return { ok: true }
+  }
+
+  /**
+   * 在某个节点之后插入一个新节点。
+   *
+   * 插入而不是追加：**新节点接管 after 原来的出路**，于是「在 read 和 notify 之间加一步」
+   * 只需要说一次位置，不用再去连两条线。
+   *
+   * 用的是 YAML 节点级操作（`YAMLSeq.items.splice`），所以文件里别的节点的注释、锚点、
+   * 键序都不受影响——只动这一段落。
+   * @param input - 接在谁后面、放什么类型、初始配置。
+   * @returns 成功与新节点 id，或为什么没插成。
+   */
+  async addFlowNode(input: {
+    readonly after?: string
+    readonly type: string
+    readonly config?: Readonly<Record<string, unknown>>
+  }): Promise<TaskEdit & { readonly nodeId?: string }> {
+    if (!this.nodes.has(input.type)) return { ok: false, message: `不认识的节点类型「${input.type}」` }
+    const loaded = this.loadFlowDoc()
+    if (!loaded.ok) return loaded
+    const { doc, flowIndex, nodes } = loaded
+
+    // `items` 里是 YAML 的节点对象，属性读不到——定位一律走 `toJS()` 出来的普通对象。
+    const plain = doc.toJS() as { flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[] }
+    const plainNodes = plain.flows?.[flowIndex]?.nodes ?? []
+    const items = nodes.items as unknown[]
+    const afterIndex = input.after === undefined
+      ? items.length - 1
+      : plainNodes.findIndex(item => item.id === input.after)
+    if (input.after !== undefined && afterIndex < 0) {
+      return { ok: false, message: `找不到节点「${input.after}」` }
+    }
+
+    const nodeId = this.freeNodeId(doc, flowIndex, input.type)
+    // 新节点继承 after 原来的出路；after 随后只指向新节点。
+    const inherited = input.after === undefined ? [] : (plainNodes[afterIndex]?.out ?? [])
+    const spec: Record<string, unknown> = {
+      id: nodeId,
+      type: input.type,
+      ...(input.config === undefined || Object.keys(input.config).length === 0 ? {} : { config: input.config }),
+      ...(inherited.length === 0 ? {} : { out: inherited }),
+    }
+    items.splice(afterIndex + 1, 0, spec)
+    if (input.after !== undefined) {
+      doc.setIn(['flows', flowIndex, 'nodes', afterIndex, 'out'], [{ to: nodeId }])
+    }
+
+    await writeTextFile(this.rulesPath, doc.toString())
+    await this.reloadRules()
+    return { ok: true, nodeId }
+  }
+
+  /**
+   * 删掉一个节点，并把它的入边接到它的出边——删掉一步不该让流程断在这里。
+   * @param nodeId - 要删的节点。
+   * @returns 成功，或为什么没删成。
+   */
+  async removeFlowNode(nodeId: string): Promise<TaskEdit> {
+    const loaded = this.loadFlowDoc()
+    if (!loaded.ok) return loaded
+    const { doc, flowIndex, nodes } = loaded
+
+    const plain = doc.toJS() as { flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[] }
+    const plainNodes = plain.flows?.[flowIndex]?.nodes ?? []
+    const items = nodes.items as unknown[]
+    const index = plainNodes.findIndex(item => item.id === nodeId)
+    if (index < 0) return { ok: false, message: `找不到节点「${nodeId}」` }
+    const leaving = plainNodes[index]?.out ?? []
+    const leavingTarget = leaving.length === 1 ? leaving[0]?.['to'] : undefined
+
+    // 指向它的边改接它的下一个；它分叉过（出边不止一条）就不猜，直接断开。
+    for (const [other, item] of plainNodes.entries()) {
+      if (other === index) continue
+      const edges = item.out ?? []
+      if (!edges.some(edge => edge['to'] === nodeId)) continue
+      const repaired = edges.flatMap(edge => {
+        if (edge['to'] !== nodeId) return [edge]
+        return typeof leavingTarget === 'string' ? [{ ...edge, to: leavingTarget }] : []
+      })
+      doc.setIn(['flows', flowIndex, 'nodes', other, 'out'], repaired)
+    }
+    items.splice(index, 1)
+
+    await writeTextFile(this.rulesPath, doc.toString())
+    await this.reloadRules()
+    return { ok: true }
+  }
+
+  /**
+   * 改一条出边指向谁。
+   *
+   * 比在画布上拖端口可靠：**按序号定位**，不依赖坐标；`to` 省略表示删掉这条边
+   * （分支少一个出口）。条件跟着边走，不会因为换了目标就丢。
+   * @param input - 从哪个节点的第几条边，改到哪。
+   * @returns 成功，或为什么没改成。
+   */
+  async relinkFlowEdge(input: {
+    readonly from: string
+    readonly index: number
+    readonly to?: string
+  }): Promise<TaskEdit> {
+    const loaded = this.loadFlowDoc()
+    if (!loaded.ok) return loaded
+    const { doc, flowIndex } = loaded
+
+    const plain = doc.toJS() as { flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[] }
+    const plainNodes = plain.flows?.[flowIndex]?.nodes ?? []
+    const fromIndex = plainNodes.findIndex(item => item.id === input.from)
+    if (fromIndex < 0) return { ok: false, message: `找不到节点「${input.from}」` }
+    const edges = [...(plainNodes[fromIndex]?.out ?? [])]
+    if (input.index < 0 || input.index >= edges.length) {
+      return { ok: false, message: `「${input.from}」没有第 ${String(input.index + 1)} 条出边` }
+    }
+    if (input.to !== undefined && !plainNodes.some(item => item.id === input.to)) {
+      return { ok: false, message: `找不到目标节点「${input.to}」` }
+    }
+
+    if (input.to === undefined) edges.splice(input.index, 1)
+    else edges[input.index] = { ...edges[input.index], to: input.to }
+
+    doc.setIn(['flows', flowIndex, 'nodes', fromIndex, 'out'], edges)
+    await writeTextFile(this.rulesPath, doc.toString())
+    await this.reloadRules()
+    return { ok: true }
+  }
+
+  /** 读文件并定位第一张图的节点序列。 */
+  private loadFlowDoc(): { readonly ok: true; readonly doc: YamlDoc; readonly flowIndex: number; readonly nodes: YamlSeq }
+    | { readonly ok: false; readonly message: string } {
+    const raw = this.rawRules()
+    if (raw === '') return { ok: false, message: `读不到规则文件：${this.rulesPath}` }
+    let doc: YamlDoc
+    try {
+      doc = parseYaml(raw) as YamlDoc
+    } catch (error: unknown) {
+      return { ok: false, message: `规则文件读不出来：${error instanceof Error ? error.message : String(error)}` }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: `规则文件有语法错误，先修好它：${doc.errors[0]?.message ?? ''}` }
+    }
+    const flows = doc.getIn(['flows']) as YamlSeq | undefined
+    if (flows === undefined || !Array.isArray(flows.items) || flows.items.length === 0) {
+      return { ok: false, message: '这份规则文件里没有流程图' }
+    }
+    const nodes = doc.getIn(['flows', 0, 'nodes']) as YamlSeq | undefined
+    if (nodes === undefined || !Array.isArray(nodes.items)) {
+      return { ok: false, message: '第一张流程图没有节点列表' }
+    }
+    return { ok: true, doc, flowIndex: 0, nodes }
+  }
+
+  /** 造一个这张图里没被占用的节点 id。 */
+  private freeNodeId(doc: YamlDoc, flowIndex: number, type: string): string {
+    const data = doc.toJS() as { flows?: { nodes?: { id?: string }[] }[] }
+    const taken = new Set((data.flows?.[flowIndex]?.nodes ?? []).map(node => node.id))
+    const base = type.replace(/[^a-zA-Z0-9_-]/g, '-')
+    for (let index = 0; index < 1000; index += 1) {
+      const candidate = `${base}__${String(index)}`
+      if (!taken.has(candidate)) return candidate
+    }
+    return `${base}__${String(Date.now())}`
+  }
+
   private async applyEdit(edit: (raw: string) => EditResult): Promise<TaskEdit> {
     if (this.connectors.size === 0) return { ok: false, message: '还没有连接器提供规则' }
     const raw = this.rawRules()
@@ -640,6 +975,43 @@ export class TaskEngine {
   private warn(line: string): void {
     this.options.warn?.(line)
   }
+}
+
+/** yaml 的文档对象，只取这里用到的形状。 */
+type YamlDoc = {
+  readonly errors: readonly { readonly message?: string }[]
+  getIn: (path: (string | number)[]) => unknown
+  setIn: (path: (string | number)[], value: unknown) => unknown
+  toJS: () => unknown
+  toString: () => string
+}
+
+/** yaml 的序列节点。 */
+type YamlSeq = { readonly items: readonly unknown[] }
+
+
+/**
+ * 在文件的图里找一处节点。
+ *
+ * 用读出来的普通对象定位，再用 setIn 按索引改——直接操作 AST 太脆，而索引就够了：
+ * 同一次编辑里索引不会变。
+ * @param doc - 已解析的规则文件。
+ * @param nodeId - 要找的节点 id。
+ * @returns 它在哪个 flow 的第几个 node；找不到是 undefined。
+ */
+function locateNode(
+  doc: { toJS: () => unknown },
+  nodeId: string,
+): { flowIndex: number; nodeIndex: number } | undefined {
+  const data = doc.toJS()
+  if (!isRecord(data) || !Array.isArray(data['flows'])) return undefined
+  for (const [flowIndex, flow] of data['flows'].entries()) {
+    if (!isRecord(flow) || !Array.isArray(flow['nodes'])) continue
+    for (const [nodeIndex, node] of flow['nodes'].entries()) {
+      if (isRecord(node) && node['id'] === nodeId) return { flowIndex, nodeIndex }
+    }
+  }
+  return undefined
 }
 
 /** 一个抛出物作为一句话。 */

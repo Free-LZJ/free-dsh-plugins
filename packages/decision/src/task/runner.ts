@@ -23,10 +23,14 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { compileRules, runFlow } from '../bpmn/index.ts'
+import { executeFlow } from '../flow/execute.ts'
 import type { DecisionConfigBase } from '../config.ts'
 import { ruleMatches } from '../match.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../registry.ts'
 import type { Rule } from '../types.ts'
+import type { Flow } from '../flow/types.ts'
+import type { FlowNodeRegistry } from '../flow/registry.ts'
 import type { TaskConnector } from './connector.ts'
 import type { TaskContext } from './context.ts'
 import type { DeferredRecord, DeferredStore } from './deferred.ts'
@@ -46,6 +50,10 @@ export interface RunnerDeps {
   readonly connectors: ReadonlyMap<string, TaskConnector>
   /** 当前生效的规则（已按 priority 排序、已补 connector）。 */
   readonly rules: () => readonly Rule<ConditionSpecLike, ActionSpecLike>[]
+  /** 当前生效的节点图；v1 规则文件时为空数组。 */
+  readonly flows: () => readonly Flow[]
+  /** 图节点类型注册表。 */
+  readonly nodes: FlowNodeRegistry
   readonly config: () => DecisionConfigBase
   readonly log: (line: string) => void
   readonly warn: (line: string) => void
@@ -212,6 +220,13 @@ export class TaskRunner {
     }
 
     const ports = this.allPorts()
+    // 先看有没有节点图：有就走图，没有走旧的规则列表。二者互斥，不是两套同时生效。
+    const graph = this.pickFlow(connector.id)
+    if (graph !== undefined) {
+      await this.runFlow(task, connector, graph, ports, config)
+      return
+    }
+
     const usable = this.deps.rules().filter(rule => rule.enabled)
     // 两段：**本域的规则先跑**，一条都没命中才轮到 `connector: '*'` 的全局规则。
     // 兜底的意义是"谁都没管这件事时提醒我"，所以它必须排在专属规则之后，
@@ -222,40 +237,191 @@ export class TaskRunner {
     // L1 分类：只问一次；标签集为空就整个跳过，一次模型调用都不花。
     const classification = await this.runClassify(task, connector, [...own, ...global], ports)
 
-    // L2 规则：首命中；`stopOnMatch: false` 时继续找，命中的 then 依次追加。
-    const matched: Rule<ConditionSpecLike, ActionSpecLike>[] = []
-    for (const rule of own) {
-      if (!(await this.ruleHolds(rule, task, connector, ports, classification))) continue
-      matched.push(rule)
-      if (rule.stopOnMatch !== false) break
-    }
-    if (matched.length === 0) {
-      for (const rule of global) {
-        if (!(await this.ruleHolds(rule, task, connector, ports, classification))) continue
-        matched.push(rule)
-        if (rule.stopOnMatch !== false) break
-      }
-    }
-    if (matched.length === 0) {
+    // L2/L3：把规则编成一棵网关链，交给 BPMN 执行器跑。
+    // 顺序与原来一致：本域规则在前，全都不中才轮到 `connector: '*'` 的兜底规则。
+    const ordered = [...own, ...global]
+    if (ordered.length === 0) {
       await this.appendNode(task, 'rule', true, '没有规则命中', { data: { ruleId: '(none)' } })
       await this.finish(taskId, 'skipped', '没有规则命中')
       return
     }
-    for (const rule of matched) {
-      await this.appendNode(task, 'rule', true, rule.label ?? rule.name, {
-        data: { ruleId: rule.id, ruleName: rule.name, label: rule.label ?? rule.name },
-      })
+
+    const flow = compileRules(ordered, { processId: task.id, name: task.title })
+    for (const note of flow.dropped) this.deps.warn(`规则引擎: ${note}`)
+
+    const summary = await runFlow(flow, {
+      judge: async (ruleId) => {
+        const rule = ordered.find(candidate => candidate.id === ruleId)
+        if (rule === undefined) return false
+        return await this.ruleHolds(rule, task, connector, ports, classification)
+      },
+      runAction: async (ruleId, index) => {
+        const rule = ordered.find(candidate => candidate.id === ruleId)
+        const spec = rule?.then[index]
+        if (rule === undefined || spec === undefined) {
+          return { ok: false, detail: `规则 ${ruleId} 的第 ${String(index)} 个动作不存在`, failure: 'config' }
+        }
+        // 动作节点仍由 runAction 自己写：延迟排队要靠它生成的 nodeId 回填。
+        const ok = await this.runAction(task.id, connector, spec, index, ports)
+        return { ok, detail: ok ? spec.kind : `${spec.kind} 失败` }
+      },
+      record: async (node) => {
+        if (node.kind !== 'rule') return
+        await this.deps.store.appendNode(task.id, {
+          id: `node-${randomUUID()}`,
+          kind: 'rule',
+          at: this.deps.now().toISOString(),
+          ok: node.ok,
+          detail: node.detail,
+          data: { ruleId: node.ruleId ?? '(none)' },
+        })
+        this.deps.changed()
+      },
+    })
+
+    if (summary.error !== undefined) this.deps.warn(`规则引擎: ${summary.error}`)
+    if (summary.matchedRuleId === undefined) {
+      await this.appendNode(task, 'rule', true, '没有规则命中', { data: { ruleId: '(none)' } })
+      await this.finish(taskId, 'skipped', '没有规则命中')
+      return
+    }
+    await this.settle(taskId, summary.status !== 'done')
+  }
+
+  /**
+   * 挑一张适用于这个连接器的图。
+   *
+   * 专属图优先，没有才轮到 `connector: '*'` 的兜底图——与旧规则「本域先跑、全局兜底」
+   * 同一顺序。
+   * @param connectorId - 连接器 id。
+   * @returns 图，或 undefined（这份规则文件里没有图）。
+   */
+  private pickFlow(connectorId: string): Flow | undefined {
+    const flows = this.deps.flows()
+    return flows.find(flow => flow.connector === connectorId) ?? flows.find(flow => flow.connector === '*')
+  }
+
+  /**
+   * 用节点图跑一个任务。
+   *
+   * 与旧路径的关键差别：**执行有边界**。同一任务的新事实开新的一轮（`runId` 变了），
+   * 而不是把整条链从头重跑一遍；同一轮的续跑靠 `task.progress`，已完成的节点不再执行。
+   * @param task - 任务。
+   * @param connector - 它归属的连接器。
+   * @param flow - 要跑的图。
+   * @param ports - 连接器端口。
+   * @param config - 判定配置。
+   */
+  private async runFlow(
+    task: Task,
+    connector: TaskConnector,
+    flow: Flow,
+    ports: Readonly<Record<string, unknown>>,
+    config: DecisionConfigBase,
+  ): Promise<void> {
+    const resuming = task.progress !== undefined && task.status === 'suspended'
+    const runId = resuming ? (task.runId ?? `run-${randomUUID()}`) : `run-${randomUUID()}`
+    const event = this.projectEvent(task)
+
+    if (!resuming) {
+      // 新的一轮：换 runId，清掉上一轮的进度。节点记录靠 runId 分组，历史不动。
+      await this.deps.store.patch(task.id, { runId, status: 'running' })
     }
 
-    // L3 动作：按命中顺序，各自 then 顺序执行。
-    let failed = false
-    for (const rule of matched) {
-      for (const [index, spec] of rule.then.entries()) {
-        const outcome = await this.runAction(task.id, connector, spec, index, ports)
-        if (!outcome) failed = true
+    const evaluate = async (
+      when: readonly ConditionSpecLike[],
+      context: { readonly facts: { label?: string; confidence?: number } },
+    ): Promise<boolean> => {
+      const judge = connector.judge
+      if (judge === undefined) return false
+      const runtime = judge.plan({
+        task,
+        event: task.event,
+        ports,
+        classification: async () => ({
+          label: context.facts.label ?? 'uncertain',
+          confidence: context.facts.confidence ?? 0,
+        }),
+        facts: context.facts,
+      })
+      return await ruleMatches(
+        { name: 'flow', when: when as never },
+        {
+          conditions: judge.conditions,
+          context: runtime.context as never,
+          readBody: runtime.readBody,
+          log: line => this.deps.warn(line),
+        },
+      )
+    }
+
+    const result = await executeFlow(
+      flow,
+      {
+        taskId: task.id,
+        runId,
+        event,
+        task,
+        ports,
+        evaluate: evaluate as never,
+        ...(resuming && task.progress !== undefined ? { progress: task.progress } : {}),
+      },
+      {
+        registry: this.deps.nodes,
+        dryRun: config.dryRun,
+        log: line => this.deps.log(line),
+        record: async (entry) => {
+          await this.deps.store.appendNode(task.id, {
+            id: `node-${randomUUID()}`,
+            kind: entry.type,
+            nodeId: entry.nodeId,
+            at: this.deps.now().toISOString(),
+            ok: entry.ok,
+            detail: entry.detail,
+            runId,
+            ...(entry.failure === undefined ? {} : { failure: entry.failure }),
+            ...(entry.sessionId === undefined ? {} : { sessionId: entry.sessionId }),
+            ...(entry.data === undefined ? {} : { data: entry.data }),
+          })
+          this.deps.changed()
+        },
+        saveProgress: async (progress) => {
+          await this.deps.store.patch(task.id, { progress, status: 'running' })
+        },
+      },
+    )
+
+    const status = result.status === 'suspended'
+      ? 'suspended'
+      : result.status === 'done' ? 'done' : result.status
+    await this.deps.store.patch(task.id, {
+      status,
+      progress: result.progress,
+      updatedAt: this.deps.now().toISOString(),
+    })
+    if (result.error !== undefined) this.deps.warn(`流程图执行出错：${result.error}`)
+    this.deps.changed()
+  }
+
+  /**
+   * 把任务事件摊平成模板可见的字符串投影。
+   *
+   * 触发器的变量（`from` / `subject` / `repo`）在前，事件 payload 顶层的原始值在后——
+   * 后者补上 `accountId` / `folder` / `uid` 这类节点要用的坐标。
+   * @param task - 任务。
+   * @returns 投影。
+   */
+  private projectEvent(task: Task): Record<string, string> {
+    const out: Record<string, string> = { ...this.varsOf(task) }
+    const payload = task.event.payload
+    if (typeof payload === 'object' && payload !== null) {
+      for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
+        if (typeof value === 'string') out[key] = value
+        else if (typeof value === 'number' || typeof value === 'boolean') out[key] = String(value)
       }
     }
-    await this.settle(taskId, failed)
+    out['taskId'] = task.id
+    return out
   }
 
   /** L1：需要才跑，跑完把 label 交回去。 */

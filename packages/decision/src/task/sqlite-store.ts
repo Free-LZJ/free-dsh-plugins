@@ -134,6 +134,8 @@ export async function createSqliteTaskStore(dir: string, log: (line: string) => 
         ...(patch.awaitingConfirmation === undefined ? {} : { awaitingConfirmation: patch.awaitingConfirmation }),
         ...(patch.acknowledged === undefined ? {} : { acknowledged: patch.acknowledged }),
         ...(patch.undoableUntil === undefined ? {} : { undoableUntil: patch.undoableUntil }),
+        ...(patch.progress === undefined ? {} : { progress: patch.progress }),
+        ...(patch.runId === undefined ? {} : { runId: patch.runId }),
         ...(patch.updatedAt === undefined ? {} : { updatedAt: patch.updatedAt }),
       }
       put(next)

@@ -17,15 +17,26 @@
 
 import type { FailureKind } from './node.ts'
 import type { TaskEvent } from './event.ts'
+import type { FlowProgress } from '../flow/types.ts'
 
 /** 一条任务走到哪了。 */
-export type TaskStatus = 'running' | 'done' | 'partial' | 'skipped' | 'failed' | 'undone'
+export type TaskStatus = 'running' | 'suspended' | 'done' | 'partial' | 'skipped' | 'failed' | 'undone'
+
+/** 一轮执行走到哪了。 */
+export type TaskRunStatus = 'running' | 'suspended' | 'done' | 'partial' | 'skipped' | 'failed'
 
 /** 链上的一格。 */
 export interface TaskNodeRecord {
   readonly id: string
-  /** `trigger` | `classify` | `rule` | 动作 kind | `session`。 */
+  /** `trigger` | `switch` | `classify` | 动作 kind | `session`。 */
   readonly kind: string
+  /**
+   * 它在**图上的节点 id**（不是类型）。kind 说「这是什么动作」，这个说「图里的哪一个」。
+   *
+   * 有了它，看板和画布才能把一条执行记录标回具体的方块；没有就只能按类型猜，
+   * 一个图里有 8 个 notify 时会全亮。
+   */
+  readonly nodeId?: string
   /** ISO 时间。 */
   readonly at: string
   readonly ok: boolean
@@ -36,8 +47,90 @@ export interface TaskNodeRecord {
   readonly actionIndex?: number
   /** 只有会话节点（与建了会话的动作）才有。 */
   readonly sessionId?: string
+  /**
+   * 这一格属于第几轮执行。
+   *
+   * 同一件事可以发生多次（三条 PR 评论 = 三件事），每一轮是独立的执行。分组靠这个
+   * 字段；没有它的旧记录归到默认那一轮，见 {@link runsOf}。
+   */
+  readonly runId?: string
   /** 结构化证据：事件摘要、分类标签、规则 id、动作配置、会话状态。 */
   readonly data?: Readonly<Record<string, unknown>>
+}
+
+/** 一轮执行。由 {@link runsOf} 从节点记录派生，不单独落盘。 */
+export interface TaskRun {
+  readonly id: string
+  readonly status: TaskRunStatus
+  readonly startedAt: string
+  readonly nodes: readonly TaskNodeRecord[]
+}
+
+/**
+ * 把一个任务的节点记录按轮次分组。
+ *
+ * **派生而不是存储**：`runId` 已经在每一格上，再存一份 Run 数组就有两个真相。唯一的
+ * 例外是进度（{@link Task.progress}）——它记的是「当前这一轮跑到哪了」，无法从节点
+ * 反推，所以单独存。
+ * @param task - 任务。
+ * @returns 各轮执行，最新的在前。
+ */
+export function runsOf(task: Task): readonly TaskRun[] {
+  const groups = new Map<string, TaskNodeRecord[]>()
+  const loose: TaskNodeRecord[] = []
+  for (const node of task.nodes) {
+    if (node.runId === undefined) {
+      loose.push(node)
+      continue
+    }
+    const bucket = groups.get(node.runId)
+    if (bucket === undefined) groups.set(node.runId, [node])
+    else bucket.push(node)
+  }
+  // 没有 runId 的格子（任务创建时的触发器）归到**当前这一轮**，而不是自成一卷：
+  // 它属于「这件事被接手」这个动作，不是另一轮执行。
+  if (loose.length > 0) {
+    const target = task.runId ?? [...groups.keys()][0] ?? DEFAULT_RUN
+    const bucket = groups.get(target)
+    if (bucket === undefined) groups.set(target, [...loose])
+    else groups.set(target, [...loose, ...bucket])
+  }
+  if (groups.size === 0) {
+    return [{ id: DEFAULT_RUN, status: task.status === 'suspended' ? 'suspended' : 'done', startedAt: task.at, nodes: [] }]
+  }
+  return [...groups.entries()]
+    .map(([id, nodes]) => ({
+      id,
+      status: runStatusOf(task, nodes),
+      startedAt: nodes[0]?.at ?? task.at,
+      nodes,
+    }))
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+}
+
+/** 没有 `runId` 的旧记录归到这一轮。 */
+export const DEFAULT_RUN = 'run-0'
+
+/**
+ * 一轮的状态怎么读。
+ *
+ * 当前这一轮（带 `progress` 的）以任务状态为准——它是唯一可能处于 `suspended` 的；
+ * 其余历史轮次只能从节点记录反推：有失败就是 partial，否则 done。
+ * @param task - 任务。
+ * @param nodes - 这一轮的节点。
+ * @returns 状态。
+ */
+function runStatusOf(task: Task, nodes: readonly TaskNodeRecord[]): TaskRunStatus {
+  const isCurrent = task.progress !== undefined && nodes.some(node => node.runId !== undefined)
+  if (isCurrent) {
+    if (task.status === 'suspended') return 'suspended'
+    if (task.status === 'failed') return 'failed'
+    if (task.status === 'partial') return 'partial'
+    if (task.status === 'skipped') return 'skipped'
+    return 'done'
+  }
+  const failed = nodes.some(node => !node.ok)
+  return failed ? 'partial' : 'done'
 }
 
 /** 一个任务。 */
@@ -67,6 +160,15 @@ export interface Task {
   readonly event: TaskEvent
   /** 动作模板里能用的变量。 */
   readonly vars: Readonly<Record<string, string>>
+  /**
+   * 当前这一轮的执行进度。
+   *
+   * 有它表示这是个用节点图跑的任务：`suspended` 时靠它从停下的地方续跑，崩溃后也能
+   * 接着跑而不重放副作用。旧链式任务没有它。
+   */
+  readonly progress?: FlowProgress
+  /** 当前这一轮的 id；节点记录上的 `runId` 指向它。 */
+  readonly runId?: string
 }
 
 /** 连接器回写节点时要改的那几个字段。 */
@@ -84,6 +186,10 @@ export interface TaskPatch {
   readonly acknowledged?: boolean
   readonly undoableUntil?: string
   readonly updatedAt?: string
+  /** 节点图执行器的进度；每跑一步回写一次。 */
+  readonly progress?: FlowProgress
+  /** 当前这一轮的 id。 */
+  readonly runId?: string
 }
 
 /** 一个连接器在看板上长什么样。 */

@@ -44,6 +44,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "bpmn-engine": "26.0.6",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
