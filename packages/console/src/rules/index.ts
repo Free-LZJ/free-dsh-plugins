@@ -26,6 +26,7 @@ import { STATE_DIR } from '../store.ts'
 import {
   RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_FLOW_PATH,
   RULES_FLOW_SAVE_PATH,
+  RULES_FLOW_LAYOUT_PATH,
   RULES_FLOW_NODE_PATH,
   RULES_NODE_TYPES_PATH,
   RULES_RUNS_PATH,
@@ -53,7 +54,7 @@ export function rulesHome(dshHome: string): string {
 export type RulesEngine = Pick<
   TaskEngine,
   | 'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
-  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge'
+  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'autoLayout'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -162,6 +163,23 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
     }, 'reading node types'), 'console.rules-node-types-route')
 
     // 改一个节点。坐标、配置、名字、启用都走这里；整图不交上来，避免覆盖别人的改动。
+    // 自动布局：换方向 / 换策略之后把所有节点的坐标重算并写回。
+    registerWrite(RULES_FLOW_LAYOUT_PATH, 'laying out a flow', (body) => {
+      const flowId = textOf(body, 'flowId')
+      if (flowId === undefined) return { ok: false, error: 'flowId must not be empty' }
+      const record = isObject(body) ? body : {}
+      const direction = textOf(record, 'direction')
+      const strategy = textOf(record, 'strategy')
+      return {
+        ok: true,
+        command: engine => engine.autoLayout({
+          flowId,
+          ...(direction === undefined ? {} : { direction: direction as never }),
+          ...(strategy === undefined ? {} : { strategy: strategy as never }),
+        }),
+      }
+    })
+
     registerWrite(RULES_FLOW_SAVE_PATH, 'saving a flow node', (body) => {
       const nodeId = textOf(body, 'nodeId')
       if (nodeId === undefined) return { ok: false, error: 'nodeId must not be empty' }

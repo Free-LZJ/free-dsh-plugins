@@ -86,6 +86,9 @@ export const RULES_FLOW_PATH = `${RULES_PREFIX}/flow`
 /** 改图上一个节点（配置 / 坐标 / 名字 / 启用）。只写这一处，不整图覆盖。 */
 export const RULES_FLOW_SAVE_PATH = `${RULES_PREFIX}/flow/save`
 
+
+/** 重新自动布局一张图：换方向、换策略，位置写回文件。 */
+export const RULES_FLOW_LAYOUT_PATH = `${RULES_PREFIX}/flow/layout`
 /** 增删图上的节点。插入时新节点接管前一步的出路，删时把入边接到出边。 */
 export const RULES_FLOW_NODE_PATH = `${RULES_PREFIX}/flow/node`
 

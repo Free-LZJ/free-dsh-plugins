@@ -17,9 +17,7 @@ import type { Task } from '@free-lzj/dsh-decision'
 import { registerRulesRoutes, type RulesEngine, type RulesRouteHost } from '../src/rules/index.ts'
 import {
   RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
-  RULES_FLOW_NODE_PATH,
-  RULES_NODE_TYPES_PATH,
-  RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_FLOW_LAYOUT_PATH, RULES_FLOW_NODE_PATH, RULES_NODE_TYPES_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../src/paths.ts'
 
@@ -165,6 +163,7 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
     addFlowNode: () => Promise.resolve({ ok: true }),
     removeFlowNode: () => Promise.resolve({ ok: true }),
     relinkFlowEdge: () => Promise.resolve({ ok: true }),
+    autoLayout: () => Promise.resolve({ ok: true }),
     nodeTypes: () => [],
     ...overrides,
   }
@@ -216,7 +215,7 @@ describe('the rule engine’s routes', () => {
     const { routes } = bench()
     expect([...routes.keys()].sort()).toEqual([
       RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
-  RULES_FLOW_NODE_PATH,
+      RULES_FLOW_LAYOUT_PATH, RULES_FLOW_NODE_PATH,
       RULES_NODE_TYPES_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
       RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
     ].sort())

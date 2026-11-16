@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { FlowCanvas, type CanvasEdge, type CanvasNode } from './flow-canvas.tsx'
+import type { LayoutDirection, LayoutStrategy } from '@free-lzj/dsh-decision'
 import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageNodeType, TriageSource } from './rules.tsx'
 
 /** 一段节点上的条件，压缩成一行给人看。 */
@@ -184,6 +185,9 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [trail, setTrail] = useState<ReadonlyMap<string, 'ok' | 'failed' | 'suspended'>>(new Map())
   /** 全屏看板：把规则页其余部分让出来，只留画布与面板。 */
   const [full, setFull] = useState(false)
+  /** 自动布局的走向与松紧。 */
+  const [direction, setDirection] = useState<LayoutDirection>('TB')
+  const [strategy, setStrategy] = useState<LayoutStrategy>('layered')
   /**
    * 只看某一条规则的分支。
    *
@@ -324,6 +328,24 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    *
    * 事件流里「路由到谁」和「谁在干什么」是两层，双击是最自然的进入方式。
    */
+  /**
+   * 按当前选的方向与方式重排整张图。
+   *
+   * 会**覆盖**人手摆过的位置——「自动布局」保留手摆的等于点了没反应。
+   */
+  const onAutoLayout = useCallback(() => {
+    if (flow === undefined) return
+    setFailure('')
+    void triage.autoLayout({ flowId: flow.id, direction, strategy }).then(result => {
+      if (!result.ok) {
+        setFailure(result.message ?? '没有排成')
+        return
+      }
+      setSelected(undefined)
+      void load()
+    })
+  }, [triage, flow, direction, strategy, load])
+
   const onDrill = useCallback((id: string) => {
     const node = flow?.nodes.find(item => item.id === id)
     const target = node?.type === 'workflow' && typeof node.config?.['workflow'] === 'string'
@@ -423,6 +445,35 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
           {String(flow?.nodes.length ?? 0)} 个节点 · connector {flow?.connector}
           {selected === undefined ? ' · 点一个节点看它的配置，拖动能调位置' : ''}
         </span>
+        {/* 自动布局：方向决定流程往哪边走，策略决定松紧。点一下重排并写回文件。 */}
+        <select
+          value={direction}
+          onChange={event => { setDirection(event.target.value as LayoutDirection) }}
+          title="流程走向"
+          style={{ marginLeft: 'auto', fontSize: 12, padding: '4px 6px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-secondary)' }}
+        >
+          <option value="TB">↓ 自上而下</option>
+          <option value="BT">↑ 自下而上</option>
+          <option value="LR">→ 从左到右</option>
+          <option value="RL">← 从右到左</option>
+        </select>
+        <select
+          value={strategy}
+          onChange={event => { setStrategy(event.target.value as LayoutStrategy) }}
+          title="排列方式"
+          style={{ fontSize: 12, padding: '4px 6px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-secondary)' }}
+        >
+          <option value="layered">分层</option>
+          <option value="compact">紧凑</option>
+        </select>
+        <button
+          type="button"
+          onClick={onAutoLayout}
+          title="按选的方向和方式重排所有节点"
+          style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer' }}
+        >
+          自动布局
+        </button>
         <button
           type="button"
           onClick={() => { void load() }}

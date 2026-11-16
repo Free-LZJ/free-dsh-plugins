@@ -134,7 +134,8 @@ export interface TriageRules {
    * The page words those two differently.
    */
   readonly connector: boolean
-  /** 这份文件是节点图格式：规则写在图里，ules 空是对的。 */
+  /** 这份文件是节点图格式：规则写在图里，
+ules 空是对的。 */
   readonly flowMode?: boolean
 }
 
@@ -224,6 +225,8 @@ export interface TriageSource {
   nodeTypes(): Promise<readonly TriageNodeType[]>
   /** 改一个节点；只写这一处。 */
   saveFlowNode(patch: TriageFlowPatch): Promise<TriageResult>
+  /** 重新自动布局：换方向、换策略，位置写回文件。 */
+  autoLayout(input: { flowId: string; direction?: string; strategy?: string }): Promise<TriageResult>
   /** 在 after 之后插一个节点；不传 after 表示接到末尾。 */
   addFlowNode(input: { after?: string; type: string }): Promise<TriageResult & { nodeId?: string }>
   /** 删一个节点，入边接到它的出边。 */
@@ -310,6 +313,7 @@ export function createTriageSource(): TriageSource {
     ),
     nodeTypes: async () => (await read<{ types: readonly TriageNodeType[] }>('/node-types')).types,
     saveFlowNode: async (patch) => await write('/flow/save', patch),
+    autoLayout: async (input) => await write('/flow/layout', input),
     addFlowNode: async (input) => await write('/flow/node', { action: 'add', ...input }),
     removeFlowNode: async (nodeId) => await write('/flow/node', { action: 'remove', nodeId }),
     relinkFlowEdge: async (input) => await write('/flow/node', { action: 'link', ...input }),

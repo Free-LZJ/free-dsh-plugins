@@ -26,6 +26,7 @@ import {
 import type { Rule, RuleFileError } from '../types.ts'
 
 import { readJson, writeTextFile } from '../store.ts'
+import { resolvePositions, type LayoutDirection, type LayoutStrategy } from '../flow/layout.ts'
 import type { TaskConnector, TaskTestAnswer, TaskTestRef } from './connector.ts'
 import type { EmitAck, TaskEvent } from './event.ts'
 import type { ActionNode } from './node.ts'
@@ -37,7 +38,6 @@ import { createDeferredStore, type DeferredStore } from './deferred.ts'
 import { actionsToFlowNodes } from '../flow/adapt.ts'
 import { createControlNodes } from '../flow/control.ts'
 import { parseFlowDocument, parseFlowFile } from '../flow/parse.ts'
-import { resolvePositions } from '../flow/layout.ts'
 import { FlowNodeRegistry } from '../flow/registry.ts'
 import type { Flow } from '../flow/types.ts'
 import type { TaskContext } from './context.ts'
@@ -974,6 +974,60 @@ export class TaskEngine {
     }
 
     await writeTextFile(path, doc.toString())
+    await this.reloadRules()
+    return { ok: true }
+  }
+
+  /**
+   * 重新自动布局一张图，并把位置写回文件。
+   *
+   * 一次读写：所有节点的 `pos` 改完才落盘，不是每个节点各写一次——否则一张 22 节点
+   * 的图会触发 22 次写入和 22 次重载。
+   *
+   * `keepManual` 传 `false`：自动布局保留人手摆的位置就等于点了没反应。
+   * @param input - 哪张图、什么方向、什么策略。
+   * @returns 成功或为什么没排成。
+   */
+  async autoLayout(input: {
+    readonly flowId: string
+    readonly direction?: LayoutDirection
+    readonly strategy?: LayoutStrategy
+  }): Promise<TaskEdit> {
+    const located = this.locateFlow(undefined, input.flowId)
+    if (located === undefined) return { ok: false, message: '没有这张图：' + input.flowId }
+
+    const positions = resolvePositions(located.flow, {
+      ...(input.direction === undefined ? {} : { direction: input.direction }),
+      ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
+      keepManual: false,
+    })
+
+    let raw = ''
+    try { raw = readFileSync(located.path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: '读不到规则文件：' + located.path }
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: '规则文件读不出来：' + (error instanceof Error ? error.message : String(error)) }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: '规则文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? '') }
+    }
+
+    let moved = 0
+    for (const [nodeId, pos] of positions) {
+      const found = locateNode(doc, nodeId)
+      if (found === undefined) continue
+      const at = found.flowIndex < 0
+        ? ['nodes', found.nodeIndex, 'pos']
+        : ['flows', found.flowIndex, 'nodes', found.nodeIndex, 'pos']
+      doc.setIn(at, { x: Math.round(pos.x), y: Math.round(pos.y) })
+      moved += 1
+    }
+    if (moved === 0) return { ok: false, message: '这张图里没有可排的节点' }
+
+    await writeTextFile(located.path, doc.toString())
     await this.reloadRules()
     return { ok: true }
   }
