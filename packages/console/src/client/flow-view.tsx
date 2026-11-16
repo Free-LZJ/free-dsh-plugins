@@ -373,10 +373,6 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     }
   }, [flow, typeMap, trail])
 
-  /** 换图时重挂载画布，让它按新坐标重新 fit。 */
-  // 全屏换了尺寸，画布要重挂载才会重新适配（否则还停在旧缩放下，下面空一大片）。
-  const canvasKey = (flow?.id ?? 'none') + (full ? ':full' : '')
-
   const node: TriageFlowNode | undefined = flow?.nodes.find(item => item.id === selected)
   const nodeType = node === undefined ? undefined : typeMap.get(node.type)
 
@@ -603,7 +599,6 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, height: full ? '100%' : undefined, minWidth: 0 }}>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
           <FlowCanvas
-            key={canvasKey}
             fullscreen={full}
             nodes={canvas.nodes}
             edges={canvas.edges}

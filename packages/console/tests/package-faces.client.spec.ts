@@ -84,10 +84,32 @@ type PlatformStub = {
   readonly [property: string]: PlatformStub
 }
 
+/**
+ * 打包器把 `import * as React from 'react'` 转成 `__toESM(require('react'))`，而
+ * `__toESM` 是**按自有键**复制的。只给 `get` 不给 `ownKeys` 的话，复制出来是个空
+ * 对象，于是 `react.createContext` 变成 undefined——第三方库（React Flow）在模块
+ * 顶层一调就炸。
+ */
+const STUB_KEYS: readonly string[] = [
+  'prototype', 'length', 'name', 'call', 'apply', 'bind',
+  'createContext', 'useState', 'useEffect', 'useMemo', 'useCallback', 'useRef', 'useContext',
+  'useReducer', 'useId', 'useSyncExternalStore', 'useLayoutEffect', 'useTransition',
+  'forwardRef', 'memo', 'createElement', 'cloneElement', 'Fragment', 'Component', 'Children',
+  'default',
+]
+
 const platformStub: PlatformStub = new Proxy(function platformStub() {} as unknown as PlatformStub, {
   get: (_target, key) => (key === 'then' ? undefined : platformStub),
   apply: () => platformStub,
   construct: () => platformStub,
+  has: () => true,
+  ownKeys: () => [...STUB_KEYS],
+  // `prototype` / `length` / `name` 是函数自带的不可配置属性，描述符必须照原样给。
+  getOwnPropertyDescriptor: (target, key) => {
+    const own = Reflect.getOwnPropertyDescriptor(target, key)
+    if (own !== undefined) return own
+    return { configurable: true, enumerable: true, value: platformStub, writable: true }
+  },
 })
 
 /** Resolve one manifest export to the file it names. */
