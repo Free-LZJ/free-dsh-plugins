@@ -232,10 +232,17 @@ function readFlow(
     return undefined
   }
 
-  return { id, name: text(raw['name']) ?? id, connector, nodes }
-}
 
-/** 读一个节点。 */
+  // `trigger` 只出现在事件流文件里；子工作流没有它，靠 workflow 节点被调用。
+  const trigger = text(raw['trigger'])
+  return {
+    id,
+    name: text(raw['name']) ?? id,
+    connector,
+    ...(trigger === undefined ? {} : { trigger }),
+    nodes,
+  }
+}
 function readNode(
   raw: unknown,
   flowId: string,

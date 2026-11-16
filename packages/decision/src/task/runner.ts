@@ -51,7 +51,10 @@ export interface RunnerDeps {
   readonly rules: () => readonly Rule<ConditionSpecLike, ActionSpecLike>[]
   /** 当前生效的节点图；v1 规则文件时为空数组。 */
   readonly flows: () => readonly Flow[]
-  /** 图节点类型注册表。 */
+  /** 按触发器取事件流；没有就是 undefined。 */
+  readonly eventFlowOf?: (triggerId: string) => Flow | undefined
+  /** 按 id 取子工作流。 */
+  readonly workflowOf?: (id: string) => Flow | undefined
   readonly nodes: FlowNodeRegistry
   readonly config: () => DecisionConfigBase
   readonly log: (line: string) => void
@@ -220,7 +223,7 @@ export class TaskRunner {
 
     const ports = this.allPorts()
     // 先看有没有节点图：有就走图，没有走旧的规则列表。二者互斥，不是两套同时生效。
-    const graph = this.pickFlow(connector.id)
+      const graph = this.pickFlow(connector.id, task.triggerId)
     if (graph !== undefined) {
       await this.runFlow(task, connector, graph, ports, config)
       return
@@ -241,7 +244,13 @@ export class TaskRunner {
    * @param connectorId - 连接器 id。
    * @returns 图，或 undefined（这份规则文件里没有图）。
    */
-  private pickFlow(connectorId: string): Flow | undefined {
+  private pickFlow(connectorId: string, triggerId?: string): Flow | undefined {
+    // 事件流优先：一个连接器可以有多个事件，按触发器分才不串。
+    if (triggerId !== undefined) {
+      const byTrigger = this.deps.eventFlowOf?.(triggerId)
+      if (byTrigger !== undefined) return byTrigger
+    }
+    // 回退到旧的「按连接器找图」，迁移期还在用。
     const flows = this.deps.flows()
     return flows.find(flow => flow.connector === connectorId) ?? flows.find(flow => flow.connector === '*')
   }

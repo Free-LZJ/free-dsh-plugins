@@ -24,6 +24,12 @@ export interface Flow {
   readonly name: string
   /** 归属连接器；决定条件与动作的词表。`'*'` 表示收所有连接器的事件。 */
   readonly connector: string
+  /**
+   * 归属的事件触发器 id（`mail:new`）；事件流用它做路由。
+   *
+   * 子工作流没有这个字段——它由 `workflow` 节点按 id 调用，不接事件。
+   */
+  readonly trigger?: string
   readonly nodes: readonly FlowNodeSpec[]
 }
 
@@ -37,7 +43,6 @@ export interface FlowNodeSpec {
   /** 出边。缺省 = 终止节点。 */
   readonly out?: readonly FlowEdgeSpec[]
   /**
-   * 实现选择器。
    *
    * 同一个 `type` 可以有多套实现（`session` 能开真会话，也能只调一次模型），选哪个
    * 由这里说。缺省取节点类型声明的第一个 runner。

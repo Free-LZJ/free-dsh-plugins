@@ -139,9 +139,16 @@ export class TaskEngine {
   private flowFiles: ReadonlyMap<string, string> = new Map()
   /** 一规则一文件所在的目录。 */
   private readonly flowsDir: string
+  /** 事件流目录：一个事件一个文件。 */
+  private readonly eventsDir: string
+  /** 子工作流目录：可被事件流里的 workflow 节点引用。 */
+  private readonly workflowsDir: string
+  /** 子工作流：id → 图。事件流里的 workflow 节点按 id 引用它。 */
+  private workflows = new Map<string, Flow>()
+  /** 事件流：trigger id → 图。事件到达时按 `task.triggerId` 取那张。 */
+  private eventFlows = new Map<string, Flow>()
   private readonly runner: TaskRunner
   private readonly undos = new Map<string, (() => Promise<void>)[]>()
-  /** 有多少条规则没写归属（它们不会执行）。 */
   private unassigned = 0
 
   private currentRules: readonly Rule<ConditionSpecLike, ActionSpecLike>[] = []
@@ -162,6 +169,8 @@ export class TaskEngine {
     this.rulesPath = join(options.home, 'rules.yml')
     // 一规则一文件：每张图一个 .yml，放在这个目录下；rules.yml 只是迁移前的旧家。
     this.flowsDir = join(options.home, 'flows')
+    this.eventsDir = join(options.home, 'events')
+    this.workflowsDir = join(options.home, 'workflows')
     this.tasksPath = join(options.home, 'tasks.json')
     this.deferredPath = join(options.home, 'deferred.json')
     this.connectorsPath = join(options.home, 'connectors.json')
@@ -180,6 +189,8 @@ export class TaskEngine {
       connectors: this.connectors,
       rules: () => this.currentRules,
       flows: () => this.currentFlows,
+      eventFlowOf: triggerId => this.eventFlows.get(triggerId),
+      workflowOf: id => this.workflows.get(id),
       nodes: this.nodes,
       config: () => this.configOf(),
       log: line => this.log(line),
@@ -223,27 +234,27 @@ export class TaskEngine {
    * @param vocabulary - 合并后的词表。
    * @returns 图列表与「图 id → 文件路径」的映射。
    */
-  private readFlowsDir(vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>): {
+  private readDirFlows(dir: string, vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>): {
     readonly flows: readonly Flow[]
     readonly files: ReadonlyMap<string, string>
   } {
-    if (!existsSync(this.flowsDir)) return { flows: [], files: new Map() }
+    if (!existsSync(dir)) return { flows: [], files: new Map() }
 
     let names: string[] = []
     try {
-      names = readdirSync(this.flowsDir)
+      names = readdirSync(dir)
         .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
         .sort()
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error)
-      this.warn('任务引擎: 读不了规则目录 ' + this.flowsDir + '（' + detail + '）')
+      this.warn('任务引擎: 读不了目录 ' + dir + '（' + detail + '）')
       return { flows: [], files: new Map() }
     }
 
     const flows: Flow[] = []
     const files = new Map<string, string>()
     for (const name of names) {
-      const path = join(this.flowsDir, name)
+      const path = join(dir, name)
       let raw = ''
       try {
         raw = readFileSync(path, 'utf8')
@@ -546,6 +557,26 @@ export class TaskEngine {
    * 所以刷新一次不会把文件写脏。
    * @returns 图列表与错误说明。
    */
+  /** 某个触发器对应的事件流图；没有就 undefined。 */
+  eventFlowOf(triggerId: string): Flow | undefined {
+    return this.eventFlows.get(triggerId)
+  }
+
+  /** 全部事件流（界面列 tab 用）。 */
+  eventFlowList(): readonly Flow[] {
+    return [...this.eventFlows.values()]
+  }
+
+  /** 按 id 取子工作流。 */
+  workflowOf(id: string): Flow | undefined {
+    return this.workflows.get(id)
+  }
+
+  /** 全部子工作流。 */
+  workflowList(): readonly Flow[] {
+    return [...this.workflows.values()]
+  }
+
   flowView(focus?: string): { readonly flows: readonly Flow[]; readonly error?: string } {
     const flows = this.currentFlows.map(flow => {
       // 聚焦某条规则时**先筛再算坐标**：否则节点会散落在总览时的旧位置上，
@@ -610,9 +641,32 @@ export class TaskEngine {
     const vocabulary = this.combinedVocabulary()
     if (vocabulary === undefined) return
 
+    // 子工作流与事件流：新结构。先读子工作流，事件流里的 workflow 节点要按 id 引用它。
+    const wfDir = this.readDirFlows(this.workflowsDir, vocabulary)
+    this.workflows = new Map(wfDir.flows.map(flow => [flow.id, flow]))
+
+    const evDir = this.readDirFlows(this.eventsDir, vocabulary)
+    this.eventFlows = new Map()
+    for (const flow of evDir.flows) {
+      if (flow.trigger === undefined) {
+        this.warn('任务引擎: 事件流「' + flow.id + '」没写 trigger，跳过（它接不到任何事件）')
+        continue
+      }
+      if (this.eventFlows.has(flow.trigger)) {
+        this.warn('任务引擎: 触发器「' + flow.trigger + '」有两个事件流，' + flow.id + ' 被跳过')
+        continue
+      }
+      this.eventFlows.set(flow.trigger, flow)
+    }
+    if (this.eventFlows.size > 0 || this.workflows.size > 0) {
+      this.log(
+        '任务引擎: 事件流 ' + String(this.eventFlows.size) + ' 张，子工作流 ' + String(this.workflows.size) + ' 个',
+      )
+    }
+
     // **一规则一文件优先**：`flows/` 里每个 `.yml` 是一张图。目录不存在或为空时才回退到
     // 旧的 `rules.yml`（那里可能还躺着一张合集图，等迁移脚本拆开）。
-    const fromDir = this.readFlowsDir(vocabulary)
+    const fromDir = this.readDirFlows(this.flowsDir, vocabulary)
     if (fromDir.flows.length > 0) {
       this.currentFlows = fromDir.flows
       this.flowFiles = fromDir.files
