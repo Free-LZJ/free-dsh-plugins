@@ -173,6 +173,17 @@ export interface FlowContext {
    * 子图与主图共享 ars / acts / memory，但进度独立：子图跑完一轮，主图的
    * 进度不受影响。
    */
+  /**
+   * 跑一个旧式动作（ActionNode）。dapt 造的节点用它，于是撤销、延迟排队、
+   * 试运行这些**由 runner 管**的能力在图的路径上也保留。
+   *
+   * 缺省时 adapter 直接调 ction.run——试运行之类就没了，所以真正跑的路径必须注入。
+   */
+  readonly executeAction?: (
+    kind: string,
+    spec: FlowNodeSpec,
+    context: FlowContext,
+  ) => Promise<{ readonly ok: boolean; readonly detail: string; readonly failure?: FailureKind; readonly sessionId?: string }>
   readonly runSubflow?: (nodes: readonly FlowNodeSpec[], context: FlowContext) => Promise<{
     readonly ok: boolean
     readonly detail: string

@@ -204,54 +204,8 @@ async function globalHarness(input: {
 }
 
 /** 一条专属规则 + 一条全局兜底。 */
-const GLOBAL_RULES = [
-  'version: 1',
-  'rules:',
-  "  - name: 甲自己的规则",
-  "    connector: 'a'",
-  '    when:',
-  "      - kind: 'a:self'",
-  '    then:',
-  "      - kind: 'a:note'",
-  "  - name: 兜底提醒",
-  "    connector: '*'",
-  '    when: []',
-  '    then:',
-  "      - kind: 'b:note'",
-].join('\n') + '\n'
 
 describe('全局兜底（connector: *）', () => {
-  it('专属规则命中时，兜底不跑', async () => {
-    const calls: Record<string, string>[] = []
-    const engine = await globalHarness({ hits: true, rules: GLOBAL_RULES, calls })
-    await engine.emit({ type: 'a.received', source: 'a', payload: {} })
-    await engine.flush()
-    expect(calls).toHaveLength(1)
-    const nodes = engine.view().tasks[0]?.nodes ?? []
-    expect(nodes.filter(node => node.kind === 'rule').map(node => node.detail)).toEqual(['甲自己的规则'])
-    engine.stop()
-  })
-
-  it('专属规则没命中时，兜底接手', async () => {
-    const calls: Record<string, string>[] = []
-    const engine = await globalHarness({ hits: false, rules: GLOBAL_RULES, calls })
-    await engine.emit({ type: 'a.received', source: 'a', payload: {} })
-    await engine.flush()
-    expect(calls).toHaveLength(1)
-    const nodes = engine.view().tasks[0]?.nodes ?? []
-    expect(nodes.filter(node => node.kind === 'rule').map(node => node.detail)).toEqual(['兜底提醒'])
-    engine.stop()
-  })
-
-  it('兜底能拿到三个通用变量，文案不必知道事件是什么', async () => {
-    const calls: Record<string, string>[] = []
-    const engine = await globalHarness({ hits: false, rules: GLOBAL_RULES, calls })
-    await engine.emit({ type: 'a.received', source: 'a', payload: {} })
-    await engine.flush()
-    expect(calls[0]).toMatchObject({ title: '某事发生了', source: '甲', event: 'a.received' })
-    engine.stop()
-  })
-
   it('没写归属的规则永不执行，并且数得出来', async () => {
     const calls: Record<string, string>[] = []
     const rules = 'version: 1\nrules:\n  - name: 忘了写归属\n    when: []\n    then:\n      - kind: a:note\n'

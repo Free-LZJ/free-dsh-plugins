@@ -23,20 +23,19 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { compileRules, runFlow } from '../bpmn/index.ts'
 import { executeFlow } from '../flow/execute.ts'
 import type { DecisionConfigBase } from '../config.ts'
 import { ruleMatches } from '../match.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../registry.ts'
 import type { Rule } from '../types.ts'
-import type { Flow } from '../flow/types.ts'
+import type { Flow, FlowContext, FlowNodeSpec } from '../flow/types.ts'
 import type { FlowNodeRegistry } from '../flow/registry.ts'
 import type { TaskConnector } from './connector.ts'
 import type { TaskContext } from './context.ts'
 import type { DeferredRecord, DeferredStore } from './deferred.ts'
 import type { EmitAck, TaskEvent, TaskTrigger, TriggerOutcome } from './event.ts'
 import type { ActionNode, NodeOutcome } from './node.ts'
-import type { ClassifyOutcome } from './connector.ts'
+
 import type { NodePatch, Task, TaskNodeRecord, TaskStatus } from './record.ts'
 import type { OwnedRegistry, TriggerRegistry } from './registry.ts'
 import type { TaskStore } from './store.ts'
@@ -227,65 +226,11 @@ export class TaskRunner {
       return
     }
 
-    const usable = this.deps.rules().filter(rule => rule.enabled)
-    // 两段：**本域的规则先跑**，一条都没命中才轮到 `connector: '*'` 的全局规则。
-    // 兜底的意义是"谁都没管这件事时提醒我"，所以它必须排在专属规则之后，
-    // 而不是靠 priority 数字去和它们抢。
-    const own = usable.filter(rule => rule.connector === connector.id)
-    const global = usable.filter(rule => rule.connector === '*')
-
-    // L1 分类：只问一次；标签集为空就整个跳过，一次模型调用都不花。
-    const classification = await this.runClassify(task, connector, [...own, ...global], ports)
-
-    // L2/L3：把规则编成一棵网关链，交给 BPMN 执行器跑。
-    // 顺序与原来一致：本域规则在前，全都不中才轮到 `connector: '*'` 的兜底规则。
-    const ordered = [...own, ...global]
-    if (ordered.length === 0) {
-      await this.appendNode(task, 'rule', true, '没有规则命中', { data: { ruleId: '(none)' } })
-      await this.finish(taskId, 'skipped', '没有规则命中')
-      return
-    }
-
-    const flow = compileRules(ordered, { processId: task.id, name: task.title })
-    for (const note of flow.dropped) this.deps.warn(`规则引擎: ${note}`)
-
-    const summary = await runFlow(flow, {
-      judge: async (ruleId) => {
-        const rule = ordered.find(candidate => candidate.id === ruleId)
-        if (rule === undefined) return false
-        return await this.ruleHolds(rule, task, connector, ports, classification)
-      },
-      runAction: async (ruleId, index) => {
-        const rule = ordered.find(candidate => candidate.id === ruleId)
-        const spec = rule?.then[index]
-        if (rule === undefined || spec === undefined) {
-          return { ok: false, detail: `规则 ${ruleId} 的第 ${String(index)} 个动作不存在`, failure: 'config' }
-        }
-        // 动作节点仍由 runAction 自己写：延迟排队要靠它生成的 nodeId 回填。
-        const ok = await this.runAction(task.id, connector, spec, index, ports)
-        return { ok, detail: ok ? spec.kind : `${spec.kind} 失败` }
-      },
-      record: async (node) => {
-        if (node.kind !== 'rule') return
-        await this.deps.store.appendNode(task.id, {
-          id: `node-${randomUUID()}`,
-          kind: 'rule',
-          at: this.deps.now().toISOString(),
-          ok: node.ok,
-          detail: node.detail,
-          data: { ruleId: node.ruleId ?? '(none)' },
-        })
-        this.deps.changed()
-      },
-    })
-
-    if (summary.error !== undefined) this.deps.warn(`规则引擎: ${summary.error}`)
-    if (summary.matchedRuleId === undefined) {
-      await this.appendNode(task, 'rule', true, '没有规则命中', { data: { ruleId: '(none)' } })
-      await this.finish(taskId, 'skipped', '没有规则命中')
-      return
-    }
-    await this.settle(taskId, summary.status !== 'done')
+    // 规则文件里没有能用的流程图。
+    // **没有回退**：v1 的规则列表路径已经删了，`rules.yml` 只有一种形状。读到别的形状
+    // 说明那份文件没迁移（或者迁移失败），此时如实说，而不是装作「一条规则都没命中」。
+    await this.appendNode(task, 'rule', false, '规则文件里没有适用的流程图')
+    await this.finish(taskId, 'failed', '规则文件里没有适用的流程图——它可能还是旧格式，需要迁移到 version: 2')
   }
 
   /**
@@ -364,6 +309,20 @@ export class TaskRunner {
         task,
         ports,
         evaluate: evaluate as never,
+        // 旧式动作交给 runner 跑：于是撤销窗口、延迟排队、试运行在图上也照旧生效。
+        executeAction: async (kind: string, spec: FlowNodeSpec, context: FlowContext) => {
+          const index = context.vars['__actionIndex']
+          const ok = await this.runAction(
+            task.id,
+            connector,
+            { kind, ...(spec.config ?? {}) } as ActionSpecLike,
+            typeof index === 'number' ? index : 0,
+            ports,
+          )
+          return ok
+            ? { ok: true, detail: kind }
+            : { ok: false, detail: `${kind} 失败`, failure: 'transient' as const }
+        },
         ...(resuming && task.progress !== undefined ? { progress: task.progress } : {}),
       },
       {
@@ -424,68 +383,7 @@ export class TaskRunner {
     return out
   }
 
-  /** L1：需要才跑，跑完把 label 交回去。 */
-  private async runClassify(
-    task: Task,
-    connector: TaskConnector,
-    rules: readonly Rule<ConditionSpecLike, ActionSpecLike>[],
-    ports: Readonly<Record<string, unknown>>,
-  ): Promise<{ readonly label: string; readonly confidence: number }> {
-    const plan = connector.classify?.plan(rules)
-    const node = connector.classify?.node
-    if (plan === undefined || node === undefined) return { label: 'uncertain', confidence: 0 }
-    const nodeId = `node-${randomUUID()}`
-    let outcome: ClassifyOutcome
-    try {
-      outcome = await node.run(plan, this.contextOf(task, ports, nodeId, 'classify'))
-    } catch (error: unknown) {
-      outcome = { status: 'continue', ok: false, detail: `分类失败：${describe(error)}`, failure: 'transient' }
-    }
-    await this.deps.store.appendNode(task.id, {
-      id: nodeId,
-      kind: 'classify',
-      at: this.deps.now().toISOString(),
-      ok: outcome.ok,
-      detail: outcome.detail,
-      ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
-      data: {
-        labels: plan.labels,
-        ...(outcome.label === undefined ? {} : { label: outcome.label }),
-        ...(outcome.confidence === undefined ? {} : { confidence: outcome.confidence }),
-        ...(outcome.model === undefined ? {} : { model: outcome.model }),
-        ...(outcome.answer === undefined ? {} : { answer: outcome.answer }),
-      },
-    })
-    this.deps.changed()
-    return { label: outcome.label ?? 'uncertain', confidence: outcome.confidence ?? 0 }
-  }
 
-  /** L2：一条规则的条件是否全部成立。没有条件词表的连接器只认空 `when`。 */
-  private async ruleHolds(
-    rule: Rule<ConditionSpecLike, ActionSpecLike>,
-    task: Task,
-    connector: TaskConnector,
-    ports: Readonly<Record<string, unknown>>,
-    classification: { readonly label: string; readonly confidence: number },
-  ): Promise<boolean> {
-    const judge = connector.judge
-    if (judge === undefined) return rule.when.length === 0
-    const runtime = judge.plan({
-      task,
-      event: task.event,
-      ports,
-      classification: async () => classification,
-    })
-    return await ruleMatches(
-      { name: rule.name, when: rule.when },
-      {
-        conditions: { get: kind => judge.conditions.get(kind) },
-        context: state => runtime.context(state),
-        readBody: runtime.readBody,
-        log: line => this.deps.warn(line),
-      },
-    )
-  }
 
   /**
    * L3：一个动作，五分支。
@@ -561,18 +459,6 @@ export class TaskRunner {
     return outcome.ok
   }
 
-  /** 汇总状态：全成 done，有失败 partial；有副作用且结束 → 待确认。 */
-  private async settle(taskId: string, failed: boolean): Promise<void> {
-    const task = this.deps.store.get(taskId)
-    if (task === undefined) return
-    const status: TaskStatus = failed ? 'partial' : 'done'
-    const hasSideEffect = task.nodes.some(node => node.kind !== 'trigger' && node.kind !== 'classify' && node.kind !== 'rule')
-    await this.deps.store.patch(taskId, {
-      status,
-      ...(status === 'done' && hasSideEffect ? { awaitingConfirmation: true } : {}),
-    })
-    this.deps.changed()
-  }
 
   /** 追加一格并把任务标成终态；给「没有规则」「连接器没了」这些早退路径用。 */
   private async finish(taskId: string, status: TaskStatus, detail: string): Promise<void> {

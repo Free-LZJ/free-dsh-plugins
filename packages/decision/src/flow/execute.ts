@@ -57,6 +57,8 @@ export interface ExecuteOptions {
   readonly ports?: Readonly<Record<string, unknown>>
   /** 条件求值器；控制流节点用它。 */
   readonly evaluate?: ConditionEvaluator
+  /** 跑一个旧式动作；动作节点用它保留撤销与延迟。 */
+  readonly executeAction?: FlowContext['executeAction']
   /** 同一轮最多挂起几次；挡住「挂起-恢复-挂起」的死循环。 */
   readonly maxSuspends?: number
 }
@@ -117,6 +119,7 @@ export async function executeFlow(
     ...(options.ports === undefined ? {} : { ports: options.ports }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.evaluate === undefined ? {} : { evaluate: options.evaluate }),
+    ...(options.executeAction === undefined ? {} : { executeAction: options.executeAction }),
     record: entry => { return deps.record(entry) },
     log: line => { deps.log(line) },
     // 子图借用同一个执行器跑：复合节点（`loop`）不该自己实现一遍调度。

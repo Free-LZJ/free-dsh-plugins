@@ -72,6 +72,23 @@ export function actionToFlowNode(
     group: 'action',
     sideEffect: action.sideEffect === true,
     async run(spec: FlowNodeSpec, context: FlowContext): Promise<NodeResult> {
+      // runner 注入了 xecuteAction 就走它：撤销、延迟排队、试运行都由那边管。
+      if (context.executeAction !== undefined) {
+        const outcome = await context.executeAction(action.kind, spec, context)
+        if (outcome.ok) {
+          return {
+            ok: true,
+            detail: outcome.detail,
+            ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
+          }
+        }
+        return {
+          ok: false,
+          detail: outcome.detail,
+          failure: outcome.failure ?? 'transient',
+          ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
+        }
+      }
       let taskContext: TaskContext
       try {
         taskContext = contextOf(context, spec)

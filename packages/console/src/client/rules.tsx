@@ -134,6 +134,8 @@ export interface TriageRules {
    * The page words those two differently.
    */
   readonly connector: boolean
+  /** 这份文件是节点图格式：规则写在图里，ules 空是对的。 */
+  readonly flowMode?: boolean
 }
 
 /** One write's answer. */
@@ -620,7 +622,12 @@ function TriageBody({ t, data, triage, act }: {
 
       <h3 className={CLS.viewSubheading}>{t('rulesList', { count: shown.length })}</h3>
       {rules.rules.length === 0
-        ? <p className={CLS.empty}>{t('rulesNone')}</p>
+        // 节点图格式下「没有规则」是对的：规则写在图里了。说清楚，别让人以为规则丢了。
+        ? <p className={CLS.empty}>
+          {rules.flowMode === true
+            ? '这份规则文件是节点图格式（version: 2），规则写在图里——点上面的「编排」看流程。'
+            : t('rulesNone')}
+        </p>
         : (
           <>
             {/* 按域看规则：一条规则只在它所属连接器的事件上生效，这一点得看得见。 */}

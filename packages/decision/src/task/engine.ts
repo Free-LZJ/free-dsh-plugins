@@ -74,6 +74,13 @@ export interface TaskRulesView {
   readonly unassigned: number
   /** 有没有连接器挂上来。`false` 时页面要说「还没有连接器提供规则」。 */
   readonly connector: boolean
+  /**
+   * 这份文件是节点图格式（`version: 2`）。
+   *
+   * 此时 `rules` 是空的**而且这是对的**：规则写在图里，不在 `rules:` 数组里。页面要
+   * 据此说「去看编排」，而不是「一条规则也没有」——后者会让用户以为规则丢了。
+   */
+  readonly flowMode?: boolean
 }
 
 /** 一次写操作的结果。 */
@@ -241,7 +248,10 @@ export class TaskEngine {
   private registerNodes(connector: TaskConnector): void {
     // 显式注册的图节点 + 旧动作适配出来的节点。少了后半截，notify / session 这些
     // 只有 action 没有 node 的动作在迁移后的图上就会「没有注册」。
-    const nodes = [...(connector.nodes ?? []), ...actionsToFlowNodes(connector.actions)]
+    // 顺序有讲究：显式 nodes 排在后、覆盖同名的适配版——连接器既给了 nodes 又留了
+    // 同名旧 action 时，前者是它对新世界的表达，后者只是过渡期的影子。
+    // ction 时，前者是它对新世界的表达，后者只是过渡期的影子，不该盖掉前者。
+    const nodes = [...actionsToFlowNodes(connector.actions), ...(connector.nodes ?? [])]
     if (nodes.length === 0) return
     try {
       this.nodes.registerAll(connector.id, nodes)
@@ -448,6 +458,7 @@ export class TaskEngine {
       dropped: this.dropped,
       unassigned: this.unassigned,
       connector: connected,
+      ...(this.currentFlows.length === 0 ? {} : { flowMode: true }),
     }
   }
 

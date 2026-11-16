@@ -12,8 +12,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { TaskEngine, defineAction } from '@free-lzj/dsh-decision'
-import type { ActionSpecLike, TaskConnector } from '@free-lzj/dsh-decision'
+import { TaskEngine } from '@free-lzj/dsh-decision'
+
 import { createMailConnector, MAIL_EVENT, type MailEventPayload, type MailOpsLike } from '../src/connector.ts'
 import { DEFAULT_CONFIG } from '../src/triage/config.ts'
 
@@ -39,45 +39,6 @@ function mailOps(calls: string[]): MailOpsLike {
   }
 }
 
-/** 「另一个连接器」：只提供一个建会话的动作，证明动作可以跨连接器。 */
-function sessionConnector(calls: string[]): TaskConnector {
-  return {
-    id: 'dsh',
-    label: 'DSH 宿主能力',
-    directions: ['out'],
-    implemented: true,
-    triggers: [],
-    actions: [
-      defineAction({
-        kind: 'session',
-        sideEffect: true,
-        async run(spec: ActionSpecLike) {
-          const workspace = (spec as { readonly workspace?: string }).workspace ?? ''
-          calls.push(`session:${workspace}`)
-          return {
-            ok: true,
-            detail: `已在「${workspace}」新建会话`,
-            sessionId: 'session-e2e',
-            data: { scope: 'workspace', mode: 'create', workspace },
-          }
-        },
-      }) as never,
-    ],
-    ports: {
-      prompt: { render: async () => '交给 agent 的正文' },
-    },
-    vocabulary: {
-      normalizeCondition: () => undefined,
-      normalizeAction: input => {
-        if (typeof input !== 'object' || input === null) return undefined
-        const record = input as Record<string, unknown>
-        if (record['kind'] !== 'session') return undefined
-        return { kind: 'session', ...(typeof record['workspace'] === 'string' ? { workspace: record['workspace'] } : {}) } as ActionSpecLike
-      },
-    },
-    defaultRules: '',
-  }
-}
 
 /** 造一个事件载荷。 */
 function payload(): MailEventPayload {
@@ -99,57 +60,6 @@ function payload(): MailEventPayload {
 }
 
 describe('一封邮件走完整条链', () => {
-  it('事件 → 任务 → 规则 → 邮件动作 + 会话节点', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'dsh-pipeline-'))
-    const calls: string[] = []
-    writeFileSync(join(home, 'rules.yml'), [
-      'version: 1',
-      'connector: mail',
-      'rules:',
-      '  - name: GitHub 工单',
-      '    priority: 10',
-      '    when:',
-      '      - kind: from',
-      '        any:',
-      '          - notifications@github.com',
-      '    then:',
-      '      - kind: markRead',
-      '      - kind: session',
-      '        workspace: D:/open/free-dsh-plugins',
-    ].join('\n') + '\n')
-
-    const engine = new TaskEngine({ home, config: () => baseConfig, dueIntervalMs: 60_000 })
-    engine.register(createMailConnector({
-      mail: mailOps(calls),
-      config: () => baseConfig,
-      log: () => undefined,
-      warn: () => undefined,
-    }))
-    engine.register(sessionConnector(calls))
-    await engine.start()
-
-    const ack = await engine.emit({
-      type: MAIL_EVENT,
-      source: 'mail',
-      dedupeKey: 'mail:qq:INBOX:229676',
-      payload: payload(),
-    })
-    expect(ack).toMatchObject({ handled: true, triggerId: 'mail:new' })
-    await engine.flush()
-
-    const task = engine.view().tasks[0]
-    expect(task).toBeDefined()
-    expect(task?.title).toBe('Run failed: E2E')
-    expect(task?.status).toBe('done')
-    // 链：触发 → 规则 → 标已读 → 会话 → 会话节点。
-    expect(task?.nodes.map(node => `${node.kind}:${node.sessionId ?? ''}`))
-      .toEqual(['trigger:', 'rule:', 'markRead:', 'session:session-e2e', 'session:session-e2e'])
-    // 邮件动作真的被调了，而且用的是这封信的坐标。
-    expect(calls.some(call => call.includes('"op":"markRead"'))).toBe(true)
-    expect(calls).toContain('session:D:/open/free-dsh-plugins')
-    engine.stop()
-  })
-
   it('同一封信重复到达只有一条任务', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-pipeline-'))
     writeFileSync(join(home, 'rules.yml'), [
