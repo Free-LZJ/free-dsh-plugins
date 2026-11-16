@@ -152,7 +152,72 @@ const loopNode: FlowNode = {
 }
 
 /**
- * 内置控制流节点。
+ * `workflow`：跳到另一个工作流文件去执行。
+ *
+ * 与 `loop` 的 `body` 不同，它引用的是**另一份文件**（`workflows/<id>.yml`），于是同一
+ * 段"处理 GitHub 工单"的步骤能被多个事件流复用，改一次两处都变。
+ *
+ * **变量是显式传的**：`pass` 没写就传全部（event / vars / memory），写了就只传列出的。
+ * 下游看不到未列出的东西——工作流之间不该长出看不见的依赖。
+ */
+const workflowNode: FlowNode = {
+  type: 'workflow',
+  label: '工作流',
+  group: 'control',
+  // 工作流里通常有真动作，保守地当作有副作用。
+  sideEffect: true,
+  config: {
+    workflow: { type: 'text', label: '哪个工作流', hint: 'workflows/ 目录里的 id' },
+    pass: { type: 'json', label: '传哪些变量', hint: '不填就全传；填了只传列出的那些' },
+  },
+  async run(spec: FlowNodeSpec, context: FlowContext): Promise<NodeResult> {
+    const id = typeof spec.config?.['workflow'] === 'string' ? spec.config['workflow'].trim() : ''
+    if (id === '') return { ok: false, detail: '这个节点没说要跑哪个工作流', failure: 'config' }
+
+    const run = context.runWorkflow
+    if (run === undefined) {
+      return { ok: false, detail: '执行器没有提供工作流能力', failure: 'config' }
+    }
+
+    const pass = Array.isArray(spec.config?.['pass'])
+      ? (spec.config['pass'] as unknown[]).filter((key): key is string => typeof key === 'string')
+      : undefined
+    const vars = passWorkflowVars(context, pass)
+
+    const outcome = await run(id, vars, context)
+    if (outcome.ok) return { ok: true, detail: `工作流 ${id}：${outcome.detail}` }
+    return {
+      ok: false,
+      detail: `工作流 ${id}：${outcome.detail}`,
+      // 子工作流是 config/fatal 时不能降级成 transient——重试只会再错一次。
+      failure: outcome.failure ?? 'transient',
+    }
+  },
+}
+
+/**
+ * 挑出要传给子工作流的变量。
+ * @param context - 调用方上下文。
+ * @param pass - 要传的键；undefined 表示全传。
+ * @returns 一份新的、可以安全交给下游的变量表。
+ */
+function passWorkflowVars(
+  context: FlowContext,
+  pass: readonly string[] | undefined,
+): Readonly<Record<string, unknown>> {
+  /** memory 排在最后：同名的键以它为准，因为正文这类数据只有它有。 */
+  const all: Record<string, unknown> = { ...context.event, ...context.vars, ...context.memory }
+  if (pass === undefined) return all
+  const picked: Record<string, unknown> = {}
+  for (const key of pass) {
+    if (all[key] !== undefined) picked[key] = all[key]
+  }
+  return picked
+
+}
+
+/**
+ * 把控制流节点装成一份清单。
  * @returns 可以注册进 `FlowNodeRegistry` 的节点。
  */
 export function createControlNodes(): readonly FlowNode[] {
@@ -162,6 +227,7 @@ export function createControlNodes(): readonly FlowNode[] {
     switchNode,
     ifNode,
     loopNode,
+    workflowNode,
     passThrough('parallel', '并行'),
     passThrough('join', '汇合'),
     passThrough('end', '结束'),

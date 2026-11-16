@@ -191,6 +191,21 @@ export interface FlowContext {
     readonly failure?: FailureKind
   }>
   /**
+   * 跑一个**命名的工作流**（`workflows/<id>.yml`）。
+   *
+   * 与 `runSubflow` 的区别：那个跑的是同一张图里内嵌的一段（loop 用），这里跳进另
+   * 一份文件。子工作流**只能看到调用方传下去的变量**——读不到主图的全量 `vars`，这是
+   * 有意的：否则工作流之间会长出一张看不见的依赖网。传什么由节点的 `config.pass` 定。
+   * @param workflowId - 工作流 id。
+   * @param vars - 传下去的变量。
+   * @param context - 调用方上下文，用来取 task / ports / 执行期能力。
+   */
+  readonly runWorkflow?: (workflowId: string, vars: Readonly<Record<string, unknown>>, context: FlowContext) => Promise<{
+    readonly ok: boolean
+    readonly detail: string
+    readonly failure?: FailureKind
+  }>
+  /**
    * 恢复时交给挂起节点的载荷。
    *
    * 只在「这一轮被某个信号唤醒、且当前节点正是当初挂起的那个」时有值；其余时候

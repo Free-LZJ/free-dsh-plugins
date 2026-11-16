@@ -59,6 +59,8 @@ export interface ExecuteOptions {
   readonly evaluate?: ConditionEvaluator
   /** 跑一个旧式动作；动作节点用它保留撤销与延迟。 */
   readonly executeAction?: FlowContext['executeAction']
+  /** 跑一个命名的工作流；由 engine 提供，因为只有它认得全部工作流文件。 */
+  readonly runWorkflow?: FlowContext['runWorkflow']
   /** 同一轮最多挂起几次；挡住「挂起-恢复-挂起」的死循环。 */
   readonly maxSuspends?: number
 }
@@ -146,6 +148,8 @@ export async function executeFlow(
         // 子图的 failed 只来自 config / fatal / 执行器自身出错，都该原样上报。
         : { ok: false, detail: result.error ?? result.matched ?? result.status, ...(result.status === 'failed' ? { failure: 'config' as const } : {}) }
     },
+    // 命名的子工作流由外面找图（它可能在别的文件里），执行器只负责把上下文带过去。
+    ...(options.runWorkflow === undefined ? {} : { runWorkflow: options.runWorkflow }),
   }
 
   let failure: FailureKind | undefined
