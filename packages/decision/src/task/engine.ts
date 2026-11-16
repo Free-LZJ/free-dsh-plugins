@@ -1141,32 +1141,125 @@ export class TaskEngine {
    * @param input - 从哪个节点的第几条边，改到哪。
    * @returns 成功，或为什么没改成。
    */
+  /**
+   * 改一条已有出边的指向，或删掉它。
+   *
+   * 和改节点一样：**写到那条边所在的那个文件**，不是 `rules.yml`。单图文件里节点在
+   * 根上的 `nodes`，合集文件里在 `flows[i].nodes`，两种都要认。
+   * @param input - 从哪个节点、第几条出边、改成谁（不给就是删）。
+   * @returns 成功或为什么没改成。
+   */
   async relinkFlowEdge(input: {
     readonly from: string
     readonly index: number
     readonly to?: string
+    readonly flowId?: string
   }): Promise<TaskEdit> {
-    const loaded = this.loadFlowDoc(input.from)
-    if (!loaded.ok) return loaded
-    const { doc, flowIndex } = loaded
+    const located = this.locateFlow(input.from, input.flowId)
+    if (located === undefined) return { ok: false, message: `找不到节点「${input.from}」所属的图` }
+    const path = located.path
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: '读不到规则文件：' + path }
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: '规则文件读不出来：' + (error instanceof Error ? error.message : String(error)) }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: '规则文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? '') }
+    }
 
-    const plain = doc.toJS() as { flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[] }
-    const plainNodes = plain.flows?.[flowIndex]?.nodes ?? []
-    const fromIndex = plainNodes.findIndex(item => item.id === input.from)
-    if (fromIndex < 0) return { ok: false, message: `找不到节点「${input.from}」` }
-    const edges = [...(plainNodes[fromIndex]?.out ?? [])]
+    const found = locateNode(doc, input.from)
+    if (found === undefined) return { ok: false, message: `文件里找不到节点「${input.from}」` }
+    const { flowIndex, nodeIndex } = found
+    const at = (key: string): (string | number)[] =>
+      flowIndex < 0 ? ['nodes', nodeIndex, key] : ['flows', flowIndex, 'nodes', nodeIndex, key]
+
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[]
+    }
+    const allNodes = flowIndex < 0 ? (plain.nodes ?? []) : (plain.flows?.[flowIndex]?.nodes ?? [])
+    const edges = [...(allNodes[nodeIndex]?.out ?? [])]
     if (input.index < 0 || input.index >= edges.length) {
       return { ok: false, message: `「${input.from}」没有第 ${String(input.index + 1)} 条出边` }
     }
-    if (input.to !== undefined && !plainNodes.some(item => item.id === input.to)) {
+    if (input.to !== undefined && !allNodes.some(item => item.id === input.to)) {
       return { ok: false, message: `找不到目标节点「${input.to}」` }
     }
 
     if (input.to === undefined) edges.splice(input.index, 1)
     else edges[input.index] = { ...edges[input.index], to: input.to }
 
-    doc.setIn(['flows', flowIndex, 'nodes', fromIndex, 'out'], edges)
-    await writeTextFile(this.rulesPath, doc.toString())
+    doc.setIn(at('out'), edges)
+    await writeTextFile(path, doc.toString())
+    await this.reloadRules()
+    return { ok: true }
+  }
+
+  /**
+   * 新增一条出边：从 `from` 接到 `to`，可以带条件。
+   *
+   * 这就是「新建规则」的最后一环——事件流里给 `分支` 加一条出边，指向一个子工作流。
+   * 已经有同样指向的边时拒绝，免得手抖点两下多出一条重复的。
+   * @param input - 从哪、到哪、条件是什么。
+   * @returns 成功或为什么没加成。
+   */
+  async addFlowEdge(input: {
+    readonly from: string
+    readonly to: string
+    readonly flowId?: string
+    readonly when?: readonly Readonly<Record<string, unknown>>[]
+    readonly mode?: 'fork'
+  }): Promise<TaskEdit> {
+    if (input.from === input.to) return { ok: false, message: '不能连到自己' }
+    const located = this.locateFlow(input.from, input.flowId)
+    if (located === undefined) return { ok: false, message: `找不到节点「${input.from}」所属的图` }
+    const path = located.path
+
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: '读不到规则文件：' + path }
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: '规则文件读不出来：' + (error instanceof Error ? error.message : String(error)) }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: '规则文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? '') }
+    }
+
+    const found = locateNode(doc, input.from)
+    if (found === undefined) return { ok: false, message: `文件里找不到节点「${input.from}」` }
+    const { flowIndex, nodeIndex } = found
+    const at = (key: string): (string | number)[] =>
+      flowIndex < 0 ? ['nodes', nodeIndex, key] : ['flows', flowIndex, 'nodes', nodeIndex, key]
+
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[]
+    }
+    const allNodes = flowIndex < 0 ? (plain.nodes ?? []) : (plain.flows?.[flowIndex]?.nodes ?? [])
+    if (!allNodes.some(item => item.id === input.to)) {
+      return { ok: false, message: `找不到目标节点「${input.to}」` }
+    }
+
+    const edges = [...(allNodes[nodeIndex]?.out ?? [])]
+    if (edges.some(edge => edge['to'] === input.to)) {
+      return { ok: false, message: `「${input.from}」已经连到「${input.to}」了` }
+    }
+
+    edges.push({
+      to: input.to,
+      ...(input.when === undefined || input.when.length === 0 ? {} : { when: input.when }),
+      ...(input.mode === undefined ? {} : { mode: input.mode }),
+    })
+
+    doc.setIn(at('out'), edges)
+    await writeTextFile(path, doc.toString())
     await this.reloadRules()
     return { ok: true }
   }
@@ -1194,8 +1287,8 @@ export class TaskEngine {
     ]
     for (const flow of candidates) {
       if (flowId !== undefined && flow.id !== flowId) continue
-      const path = this.flowFiles.get(flow.id)
-      if (path === undefined) continue
+      // v1 合集模式（规则全写在 `rules.yml` 里）没有「图 → 文件」的映射，回退到那份文件。
+      const path = this.flowFiles.get(flow.id) ?? this.rulesPath
       if (nodeId === undefined || flow.nodes.some(node => node.id === nodeId)) return { flow, path }
     }
     return undefined

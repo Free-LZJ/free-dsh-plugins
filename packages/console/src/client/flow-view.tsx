@@ -422,6 +422,23 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     })
   }, [triage, flow, direction, strategy, align, load])
 
+  /**
+   * 拖出一条新连线：把 `分支` 接到某个节点上。
+   *
+   * 这是「新建规则」的入口——连线之后在属性面板里给它填条件即可。
+   */
+  const onConnect = useCallback((from: string, to: string) => {
+    if (flow === undefined) return
+    setFailure('')
+    void triage.addFlowEdge({ from, to, flowId: flow.id }).then(result => {
+      if (!result.ok) {
+        setFailure(result.message ?? '没有连上')
+        return
+      }
+      void load()
+    })
+  }, [triage, flow, load])
+
   const onDrill = useCallback((id: string) => {
     const node = flow?.nodes.find(item => item.id === id)
     const target = node?.type === 'workflow' && typeof node.config?.['workflow'] === 'string'
@@ -606,6 +623,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             onSelect={setSelected}
             onMove={onMove}
             onOpen={onDrill}
+            onConnect={onConnect}
           />
         </div>
 
