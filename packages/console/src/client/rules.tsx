@@ -226,7 +226,7 @@ export interface TriageSource {
   /** 改一个节点；只写这一处。 */
   saveFlowNode(patch: TriageFlowPatch): Promise<TriageResult>
   /** 重新自动布局：换方向、换策略，位置写回文件。 */
-  autoLayout(input: { flowId: string; direction?: string; strategy?: string }): Promise<TriageResult>
+  autoLayout(input: { flowId: string; direction?: string; strategy?: string; align?: string }): Promise<TriageResult>
   /** 在 after 之后插一个节点；不传 after 表示接到末尾。 */
   addFlowNode(input: { after?: string; type: string }): Promise<TriageResult & { nodeId?: string }>
   /** 删一个节点，入边接到它的出边。 */

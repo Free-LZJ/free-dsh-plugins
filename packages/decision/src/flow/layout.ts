@@ -33,6 +33,9 @@ export type LayoutDirection = 'TB' | 'BT' | 'LR' | 'RL'
  */
 export type LayoutStrategy = 'layered' | 'compact'
 
+/** 同层多个节点的对齐方式。 */
+export type LayoutAlign = 'start' | 'center' | 'end'
+
 /** 布局的尺寸参数。 */
 export interface LayoutOptions {
   /** 相邻层之间的间距。 */
@@ -49,6 +52,15 @@ export interface LayoutOptions {
   readonly direction?: LayoutDirection
   /** 排列方式。 */
   readonly strategy?: LayoutStrategy
+  /**
+   * 一层里有多个节点时怎么对齐。
+   *
+   * - center（默认）以父节点为中心左右展开——父节点落在子节点的正中上方，
+   *   这是看流程图最自然的读法
+   * - start 从父节点往一侧铺开（父节点在排头）
+   * - nd 往另一侧铺开（父节点在排尾）
+   */
+  readonly align?: LayoutAlign
   /**
    * 人摆过的位置要不要保留。
    *
@@ -68,6 +80,7 @@ const DEFAULTS = {
   origin: { x: 60, y: 40 } as Point,
   direction: 'TB' as LayoutDirection,
   strategy: 'layered' as LayoutStrategy,
+  align: 'center' as LayoutAlign,
   keepManual: true,
 }
 
@@ -129,7 +142,7 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
 
   const barycenter = (id: string): number => {
     const sources = (inbound.get(id) ?? [])
-      .map(source => result.get(source))
+      .map(source => result.get(source) ?? raw.get(source))
       .filter((point): point is Point => point !== undefined)
       .map(point => alongOf(point, sized.direction))
     // 没有前驱时从原点上按声明顺序排开，别的节点才有得对齐。
@@ -138,26 +151,66 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
   }
 
   const pending = flow.nodes.filter(node => !result.has(node.id))
-  pending.sort((left, right) => {
-    const byLayer = (layers.get(left.id) ?? 0) - (layers.get(right.id) ?? 0)
-    if (byLayer !== 0) return byLayer
-    const byCenter = barycenter(left.id) - barycenter(right.id)
-    return byCenter !== 0 ? byCenter : indexOf(flow, left.id) - indexOf(flow, right.id)
-  })
 
+  /** 按层分组：对齐方式要看整层才好算，逐个排做不到「以父节点为中心」。 */
+  const byLayer = new Map<number, FlowNodeSpec[]>()
   for (const node of pending) {
     const layer = layers.get(node.id) ?? 0
-    // 沿层轴的位置由层号直接定；层内那一轴从重心开始找空位。
-    let along = Math.max(0, barycenter(node.id))
-    let guard = 0
-    let point = place(layer, along, sized)
-    while (overlaps(point, takenByLayer.get(layer) ?? [], sized) && guard < flow.nodes.length * 4 + 8) {
-      along += sized.rowHeight
-      point = place(layer, along, sized)
-      guard += 1
+    const list = byLayer.get(layer)
+    if (list === undefined) byLayer.set(layer, [node])
+    else list.push(node)
+  }
+
+  /** 候选位置。可能是负的——最后统一平移回 `origin`。 */
+  const raw = new Map<string, Point>()
+
+  for (const [layer, list] of [...byLayer.entries()].sort((left, right) => left[0] - right[0])) {
+    list.sort((left, right) => {
+      const byCenter = barycenter(left.id) - barycenter(right.id)
+      return byCenter !== 0 ? byCenter : indexOf(flow, left.id) - indexOf(flow, right.id)
+    })
+
+    /** 这一层的中心：各节点父重心的平均。没有父节点的层（根）就用它自己的重心。 */
+    const centers = list.map(node => barycenter(node.id))
+    const layerCenter = centers.reduce((sum, value) => sum + value, 0) / centers.length
+    const last = list.length - 1
+
+    list.forEach((node, index) => {
+      // `center`：以层中心为中轴左右展开，父节点正好落在子节点中间的上方。
+      const offset = sized.align === 'start'
+        ? index
+        : sized.align === 'end'
+          ? index - last
+          : index - last / 2
+      let along = layerCenter + offset * sized.rowHeight
+      let point = place(layer, along, sized)
+      // 同层撞上了就往同侧让一格。
+      let guard = 0
+      while (overlaps(point, [...raw.values()].filter(other => other.y === point.y || other.x === point.x), sized) && guard < 8) {
+        guard += 1
+        along += sized.rowHeight
+        point = place(layer, along, sized)
+      }
+      raw.set(node.id, point)
+    })
+  }
+
+  /** 归一化：把负的层内坐标整体挪回 `origin`，图不会被摆到画布外面去。 */
+  if (raw.size > 0) {
+    const alongValues = [...raw.values()].map(point => alongOf(point, sized.direction))
+    const shift = originAlong - Math.min(...alongValues)
+    if (shift !== 0) {
+      for (const [id, point] of raw) {
+        raw.set(id, sized.direction === 'LR' || sized.direction === 'RL'
+          ? { x: point.x, y: point.y + shift }
+          : { x: point.x + shift, y: point.y })
+      }
     }
-    result.set(node.id, point)
-    take(layer, point)
+  }
+
+  for (const [id, point] of raw) {
+    result.set(id, point)
+    take(layers.get(id) ?? 0, point)
   }
 
   return result

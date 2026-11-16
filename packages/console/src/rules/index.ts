@@ -170,12 +170,14 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       const record = isObject(body) ? body : {}
       const direction = textOf(record, 'direction')
       const strategy = textOf(record, 'strategy')
+      const align = textOf(record, 'align')
       return {
         ok: true,
         command: engine => engine.autoLayout({
           flowId,
           ...(direction === undefined ? {} : { direction: direction as never }),
           ...(strategy === undefined ? {} : { strategy: strategy as never }),
+          ...(align === undefined ? {} : { align: align as never }),
         }),
       }
     })

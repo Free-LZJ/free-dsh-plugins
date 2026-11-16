@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { FlowCanvas, type CanvasEdge, type CanvasNode } from './flow-canvas.tsx'
-import type { LayoutDirection, LayoutStrategy } from '@free-lzj/dsh-decision'
+import type { LayoutAlign, LayoutDirection, LayoutStrategy } from '@free-lzj/dsh-decision'
 import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageNodeType, TriageSource } from './rules.tsx'
 
 /** 一段节点上的条件，压缩成一行给人看。 */
@@ -188,6 +188,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   /** 自动布局的走向与松紧。 */
   const [direction, setDirection] = useState<LayoutDirection>('TB')
   const [strategy, setStrategy] = useState<LayoutStrategy>('layered')
+  const [align, setAlign] = useState<LayoutAlign>('center')
   /**
    * 只看某一条规则的分支。
    *
@@ -336,7 +337,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const onAutoLayout = useCallback(() => {
     if (flow === undefined) return
     setFailure('')
-    void triage.autoLayout({ flowId: flow.id, direction, strategy }).then(result => {
+    void triage.autoLayout({ flowId: flow.id, direction, strategy, align }).then(result => {
       if (!result.ok) {
         setFailure(result.message ?? '没有排成')
         return
@@ -344,7 +345,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       setSelected(undefined)
       void load()
     })
-  }, [triage, flow, direction, strategy, load])
+  }, [triage, flow, direction, strategy, align, load])
 
   const onDrill = useCallback((id: string) => {
     const node = flow?.nodes.find(item => item.id === id)
@@ -465,6 +466,17 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         >
           <option value="layered">分层</option>
           <option value="compact">紧凑</option>
+          <option value="compact">紧凑</option>
+        </select>
+        <select
+          value={align}
+          onChange={event => { setAlign(event.target.value as LayoutAlign) }}
+          title="对齐方式"
+          style={{ fontSize: 12, padding: '4px 6px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-secondary)' }}
+        >
+          <option value="center">居中</option>
+          <option value="start">左对齐</option>
+          <option value="end">右对齐</option>
         </select>
         <button
           type="button"

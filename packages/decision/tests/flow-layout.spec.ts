@@ -66,4 +66,18 @@ describe('resolvePositions', () => {
     // 单链不左右晃。
     expect(positions.get('b')!.x).toBe(positions.get('a')!.x)
   })
+
+  it('居中时父节点落在子节点中间的上方', () => {
+    const positions = resolvePositions(flow({ root: ['a', 'b', 'c'], a: [], b: [], c: [] }), { align: 'center' })
+    const xs = ['a', 'b', 'c'].map(id => positions.get(id)!.x).sort((l, r) => l - r)
+    const middle = (xs[0]! + xs[2]!) / 2
+    // 父节点在中轴上，误差不超过半个间距。
+    expect(Math.abs(positions.get('root')!.x - middle)).toBeLessThan(1)
+  })
+
+  it('左对齐时父节点在排头', () => {
+    const positions = resolvePositions(flow({ root: ['a', 'b', 'c'], a: [], b: [], c: [] }), { align: 'start' })
+    const xs = ['a', 'b', 'c'].map(id => positions.get(id)!.x).sort((l, r) => l - r)
+    expect(Math.abs(positions.get('root')!.x - xs[0]!)).toBeLessThan(1)
+  })
 })

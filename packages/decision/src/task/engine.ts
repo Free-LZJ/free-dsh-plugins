@@ -26,7 +26,7 @@ import {
 import type { Rule, RuleFileError } from '../types.ts'
 
 import { readJson, writeTextFile } from '../store.ts'
-import { resolvePositions, type LayoutDirection, type LayoutStrategy } from '../flow/layout.ts'
+import { resolvePositions, type LayoutAlign, type LayoutDirection, type LayoutStrategy } from '../flow/layout.ts'
 import type { TaskConnector, TaskTestAnswer, TaskTestRef } from './connector.ts'
 import type { EmitAck, TaskEvent } from './event.ts'
 import type { ActionNode } from './node.ts'
@@ -992,6 +992,7 @@ export class TaskEngine {
     readonly flowId: string
     readonly direction?: LayoutDirection
     readonly strategy?: LayoutStrategy
+    readonly align?: LayoutAlign
   }): Promise<TaskEdit> {
     const located = this.locateFlow(undefined, input.flowId)
     if (located === undefined) return { ok: false, message: '没有这张图：' + input.flowId }
@@ -999,6 +1000,7 @@ export class TaskEngine {
     const positions = resolvePositions(located.flow, {
       ...(input.direction === undefined ? {} : { direction: input.direction }),
       ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
+      ...(input.align === undefined ? {} : { align: input.align }),
       keepManual: false,
     })
 
