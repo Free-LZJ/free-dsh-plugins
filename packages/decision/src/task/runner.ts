@@ -282,6 +282,15 @@ export class TaskRunner {
       await this.deps.store.patch(task.id, { runId, status: 'running' })
     }
 
+    /**
+     * 正文只读一次。
+     *
+     * `judge.plan()` 每条出边求值都要重来（它依赖当次的 facts），但 `readBody` 背后是
+     * 一次 IMAP 取信——一张 switch 五条出边就是五次连接。这里按「一次 runFlow」缓存住，
+     * 谁先要谁付一次代价。
+     */
+    let bodyOnce: Promise<string> | undefined
+
     const evaluate = async (
       when: readonly ConditionSpecLike[],
       context: { readonly facts: { label?: string; confidence?: number } },
@@ -303,7 +312,7 @@ export class TaskRunner {
         {
           conditions: judge.conditions,
           context: runtime.context as never,
-          readBody: runtime.readBody,
+          readBody: () => (bodyOnce ??= runtime.readBody()),
           log: line => this.deps.warn(line),
         },
       )
