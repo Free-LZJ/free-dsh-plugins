@@ -14,7 +14,7 @@
  * @module @free-lzj/dsh-decision/task/engine
  */
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { existsSync, readFileSync, readdirSync, watch, type FSWatcher } from 'node:fs'
 import { parseDocument as parseYaml } from 'yaml'
 import type { DecisionConfigBase, RuleVocabulary } from '../config.ts'
@@ -846,8 +846,19 @@ export class TaskEngine {
   /** 规则文件是 agent 改的，所以必须监听：改完不用重启就生效。 */
   private watchRules(): void {
     if (this.watcher !== undefined) return
+    /**
+     * 监听**整个规则目录**，不只是 `rules.yml`。
+     *
+     * 规则早就不只在那一个文件里了（`flows/`、`events/`、`workflows/` 下都是一张张
+     * 独立的 yml），只盯 `rules.yml` 的话，改图之后引擎内存里还是旧的——界面上看着
+     * 「改了没反应」，直到重启。
+     */
+    const dir = dirname(this.rulesPath)
     try {
-      this.watcher = watch(this.rulesPath, { persistent: false }, () => {
+      this.watcher = watch(dir, { persistent: false, recursive: true }, (_event, name) => {
+        // 目录里还有 tasks.db / runs.json，它们写得比规则勤，别让它们触发重载。
+        const file = typeof name === 'string' ? name : ''
+        if (file !== '' && !/\.ya?ml$/i.test(file)) return
         // 编辑器保存常常写两次（临时文件 + 改名），防抖一下免得读半份。
         setTimeout(() => { void this.reloadRules() }, 300)
       })
@@ -855,6 +866,7 @@ export class TaskEngine {
       // 监听不上只意味着改规则要重启，不该让引擎起不来。
     }
   }
+
 
   /** 到期扫描 + 按保留策略裁剪记录（两个配置项只写不裁就是假配置）。 */
   private startTimer(): void {
