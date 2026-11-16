@@ -530,7 +530,8 @@ export class TaskEngine {
       dropped: this.dropped,
       unassigned: this.unassigned,
       connector: connected,
-      ...(this.currentFlows.length === 0 ? {} : { flowMode: true }),
+      // 事件流存在时，规则列表为空是**对的**（规则在图里），页面据此说「去看编排」。
+      ...(this.currentFlows.length === 0 && this.eventFlows.size === 0 ? {} : { flowMode: true }),
     }
   }
 
@@ -662,10 +663,24 @@ export class TaskEngine {
       }
       this.eventFlows.set(flow.trigger, flow)
     }
+    // **事件流存在就到此为止**：不再往下读 `rules.yml`。
+    //
+    // 那份文件是连接器发的「默认规则」（第一次启动时写下来当样例）。继续读会把
+    // `currentRules` / `currentFlows` 覆盖成默认那 8 条，于是页面显示的根本不是用户
+    // 的规则，回退路径也会拿默认图去跑。
     if (this.eventFlows.size > 0 || this.workflows.size > 0) {
+      this.currentRules = []
+      this.currentFlows = []
+      this.flowFiles = evDir.files
+      this.unassigned = 0
+      this.dropped = []
+      this.rulesError = undefined
+      this.rulesSource = 'file'
       this.log(
         '任务引擎: 事件流 ' + String(this.eventFlows.size) + ' 张，子工作流 ' + String(this.workflows.size) + ' 个',
       )
+      this.bump()
+      return
     }
 
     // **一规则一文件优先**：`flows/` 里每个 `.yml` 是一张图。目录不存在或为空时才回退到
