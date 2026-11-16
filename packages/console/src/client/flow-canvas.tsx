@@ -24,6 +24,8 @@ export interface CanvasNode {
   readonly id: string
   readonly type: string
   readonly label: string
+  /** 卡片上补充的说明行（参数摘要）；最多画两行。 */
+  readonly detail?: readonly string[]
   /** `trigger` | `control` | `action`。 */
   readonly group: string
   /** 会不会改外部世界；有副作用的节点带一道竖条。 */
@@ -46,8 +48,8 @@ export interface CanvasEdge {
 }
 
 /** 画布尺寸常量。 */
-const NODE_WIDTH = 200
-const NODE_HEIGHT = 64
+const NODE_WIDTH = 280
+const NODE_HEIGHT = 104
 const MIN_SCALE = 0.3
 /** 自动 fit 的下限：再小字就读不出来，宁可让人滚动。 */
 const FIT_FLOOR = 0.55
@@ -100,16 +102,39 @@ function stateColor(state: CanvasNode['state']): string {
   return 'var(--dsw-alias-state-warn-primary)'
 }
 
-/** 自上而下：从下边缘中点出发，落到上边缘中点。 */
-function edgePath(from: CanvasNode, to: CanvasNode): string {
+/** 一条边的两个端点（节点底边中点 → 目标顶边中点）。 */
+function edgeAnchors(from: CanvasNode, to: CanvasNode): { x1: number; y1: number; x2: number; y2: number; dy: number } {
   const x1 = from.x + NODE_WIDTH / 2
   const y1 = from.y + NODE_HEIGHT
   const x2 = to.x + NODE_WIDTH / 2
   const y2 = to.y
-  const dy = Math.max(28, Math.abs(y2 - y1) / 2)
+  return { x1, y1, x2, y2, dy: Math.max(28, Math.abs(y2 - y1) / 2) }
+}
+
+/** 自上而下：从下边缘中点出发，落到上边缘中点。 */
+function edgePath(from: CanvasNode, to: CanvasNode): string {
+  const { x1, y1, x2, y2, dy } = edgeAnchors(from, to)
   return `M ${String(x1)} ${String(y1)} C ${String(x1)} ${String(y1 + dy)}, ${String(x2)} ${String(y2 - dy)}, ${String(x2)} ${String(y2)}`
 }
 
+/**
+ * 条件标签写在曲线的哪一点上。
+ *
+ * **不能写中点**：从同一个节点扇出的多条边，中点全部落在同一水平线上，十来个标签
+ * 会糊成一团，什么都读不出来。取靠终点那一段 —— 那里各条边已经横向散开（一个节点
+ * 宽一个），标签才互不遮挡。
+ * @param from - 起点节点。
+ * @param to - 终点节点。
+ * @returns 三次贝塞尔在 t=0.72 处的坐标。
+ */
+function edgeLabelAt(from: CanvasNode, to: CanvasNode): { x: number; y: number } {
+  const { x1, y1, x2, y2, dy } = edgeAnchors(from, to)
+  const t = 0.72
+  const u = 1 - t
+  const px = x1 * u * u * u + 3 * x1 * u * u * t + 3 * x2 * u * t * t + x2 * t * t * t
+  const py = y1 * u * u * u + 3 * (y1 + dy) * u * u * t + 3 * (y2 - dy) * u * t * t + y2 * t * t * t
+  return { x: px, y: py }
+}
 /** 画布的属性。 */
 export interface FlowCanvasProps {
   readonly nodes: readonly CanvasNode[]
@@ -299,6 +324,7 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, f
             const from = placedById.get(edge.from)
             const to = placedById.get(edge.to)
             if (from === undefined || to === undefined) return null
+            const at = edgeLabelAt(from, to)
             return (
               <g key={edge.id}>
                 <path
@@ -311,11 +337,16 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, f
                 />
                 {edge.label === undefined ? null : (
                   <text
-                    x={(from.x + to.x) / 2 + NODE_WIDTH / 2}
-                    y={(from.y + NODE_HEIGHT + to.y) / 2}
+                    x={at.x}
+                    y={at.y}
                     textAnchor="middle"
-                    fontSize={11}
-                    fill="var(--dsw-alias-label-tertiary)"
+                    dominantBaseline="middle"
+                    fontSize={10}
+                    fill="var(--dsw-alias-label-secondary)"
+                    // 先描一圈底色再填字：线从底下穿过时也读得清。
+                    stroke="var(--dsw-alias-bg-layer-1)"
+                    strokeWidth={3}
+                    paintOrder="stroke"
                   >
                     {edge.label}
                   </text>
@@ -358,7 +389,7 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, f
               style={style}
               onPointerDown={event => { onPointerDownNode(event, node) }}
               onDoubleClick={() => { onOpen?.(node.id) }}
-              title={`${node.type}${node.sideEffect ? ' · 有副作用' : ''}`}
+              title={[node.type, ...(node.sideEffect ? ['有副作用'] : []), ...(node.detail ?? [])].join(' / ')}
             >
               {/* 有副作用的节点：左边一道竖条，不看文字也知道它会动外部世界。 */}
               {look.accent === undefined ? null : (
@@ -368,13 +399,23 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, f
                 {node.state === undefined ? null : (
                   <span style={{ width: 6, height: 6, borderRadius: 3, flex: 'none', background: stateColor(node.state) }} />
                 )}
-                <span style={{ fontSize: 13, lineHeight: '18px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 13, lineHeight: '18px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
                   {node.label}
                 </span>
+                {/* 类型钉在右上角：一眼知道这格干什么，又不跟主标题抢位置。 */}
+                <span style={{ fontSize: 10, lineHeight: '14px', padding: '1px 5px', borderRadius: 5, flex: 'none', background: 'var(--dsw-alias-bg-layer-3)', color: 'var(--dsw-alias-label-tertiary)' }}>
+                  {node.type}
+                </span>
               </div>
-              <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {node.type}
-              </span>
+              {/* 参数摘要：说清这格具体处理什么，而不是一串编号。 */}
+              {(node.detail ?? []).slice(0, 2).map((line, index) => (
+                <span
+                  key={String(index)}
+                  style={{ fontSize: 11, lineHeight: '15px', color: index === 0 ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  {line}
+                </span>
+              ))}
             </div>
           )
         })}

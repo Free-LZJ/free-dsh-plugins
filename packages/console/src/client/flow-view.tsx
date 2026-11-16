@@ -17,22 +17,75 @@ import type { LayoutAlign, LayoutDirection, LayoutStrategy } from '@free-lzj/dsh
 import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageNodeType, TriageSource } from './rules.tsx'
 
 /** 一段节点上的条件，压缩成一行给人看。 */
+/** 把一组条件读成一句人话；线上就写这一句。 */
 function conditionsOf(edge: { readonly when?: readonly Readonly<Record<string, unknown>>[] }): string | undefined {
   const when = edge.when
-  if (when === undefined || when.length === 0) return undefined
-  // 线上只放得下**一个词**：完整条件挤在那里会叠成一团，反而什么都读不出来。
-  // 想看全的在属性面板里。
-  for (const condition of when) {
-    const kind = typeof condition['kind'] === 'string' ? condition['kind'] : '?'
-    const values = condition['any'] ?? condition['all'] ?? condition['labels'] ?? condition['patterns']
-    if (Array.isArray(values) && values.length > 0) {
-      const first = String(values[0] ?? '')
-      const short = first.length > 14 ? `${first.slice(0, 14)}…` : first
-      return values.length > 1 ? `${short} +${String(values.length - 1)}` : short
-    }
-    return kind
+  if (when === undefined || when.length === 0) return '兜底'
+  return when.map(describeCondition).join(' 且 ')
+}
+
+/** 一条条件的可读形式。值**不截断**——截了就看不出这条线到底在判什么。 */
+function describeCondition(condition: Readonly<Record<string, unknown>>): string {
+  const kind = typeof condition['kind'] === 'string' ? condition['kind'] : '条件'
+  const any = Array.isArray(condition['any']) ? condition['any'].map(item => String(item)) : undefined
+  const all = Array.isArray(condition['all']) ? condition['all'].map(item => String(item)) : undefined
+  const labels = Array.isArray(condition['labels']) ? condition['labels'].map(item => String(item)) : undefined
+  const values = any ?? all ?? labels
+  const suffix = any === undefined ? '' : (any.length > 1 ? ' (任一)' : '')
+
+  if (kind === 'classifier') {
+    return `判定 ${labels === undefined || labels.length === 0 ? '任意标签' : labels.join('/')}`
   }
-  return undefined
+  if (kind === 'regex') {
+    const field = typeof condition['pattern'] === 'string' ? condition['pattern'] : ''
+    const target = typeof condition['field'] === 'string' ? condition['field'] : '正文'
+    return `正则 ${field} 命中${target}`
+  }
+  if (values !== undefined && values.length > 0) return `${kind} ${values.join(', ')}${suffix}`
+  const scalar = condition['value'] ?? condition['equals'] ?? condition['any']
+  return scalar === undefined ? kind : `${kind} ${String(scalar)}`
+}
+
+/** 一个节点的参数摘要：说清它具体处理什么。 */
+function detailOf(node: TriageFlowNode, type: TriageNodeType | undefined): string[] {
+  const config = node.config ?? {}
+  const text = (key: string): string | undefined => {
+    const value = config[key]
+    return typeof value === 'string' && value !== '' ? value : undefined
+  }
+  const list = (key: string): string[] | undefined => {
+    const value = config[key]
+    return Array.isArray(value) ? value.map(item => String(item)) : undefined
+  }
+
+  if (node.type === 'trigger') return [`事件 ${text('event') ?? '（未设置）'}`]
+  if (node.type === 'switch') {
+    const out = node.out ?? []
+    const withCondition = out.filter(edge => (edge.when ?? []).length > 0).length
+    return [`${String(out.length)} 条出边 · ${String(withCondition)} 条带条件`, '按顺序判定，第一条命中的生效']
+  }
+  if (node.type === 'workflow') {
+    const pass = list('pass')
+    return [
+      `调用 ${text('workflow') ?? '（未选子工作流）'}`,
+      pass === undefined ? '传入全部变量' : `传入 ${pass.join(', ')}`,
+    ]
+  }
+  if (node.type === 'end') return ['流程结束']
+
+  // 动作类节点：把配置里最有信息量的两个字段摆出来。
+  const title = text('title')
+  const tone = text('tone')
+  if (title !== undefined) return [`标题 ${title}`, ...(tone === undefined ? [] : [`语气 ${tone}`])]
+  const moved = text('target') ?? text('folder')
+  if (moved !== undefined) return [`目标 ${moved}`]
+  const model = text('model')
+  if (model !== undefined) return [`模型 ${model}`, ...(text('prompt') === undefined ? [] : [`提示词 ${String(text('prompt')).slice(0, 80)}`])]
+
+  /** 兜底：把配置里的前两个字段名和值列出来，总比只显示编号强。 */
+  const entries = Object.entries(config).filter(([, value]) => value !== undefined && value !== null && typeof value !== 'object')
+  if (entries.length === 0) return [type?.label === undefined ? node.type : `${type.label}（无参数）`]
+  return entries.slice(0, 2).map(([key, value]) => `${key} ${String(value).slice(0, 60)}`)
 }
 
 /** 连接器 tab 的外观：选中的那条加底色。 */
@@ -52,8 +105,32 @@ function tabStyle(active: boolean): CSSProperties {
 
 /** 把图摊成画布要的两种数组。 */
 function toCanvas(flow: TriageFlow, types: ReadonlyMap<string, TriageNodeType>): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+  /** 每个节点的入边条件：一条出边的条件就是「这个节点被什么命中」。 */
+  const inboundOf = new Map<string, string[]>()
+  for (const source of flow.nodes) {
+    for (const edge of source.out ?? []) {
+      const text = conditionsOf(edge)
+      if (text === undefined) continue
+      const list = inboundOf.get(edge.to)
+      if (list === undefined) inboundOf.set(edge.to, [text])
+      else list.push(text)
+    }
+  }
+
   const nodes: CanvasNode[] = flow.nodes.map(node => {
     const type = types.get(node.type)
+    const inbound = inboundOf.get(node.id) ?? []
+    /**
+     * **条件画在节点上，不画在线上。**
+     *
+     * 同一个节点扇出的边，中点全落在一条水平线上，十来个标签必然糊成一团。
+     * 而「这条边的条件」本来就等于「目标节点被什么命中」——跟着节点走既不重叠，
+     * 也正好回答「这个分支凭什么进来」。
+     */
+    const condition = inbound.length === 0
+      ? undefined
+      : inbound.length === 1 ? inbound[0] : `${String(inbound.length)} 条入边`
+    const detail = detailOf(node, type)
     return {
       id: node.id,
       type: node.type,
@@ -61,6 +138,7 @@ function toCanvas(flow: TriageFlow, types: ReadonlyMap<string, TriageNodeType>):
       label: node.label ?? (node.type === 'workflow' && typeof node.config?.['workflow'] === 'string'
         ? '→ ' + node.config['workflow']
         : (type?.label ?? node.type)),
+      detail: condition === undefined ? detail : ['条件 ' + condition, ...detail],
       group: type?.group ?? 'action',
       sideEffect: type?.sideEffect ?? false,
       x: node.pos?.x ?? 0,
@@ -71,7 +149,8 @@ function toCanvas(flow: TriageFlow, types: ReadonlyMap<string, TriageNodeType>):
   const edges: CanvasEdge[] = []
   for (const node of flow.nodes) {
     for (const [index, edge] of (node.out ?? []).entries()) {
-      const label = conditionsOf(edge)
+      // 条件已经画在目标节点上了，线上只留一个序号，免得糊成一片。
+      const label = undefined as string | undefined
       edges.push({
         id: `${node.id}->${edge.to}#${String(index)}`,
         from: node.id,
