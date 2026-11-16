@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { FlowCanvas, type CanvasEdge, type CanvasNode } from './flow-canvas.tsx'
 import type { LayoutAlign, LayoutDirection, LayoutStrategy } from '@free-lzj/dsh-decision'
+import { detectConflicts } from './flow-conflicts.ts'
 import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageNodeType, TriageSource } from './rules.tsx'
 
 /** 一段节点上的条件，压缩成一行给人看。 */
@@ -379,6 +380,9 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     }
   }, [flow, typeMap, trail])
 
+  /** 同一分支上互相抢的规则。静态算，不跑模型。 */
+  const conflicts = useMemo(() => (flow === undefined ? [] : detectConflicts(flow)), [flow])
+
   const node: TriageFlowNode | undefined = flow?.nodes.find(item => item.id === selected)
   const nodeType = node === undefined ? undefined : typeMap.get(node.type)
 
@@ -610,7 +614,23 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         : {}),
     }}>
       {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
+      {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
 
+      {/* 规则冲突：顺序就是优先级，但两条条件重叠时人看不出来。 */}
+      {conflicts.length === 0 ? null : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '6px 10px', borderRadius: 8, border: '0.5px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent)', background: 'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent)' }}>
+          {conflicts.slice(0, 4).map((conflict, index) => (
+            <span key={String(index)} style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)' }}>
+              {conflict.reason}
+            </span>
+          ))}
+          {conflicts.length > 4 ? (
+            <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+              还有 {String(conflicts.length - 4)} 处
+            </span>
+          ) : null}
+        </div>
+      )}
       {/* 两类东西分开看：**事件流**是路由（一个事件一张），**子工作流**是被调用的执行体。 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
         {eventFlows.map(item => (
