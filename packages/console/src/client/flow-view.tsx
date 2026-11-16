@@ -290,7 +290,8 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   }, [flow, typeMap, trail])
 
   /** 换图时重挂载画布，让它按新坐标重新 fit。 */
-  const canvasKey = flow?.id ?? 'none'
+  // 全屏换了尺寸，画布要重挂载才会重新适配（否则还停在旧缩放下，下面空一大片）。
+  const canvasKey = (flow?.id ?? 'none') + (full ? ':full' : '')
 
   const node: TriageFlowNode | undefined = flow?.nodes.find(item => item.id === selected)
   const nodeType = node === undefined ? undefined : typeMap.get(node.type)
@@ -367,9 +368,12 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, flex: 1,
-      ...(full
-        ? { position: 'fixed' as const, inset: 0, zIndex: 60, background: 'var(--dsw-alias-bg-layer-1)', padding: 16 }
-        : {}),
+      // **全屏 = 把自己撑高，不做覆盖层。**
+      //
+      // 覆盖层用 `position: fixed` 会踩两个坑：祖先带 `transform` 时它的定位基准会
+      // 变成那个祖先（于是跑到屏幕外面、和标题栏叠在一起），而且盖住整页之后退出
+      // 按钮也可能被浮层压住。撑高没有这些问题——它就是一个更高的普通容器。
+      ...(full ? { height: 'calc(100vh - 96px)', flex: 'none' } : {}),
     }}>
       {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
 
@@ -446,7 +450,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         </select>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, minWidth: 0 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, height: full ? '100%' : undefined, minWidth: 0 }}>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
           <FlowCanvas
             key={canvasKey}
