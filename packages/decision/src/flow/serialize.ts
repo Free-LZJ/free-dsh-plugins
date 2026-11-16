@@ -41,6 +41,27 @@ export function stringifyFlowFile(flows: readonly Flow[], options: SerializeOpti
 /** 当前文件版本。 */
 export const FLOW_FILE_VERSION = 2
 
+/**
+ * 把一张图写成「单图文件」。
+ *
+ * 一规则一文件的形状：**顶层直接是这张图**，没有 `flows:` 包一层。文件名就说明它
+ * 是什么，文件里再套一层数组只会让人多点开一次。
+ * @param flow - 图。
+ * @param options - 文件头注释。
+ * @returns YAML 文本。
+ */
+export function stringifyFlowDocument(flow: Flow, options: { readonly header?: string } = {}): string {
+  const doc = new Document({
+    id: flow.id,
+    name: flow.name,
+    connector: flow.connector,
+    nodes: flow.nodes.map(serializeNode),
+  })
+  doc.contents = doc.createNode(doc.toJS())
+  if (options.header !== undefined) doc.commentBefore = options.header
+  return doc.toString({ lineWidth: 0 })
+}
+
 /** 只把有值的字段写出去——空数组、undefined 都不该在文件里占一行。 */
 function serializeNode(node: FlowNodeSpec): Record<string, unknown> {
   return {

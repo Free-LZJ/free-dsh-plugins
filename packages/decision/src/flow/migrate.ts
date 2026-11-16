@@ -32,6 +32,8 @@ export interface MigrateOptions {
   readonly connector: string
   readonly flowId?: string
   readonly flowName?: string
+  /** 触发器订阅什么事件；缺省 `mail.received`。 */
+  readonly event?: string
 }
 
 /** 一条 `classifier` 条件里能被合并的东西。 */
@@ -142,7 +144,73 @@ export function migrateRulesToFlow(
 
   return {
     id: options.flowId ?? 'mail-triage',
-    name: options.flowName ?? '邮件分诊',
+    name: options.flowName ?? '邮件自动化',
+    connector: options.connector,
+    nodes,
+  }
+}
+
+/**
+ * 一条规则拆成一张独立的图。
+ *
+ * 形状比合集版简单，因为**只有一条分支**：
+ *
+ * ```text
+ * start(trigger) → route(switch) ─[这条规则的 when]→ 动作… → end-hit
+ *                               └─[兜底]──────────→ end-miss
+ * ```
+ *
+ * 保留了 switch 而不是展开成 `if`：它和合集版同构，迁移前后的读图习惯不用改；将来
+ * 想在文件里再加一条分支，直接给 switch 添一条出边就行。
+ * @param rule - 一条旧规则。
+ * @param options - 归属连接器与 id 前缀。
+ * @returns 只含这一条规则的图。
+ */
+export function migrateRuleToFlow(
+  rule: Rule<ConditionSpecLike, ActionSpecLike>,
+  options: MigrateOptions,
+): Flow {
+  const startId = 'trigger'
+  const routeId = 'branch'
+  const hitId = 'end-hit'
+  const missId = 'end-miss'
+
+  const nodes: FlowNodeSpec[] = [{
+    id: startId,
+    type: 'trigger',
+    config: { event: options.event ?? 'mail.received' },
+    out: [{ to: routeId }],
+  }]
+
+  // 动作按 `then` 的顺序串起来，最后一个接这条规则的收尾。
+  rule.then.forEach((action, index) => {
+    const id = nodeId(rule.id, String(index))
+    const nextId = index === rule.then.length - 1 ? hitId : nodeId(rule.id, String(index + 1))
+    nodes.push({
+      id,
+      type: action.kind,
+      config: { ...action },
+      out: [{ to: nextId }],
+    })
+  })
+
+  nodes.push({
+    id: routeId,
+    type: 'switch',
+    out: [
+      {
+        to: rule.then.length === 0 ? hitId : nodeId(rule.id, '0'),
+        ...(rule.when.length === 0 ? {} : { when: rule.when }),
+      },
+      { to: missId },
+    ],
+  })
+  nodes.push({ id: hitId, type: 'end' })
+  nodes.push({ id: missId, type: 'end' })
+
+  return {
+    id: options.flowId ?? rule.id,
+    name: options.flowName ?? rule.name,
     connector: options.connector,
     nodes,
   }

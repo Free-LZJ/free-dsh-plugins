@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { FlowCanvas, type CanvasEdge, type CanvasNode } from './flow-canvas.tsx'
 import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageNodeType, TriageSource } from './rules.tsx'
 
@@ -32,6 +32,21 @@ function conditionsOf(edge: { readonly when?: readonly Readonly<Record<string, u
     return kind
   }
   return undefined
+}
+
+/** 连接器 tab 的外观：选中的那条加底色。 */
+function tabStyle(active: boolean): CSSProperties {
+  return {
+    fontSize: 12,
+    lineHeight: '20px',
+    padding: '4px 10px',
+    borderRadius: 8,
+    border: 'none',
+    cursor: 'pointer',
+    background: active ? 'var(--dsw-alias-bg-layer-3)' : 'transparent',
+    color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-tertiary)',
+    fontWeight: active ? 600 : 400,
+  }
 }
 
 /** 把图摊成画布要的两种数组。 */
@@ -161,7 +176,6 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [selected, setSelected] = useState<string | undefined>(undefined)
   const [draft, setDraft] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(true)
-  const [step, setStep] = useState(0)
   const [dirty, setDirty] = useState(false)
   /** 最近一次执行在图上留下的状态：节点 id → 成了 / 失败 / 挂起。 */
   const [trail, setTrail] = useState<ReadonlyMap<string, 'ok' | 'failed' | 'suspended'>>(new Map())
@@ -173,12 +187,15 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    * 一张「全部分支并列」的大图必然拥挤：8 条链横着铺开，每条只占几个像素。聚焦之后
    * 剩下的节点仍留在原位，于是**空间记忆还在**——切回来时不用重新认图。
    */
-  const [focus, setFocus] = useState<string | undefined>(undefined)
+  /** 当前连接器 tab；undefined 表示「全部」。 */
+  const [tab, setTab] = useState<string | undefined>(undefined)
+  /** 当前选中的图 id（一规则一文件之后，一张图就是一条规则）。 */
+  const [flowId, setFlowId] = useState<string | undefined>(undefined)
 
   const load = useCallback(async (): Promise<void> => {
     try {
       const [graph, catalogue, runs] = await Promise.all([
-        triage.flow(focus), triage.nodeTypes(), triage.runs(),
+        triage.flow(), triage.nodeTypes(), triage.runs(),
       ])
       // 取最新那条有图足迹的记录：画布上标的是「上一次真跑过什么」，不是历史汇总。
       const latest = runs.find(run => (run.nodes ?? []).some(node => node.nodeId !== undefined))
@@ -188,7 +205,12 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         nextTrail.set(node.nodeId, node.ok ? 'ok' : (node.failure === 'fatal' || node.failure === 'config' ? 'failed' : 'failed'))
       }
       setTrail(nextTrail)
-      setFlows(graph.flows)
+      // 专属连接器的图排前面，`*` 的兜底排最后——兜底是「谁都没管时才走」的那条，
+      // 默认落在一张兜底图上没有意义。
+      setFlows([...graph.flows].sort((left, right) => {
+        const byGlobal = (left.connector === '*' ? 1 : 0) - (right.connector === '*' ? 1 : 0)
+        return byGlobal !== 0 ? byGlobal : left.name.localeCompare(right.name)
+      }))
       setTypes(catalogue)
       setError(graph.error ?? '')
       setLoading(false)
@@ -198,7 +220,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       setFailure(thrown instanceof Error ? thrown.message : String(thrown))
       setLoading(false)
     }
-  }, [triage, focus])
+  }, [triage])
 
   useEffect(() => { void load() }, [load])
 
@@ -208,33 +230,39 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     return map
   }, [types])
 
-  const flow = flows[step] ?? flows[0]
+  /** 当前 tab 下能选的图。`tab` 为空表示全部。 */
+  const visibleFlows: readonly TriageFlow[] = useMemo(
+    () => (tab === undefined ? flows : flows.filter(item => item.connector === tab)),
+    [flows, tab],
+  )
+
+  /** 实际画哪张：优先当前选中的，否则取 tab 下第一张。 */
+  const flow: TriageFlow | undefined = useMemo(() => {
+    const picked = visibleFlows.find(item => item.id === flowId)
+    return picked ?? visibleFlows[0]
+  }, [visibleFlows, flowId])
+
+  /** 有哪些连接器（tab 用）。`*` 显示成「全局兜底」。 */
+  const tabs = useMemo(() => {
+    const seen = new Set<string>()
+    for (const item of flows) seen.add(item.connector)
+    return [...seen].sort((left, right) => (left === '*' ? 1 : right === '*' ? -1 : left.localeCompare(right)))
+  }, [flows])
+
   const canvas = useMemo(() => {
     const base = flow === undefined ? { nodes: [], edges: [] } : toCanvas(flow, typeMap)
-    // 聚焦由 Host 做（筛完再算坐标）；这里只拿到已经筛好的图。
-    const scoped = base
     // 把执行足迹贴到方块上；没跑过的保持无状态。
     return {
-      ...scoped,
-      nodes: scoped.nodes.map(node => {
+      ...base,
+      nodes: base.nodes.map(node => {
         const state = trail.get(node.id)
         return state === undefined ? node : { ...node, state }
       }),
     }
   }, [flow, typeMap, trail])
 
-  /** 换聚焦对象时重挂载画布，让它按新坐标重新 fit。 */
-  const canvasKey = (flow?.id ?? 'none') + ':' + (focus ?? 'all')
-
-  /** 图里出现过的规则 id（节点 id 是 <ruleId>__<序号>）。 */
-  const ruleIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const item of flow?.nodes ?? []) {
-      const cut = item.id.indexOf('__')
-      if (cut > 0) ids.add(item.id.slice(0, cut))
-    }
-    return [...ids].sort()
-  }, [flow])
+  /** 换图时重挂载画布，让它按新坐标重新 fit。 */
+  const canvasKey = flow?.id ?? 'none'
 
   const node: TriageFlowNode | undefined = flow?.nodes.find(item => item.id === selected)
   const nodeType = node === undefined ? undefined : typeMap.get(node.type)
@@ -298,15 +326,36 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     }}>
       {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        {flows.length > 1 ? (
-          <select
-            value={String(step)}
-            onChange={event => { setStep(Number(event.target.value)); setSelected(undefined) }}
-            style={{ fontSize: 13, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)' }}
+      {/* 连接器 tab：一张图就是一条规则，所以先按连接器分，再选具体规则。 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => { setTab(undefined); setFlowId(undefined); setSelected(undefined) }}
+          style={tabStyle(tab === undefined)}
+        >
+          全部（{String(flows.length)}）
+        </button>
+        {tabs.map(item => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => { setTab(item); setFlowId(undefined); setSelected(undefined) }}
+            style={tabStyle(tab === item)}
           >
-            {flows.map((item, index) => (
-              <option key={item.id} value={String(index)}>{item.name}（{item.connector}）</option>
+            {item === '*' ? '全局兜底' : item}（{String(flows.filter(entry => entry.connector === item).length)}）
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {visibleFlows.length > 1 ? (
+          <select
+            value={flow?.id ?? ''}
+            onChange={event => { setFlowId(event.target.value); setSelected(undefined) }}
+            style={{ fontSize: 13, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-primary)' }}
+          >
+            {visibleFlows.map(item => (
+              <option key={item.id} value={item.id}>{item.name}</option>
             ))}
           </select>
         ) : <span style={{ fontSize: 13, fontWeight: 500 }}>{flow?.name}</span>}
@@ -329,15 +378,6 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         >
           {full ? '退出全屏' : '全屏'}
         </button>
-        <select
-          value={focus ?? ''}
-          onChange={event => { setFocus(event.target.value === '' ? undefined : event.target.value) }}
-          title="只看某一条规则的分支"
-          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-secondary)' }}
-        >
-          <option value="">全部 {String(ruleIds.length)} 条规则</option>
-          {ruleIds.map(id => <option key={id} value={id}>{id}</option>)}
-        </select>
         <select
           value=""
           onChange={event => {
