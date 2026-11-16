@@ -15,7 +15,7 @@
  */
 
 import { join } from 'node:path'
-import { readFileSync, watch, type FSWatcher } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, watch, type FSWatcher } from 'node:fs'
 import { parseDocument as parseYaml } from 'yaml'
 import type { DecisionConfigBase, RuleVocabulary } from '../config.ts'
 import { DEFAULT_DECISION_CONFIG, isRecord } from '../config.ts'
@@ -24,7 +24,7 @@ import {
   loadRuleFile, setConditionValues, setRuleEnabled, swapPriority, type EditResult,
 } from '../rules.ts'
 import type { Rule, RuleFileError } from '../types.ts'
-import { existsSync } from 'node:fs'
+
 import { readJson, writeTextFile } from '../store.ts'
 import type { TaskConnector, TaskTestAnswer, TaskTestRef } from './connector.ts'
 import type { EmitAck, TaskEvent } from './event.ts'
@@ -36,7 +36,7 @@ import { createTaskStore, forwardingStore, openTaskStore, type TaskStore } from 
 import { createDeferredStore, type DeferredStore } from './deferred.ts'
 import { actionsToFlowNodes } from '../flow/adapt.ts'
 import { createControlNodes } from '../flow/control.ts'
-import { parseFlowFile } from '../flow/parse.ts'
+import { parseFlowDocument, parseFlowFile } from '../flow/parse.ts'
 import { resolvePositions } from '../flow/layout.ts'
 import { FlowNodeRegistry } from '../flow/registry.ts'
 import type { Flow } from '../flow/types.ts'
@@ -135,6 +135,10 @@ export class TaskEngine {
   private readonly nodes = new FlowNodeRegistry()
   /** 当前生效的流程图；v1 文件时为空数组。 */
   private currentFlows: readonly Flow[] = []
+  /** 图 id → 它来自哪个文件；保存时按这个写回去。 */
+  private flowFiles: ReadonlyMap<string, string> = new Map()
+  /** 一规则一文件所在的目录。 */
+  private readonly flowsDir: string
   private readonly runner: TaskRunner
   private readonly undos = new Map<string, (() => Promise<void>)[]>()
   /** 有多少条规则没写归属（它们不会执行）。 */
@@ -156,6 +160,8 @@ export class TaskEngine {
   constructor(private readonly options: TaskEngineOptions) {
     this.home = options.home
     this.rulesPath = join(options.home, 'rules.yml')
+    // 一规则一文件：每张图一个 .yml，放在这个目录下；rules.yml 只是迁移前的旧家。
+    this.flowsDir = join(options.home, 'flows')
     this.tasksPath = join(options.home, 'tasks.json')
     this.deferredPath = join(options.home, 'deferred.json')
     this.connectorsPath = join(options.home, 'connectors.json')
@@ -207,6 +213,58 @@ export class TaskEngine {
     if (this.started) void this.reloadRules()
     this.bump()
     return () => { this.unregister(connector.id) }
+  }
+
+  /**
+   * 读一规则一文件的目录：`flows/` 下每个 `.yml` 就是一张图。
+   *
+   * 一个文件读不出来**不影响别的文件**：坏的那张单独告警跳过，其余照常生效。
+   * 这和「一份大文件里坏一条就整份拒绝」不一样——文件既然分开了，就没道理互相牵连。
+   * @param vocabulary - 合并后的词表。
+   * @returns 图列表与「图 id → 文件路径」的映射。
+   */
+  private readFlowsDir(vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>): {
+    readonly flows: readonly Flow[]
+    readonly files: ReadonlyMap<string, string>
+  } {
+    if (!existsSync(this.flowsDir)) return { flows: [], files: new Map() }
+
+    let names: string[] = []
+    try {
+      names = readdirSync(this.flowsDir)
+        .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
+        .sort()
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error)
+      this.warn('任务引擎: 读不了规则目录 ' + this.flowsDir + '（' + detail + '）')
+      return { flows: [], files: new Map() }
+    }
+
+    const flows: Flow[] = []
+    const files = new Map<string, string>()
+    for (const name of names) {
+      const path = join(this.flowsDir, name)
+      let raw = ''
+      try {
+        raw = readFileSync(path, 'utf8')
+      } catch {
+        this.warn('任务引擎: ' + name + ' 读不了，跳过')
+        continue
+      }
+      const parsed = parseFlowDocument(raw, this.nodes, vocabulary)
+      if (parsed.error !== undefined || parsed.flow === undefined) {
+        this.warn('任务引擎: ' + name + ' 读不出来（' + (parsed.error?.message ?? '没有图') + '），跳过')
+        continue
+      }
+      for (const note of parsed.dropped) this.warn('任务引擎: ' + name + ' 有一项被丢弃（' + note + '）')
+      if (files.has(parsed.flow.id)) {
+        this.warn('任务引擎: 图 id「' + parsed.flow.id + '」重复，' + name + ' 跳过')
+        continue
+      }
+      flows.push(parsed.flow)
+      files.set(parsed.flow.id, path)
+    }
+    return { flows, files }
   }
 
   /**
@@ -552,6 +610,23 @@ export class TaskEngine {
     const vocabulary = this.combinedVocabulary()
     if (vocabulary === undefined) return
 
+    // **一规则一文件优先**：`flows/` 里每个 `.yml` 是一张图。目录不存在或为空时才回退到
+    // 旧的 `rules.yml`（那里可能还躺着一张合集图，等迁移脚本拆开）。
+    const fromDir = this.readFlowsDir(vocabulary)
+    if (fromDir.flows.length > 0) {
+      this.currentFlows = fromDir.flows
+      this.flowFiles = fromDir.files
+      this.currentRules = []
+      this.unassigned = 0
+      this.dropped = []
+      this.rulesError = undefined
+      this.rulesSource = 'file'
+      this.log('任务引擎: 已加载 ' + String(fromDir.flows.length) + ' 张流程图（每规则一个文件）')
+      this.bump()
+      return
+    }
+    this.flowFiles = new Map()
+
     // **先看是不是节点图**。v2 文件没有 `rules:` 数组，走下面的 loadRuleFile 会被判成
     // 「顶层不是数组」而整份拒绝——所以顺序不能反：能读成图就只走图。
     const raw = this.rawRules()
@@ -744,9 +819,12 @@ export class TaskEngine {
     readonly label?: string
     readonly enabled?: boolean
   }): Promise<TaskEdit> {
-    const raw = this.rawRules()
-    if (raw === '') return { ok: false, message: `读不到规则文件：${this.rulesPath}` }
-
+    // 一规则一文件：写到**这个节点所在的那个文件**去。
+    const located = this.locateFlow(input.nodeId)
+    const path = located?.path ?? this.rulesPath
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: `读不到规则文件：${path}` }
     let doc
     try {
       doc = parseYaml(raw)
@@ -762,7 +840,7 @@ export class TaskEngine {
       return { ok: false, message: `文件里找不到节点「${input.nodeId}」——它可能刚被别处删掉了` }
     }
     const { flowIndex, nodeIndex } = found
-    const at = (key: string): (string | number)[] => ['flows', flowIndex, 'nodes', nodeIndex, key]
+    const at = (key: string): (string | number)[] => flowIndex < 0 ? ['nodes', nodeIndex, key] : ['flows', flowIndex, 'nodes', nodeIndex, key]
 
     if (input.config !== undefined) doc.setIn(at('config'), input.config)
     if (input.pos !== undefined) doc.setIn(at('pos'), { x: input.pos.x, y: input.pos.y })
@@ -835,7 +913,7 @@ export class TaskEngine {
    * @returns 成功，或为什么没删成。
    */
   async removeFlowNode(nodeId: string): Promise<TaskEdit> {
-    const loaded = this.loadFlowDoc()
+    const loaded = this.loadFlowDoc(nodeId)
     if (!loaded.ok) return loaded
     const { doc, flowIndex, nodes } = loaded
 
@@ -878,7 +956,7 @@ export class TaskEngine {
     readonly index: number
     readonly to?: string
   }): Promise<TaskEdit> {
-    const loaded = this.loadFlowDoc()
+    const loaded = this.loadFlowDoc(input.from)
     if (!loaded.ok) return loaded
     const { doc, flowIndex } = loaded
 
@@ -903,11 +981,40 @@ export class TaskEngine {
     return { ok: true }
   }
 
-  /** 读文件并定位第一张图的节点序列。 */
-  private loadFlowDoc(): { readonly ok: true; readonly doc: YamlDoc; readonly flowIndex: number; readonly nodes: YamlSeq }
-    | { readonly ok: false; readonly message: string } {
-    const raw = this.rawRules()
-    if (raw === '') return { ok: false, message: `读不到规则文件：${this.rulesPath}` }
+  /** 找出一个节点属于哪张图、那张图在哪个文件。 */
+  private locateFlow(nodeId: string | undefined): { readonly flow: Flow; readonly path: string } | undefined {
+    for (const flow of this.currentFlows) {
+      const path = this.flowFiles.get(flow.id)
+      if (path === undefined) continue
+      if (nodeId === undefined || flow.nodes.some(node => node.id === nodeId)) return { flow, path }
+    }
+    return undefined
+  }
+
+  /**
+   * 读文件并定位图的节点序列。
+   *
+   * 两种形状都认：
+   * - **一规则一文件**：顶层直接是图，`nodes` 在根上（`flowIndex = -1`）
+   * - 合集文件：`flows[0].nodes`（`flowIndex = 0`）
+   * @param nodeId - 这个节点属于哪张图；不给时取第一张。
+   */
+  private loadFlowDoc(nodeId?: string): {
+    readonly ok: true
+    readonly doc: YamlDoc
+    readonly flowIndex: number
+    readonly nodes: YamlSeq
+  } | { readonly ok: false; readonly message: string } {
+    const located = this.locateFlow(nodeId)
+    const path = located?.path ?? this.rulesPath
+    let raw = ''
+    try {
+      raw = readFileSync(path, 'utf8')
+    } catch {
+      return { ok: false, message: `读不到规则文件：${path}` }
+    }
+    if (raw === '') return { ok: false, message: `读不到规则文件：${path}` }
+
     let doc: YamlDoc
     try {
       doc = parseYaml(raw) as YamlDoc
@@ -917,6 +1024,13 @@ export class TaskEngine {
     if (doc.errors.length > 0) {
       return { ok: false, message: `规则文件有语法错误，先修好它：${doc.errors[0]?.message ?? ''}` }
     }
+
+    /** 单图文件：`nodes` 在根上。 */
+    const rootNodes = doc.getIn(['nodes']) as YamlSeq | undefined
+    if (rootNodes !== undefined && Array.isArray(rootNodes.items)) {
+      return { ok: true, doc, flowIndex: -1, nodes: rootNodes }
+    }
+
     const flows = doc.getIn(['flows']) as YamlSeq | undefined
     if (flows === undefined || !Array.isArray(flows.items) || flows.items.length === 0) {
       return { ok: false, message: '这份规则文件里没有流程图' }
@@ -992,6 +1106,7 @@ export class TaskEngine {
     this.options.log?.(line)
   }
 
+  /** 一句告警。 */
   private warn(line: string): void {
     this.options.warn?.(line)
   }

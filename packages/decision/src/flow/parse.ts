@@ -43,6 +43,48 @@ export interface ParsedFlows {
 export const FLOW_VERSION = 2
 
 /**
+ * 读一个「单图文件」：文件本身就是一个 Flow，没有 lows: 包一层。
+ *
+ * 一规则一文件之后这是**唯一的形状**——一份文件就是一张图，谁在哪儿一目了然，
+ * 也不用在一份大文件里找「第 3 张图的第 7 个节点」。
+ * @param source - 文件原文。
+ * @param registry - 已注册的节点类型。
+ * @param vocabulary - 连接器词表。
+ * @returns 图，或错误与丢弃说明。
+ */
+export function parseFlowDocument(
+  source: string,
+  registry: FlowNodeRegistry,
+  vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>,
+): { readonly flow?: Flow; readonly error?: RuleFileError; readonly dropped: readonly string[] } {
+  let document: Document
+  try {
+    document = parseDocument(source)
+  } catch (error: unknown) {
+    return { dropped: [], error: { message: yamlError(error) } }
+  }
+  if (document.errors.length > 0) {
+    const first = document.errors[0]
+    const line = first?.linePos?.[0]?.line
+    return {
+      dropped: [],
+      error: { message: first?.message ?? 'YAML 语法错误', ...(line === undefined ? {} : { line }) },
+    }
+  }
+  const root: unknown = document.toJS()
+  if (!isRecord(root)) return { dropped: [], error: { message: '图文件的顶层必须是一个对象' } }
+  if (Array.isArray(root['flows'])) {
+    return { dropped: [], error: { message: '这是合集文件（有 flows 数组）；一规则一文件时每个文件直接写一张图' } }
+  }
+  const dropped: string[] = []
+  const flow = readFlow(root, 0, undefined, registry, vocabulary, dropped)
+  if (flow === undefined) {
+    return { dropped, error: { message: '这个文件算不出一张可用的图：' + dropped.join('；') } }
+  }
+  return { flow, dropped }
+}
+
+/**
  * 把一段文本读成图。
  * @param source - 文件原文。
  * @param registry - 已注册的节点类型；用来判「这个 type 认不认识」。

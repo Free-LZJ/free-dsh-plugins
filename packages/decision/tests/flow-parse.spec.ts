@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createControlNodes } from '../src/flow/control.ts'
-import { parseFlowFile } from '../src/flow/parse.ts'
+import { parseFlowDocument, parseFlowFile } from '../src/flow/parse.ts'
 import { FlowNodeRegistry, NodeTypeConflict } from '../src/flow/registry.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../src/registry.ts'
 import type { RuleVocabulary } from '../src/config.ts'
@@ -140,6 +140,38 @@ describe('parseFlowFile', () => {
     const [a, b] = parsed.flows[0]!.nodes
     expect(a?.pos).toEqual({ x: 10, y: 20 })
     expect(b?.pos).toBeUndefined()
+  })
+})
+
+describe('parseFlowDocument（一规则一文件）', () => {
+  it('顶层直接是一张图', () => {
+    const source = [
+      'id: github-do',
+      'name: GitHub 通知',
+      'connector: mail',
+      'nodes:',
+      '  - id: start',
+      '    type: end',
+      '',
+    ].join('\n')
+
+    const parsed = parseFlowDocument(source, registry(), vocabulary)
+    expect(parsed.error).toBeUndefined()
+    expect(parsed.flow?.id).toBe('github-do')
+    expect(parsed.flow?.name).toBe('GitHub 通知')
+    expect(parsed.flow?.connector).toBe('mail')
+    expect(parsed.flow?.nodes).toHaveLength(1)
+  })
+
+  it('合集文件（有 flows 数组）会被明确拒绝', () => {
+    const parsed = parseFlowDocument('version: 2\nflows: []\n', registry(), vocabulary)
+    expect(parsed.flow).toBeUndefined()
+    expect(parsed.error?.message).toContain('一规则一文件')
+  })
+
+  it('缺 connector 的图读不出来', () => {
+    const parsed = parseFlowDocument('id: x\nnodes:\n  - { id: a, type: end }\n', registry(), vocabulary)
+    expect(parsed.error?.message).toContain('算不出')
   })
 })
 
