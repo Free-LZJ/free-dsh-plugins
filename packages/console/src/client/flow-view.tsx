@@ -245,7 +245,12 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     setDirty(false)
   }, [node?.id, node?.config])
 
-  /** 拖动结束：只提交坐标。 */
+  /**
+   * 拖动结束：只提交坐标，然后**把图重新读回来**。
+   *
+   * 少了这一步，拖动结束时 drag 被清空，节点会立刻弹回旧坐标——保存其实成功了，
+   * 只是页面手上的还是上一份数据。
+   */
   const onMove = useCallback((id: string, x: number, y: number) => {
     void triage.saveFlowNode({ nodeId: id, pos: { x, y } }).then(result => {
       if (!result.ok) {
@@ -253,8 +258,9 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         return
       }
       setFailure('')
+      void load()
     })
-  }, [triage])
+  }, [triage, load])
 
   const onSave = useCallback(() => {
     if (node === undefined) return

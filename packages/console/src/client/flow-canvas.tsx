@@ -225,8 +225,16 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, f
     setDrag({ id: node.id, dx: x - node.x, dy: y - node.y, x: node.x, y: node.y })
   }, [onMove, onSelect, pan, scale])
 
-  /** 空白处按下：平移；同时清掉选中。 */
+  /**
+   * 空白处按下：平移；同时清掉选中。
+   *
+   * **必须显式排除节点**：合成事件的 stopPropagation 在委托到 root 的这套机制下
+   * 挡不住父元素的 handler。不排除的话，拖节点会同时拖动整块画布，两个位移互相抵消，
+   * 表现出来正是「节点拖不动」。
+   */
   const onPointerDownCanvas = useCallback((event: React.PointerEvent) => {
+    const target = event.target as HTMLElement | null
+    if (target?.closest('[data-flow-node]') != null) return
     onSelect?.(undefined)
     setPanning({ x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y })
   }, [onSelect, pan])
@@ -346,6 +354,7 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, f
           return (
             <div
               key={node.id}
+              data-flow-node={node.id}
               style={style}
               onPointerDown={event => { onPointerDownNode(event, node) }}
               onDoubleClick={() => { onOpen?.(node.id) }}
