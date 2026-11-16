@@ -368,12 +368,20 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, flex: 1,
-      // **全屏 = 把自己撑高，不做覆盖层。**
+      // **全屏 = 铺满整个窗口。**
       //
-      // 覆盖层用 `position: fixed` 会踩两个坑：祖先带 `transform` 时它的定位基准会
-      // 变成那个祖先（于是跑到屏幕外面、和标题栏叠在一起），而且盖住整页之后退出
-      // 按钮也可能被浮层压住。撑高没有这些问题——它就是一个更高的普通容器。
-      ...(full ? { height: 'calc(100vh - 96px)', flex: 'none' } : {}),
+      // 关键是 z-index：之前给 60，压不过 DSH 自己的标题栏和左侧栏，于是看上去
+      // 「内容被压在下面、顶部重叠」。这里给到最上层，把自己完整盖出来；内容照旧
+      // 从上到下排，不会被谁挡住。
+      ...(full
+        ? {
+          position: 'fixed' as const,
+          inset: 0,
+          zIndex: 9999,
+          background: 'var(--dsw-alias-bg-layer-1)',
+          padding: 16,
+        }
+        : {}),
     }}>
       {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
 
