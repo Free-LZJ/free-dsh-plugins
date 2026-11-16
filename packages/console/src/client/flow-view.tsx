@@ -231,6 +231,22 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   }, [triage])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => { void load() }, [load])
+
+  /**
+   * 全屏时按 ESC 退出。
+   *
+   * 光靠那个按钮不够稳：全屏层铺满整页之后，按钮可能被浮层盖住、或者被拖拽的手势
+   * 吃掉。键盘兜底不依赖任何布局。
+   */
+  useEffect(() => {
+    if (!full) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setFull(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [full])
 
   const typeMap = useMemo(() => {
     const map = new Map<string, TriageNodeType>()

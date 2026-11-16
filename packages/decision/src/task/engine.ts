@@ -1116,7 +1116,15 @@ export class TaskEngine {
     nodeId: string | undefined,
     flowId?: string,
   ): { readonly flow: Flow; readonly path: string } | undefined {
-    for (const flow of this.currentFlows) {
+    // **不能在 `currentFlows` 里找**：事件流模式下那个数组是空的（规则都在
+    // `eventFlows` / `workflows` 里），于是永远定位不到文件，保存只能退回 `rules.yml`，
+    // 报「文件里找不到节点」。
+    const candidates = [
+      ...this.eventFlows.values(),
+      ...this.workflows.values(),
+      ...this.currentFlows,
+    ]
+    for (const flow of candidates) {
       if (flowId !== undefined && flow.id !== flowId) continue
       const path = this.flowFiles.get(flow.id)
       if (path === undefined) continue
