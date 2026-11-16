@@ -814,13 +814,15 @@ export class TaskEngine {
    */
   async saveFlowNode(input: {
     readonly nodeId: string
+    /** 这个节点在哪张图里。`trigger` 这类 id 每张图都有，只按 id 找会写错文件。 */
+    readonly flowId?: string
     readonly config?: Readonly<Record<string, unknown>>
     readonly pos?: { readonly x: number; readonly y: number }
     readonly label?: string
     readonly enabled?: boolean
   }): Promise<TaskEdit> {
     // 一规则一文件：写到**这个节点所在的那个文件**去。
-    const located = this.locateFlow(input.nodeId)
+    const located = this.locateFlow(input.nodeId, input.flowId)
     const path = located?.path ?? this.rulesPath
     let raw = ''
     try { raw = readFileSync(path, 'utf8') } catch { raw = '' }
@@ -851,7 +853,7 @@ export class TaskEngine {
       else doc.setIn(at('enabled'), false)
     }
 
-    await writeTextFile(this.rulesPath, doc.toString())
+    await writeTextFile(path, doc.toString())
     await this.reloadRules()
     return { ok: true }
   }
@@ -982,8 +984,20 @@ export class TaskEngine {
   }
 
   /** 找出一个节点属于哪张图、那张图在哪个文件。 */
-  private locateFlow(nodeId: string | undefined): { readonly flow: Flow; readonly path: string } | undefined {
+  /**
+   * 找出一个节点属于哪张图、那张图在哪个文件。
+   *
+   * **优先用 `flowId`**：`trigger` / `branch` 这类 id 每张图里都有，只按节点 id 找会
+   * 落到第一张图上，于是拖 A 图的节点写进了 B 图的文件。
+   * @param nodeId - 节点 id；不给表示随便一张。
+   * @param flowId - 图 id，给了就只在这张图里找。
+   */
+  private locateFlow(
+    nodeId: string | undefined,
+    flowId?: string,
+  ): { readonly flow: Flow; readonly path: string } | undefined {
     for (const flow of this.currentFlows) {
+      if (flowId !== undefined && flow.id !== flowId) continue
       const path = this.flowFiles.get(flow.id)
       if (path === undefined) continue
       if (nodeId === undefined || flow.nodes.some(node => node.id === nodeId)) return { flow, path }
@@ -1134,12 +1148,30 @@ type YamlSeq = { readonly items: readonly unknown[] }
  * @param nodeId - 要找的节点 id。
  * @returns 它在哪个 flow 的第几个 node；找不到是 undefined。
  */
+/**
+ * 在文件里定位一个节点。
+ *
+ * 两种形状都认：单图文件（根的 `nodes`，`flowIndex = -1`）与合集文件（`flows[i].nodes`）。
+ * @param doc - 解析后的 YAML 文档。
+ * @param nodeId - 要找的节点 id。
+ * @returns 图序号与节点序号；找不到为 undefined。
+ */
 function locateNode(
   doc: { toJS: () => unknown },
   nodeId: string,
 ): { flowIndex: number; nodeIndex: number } | undefined {
   const data = doc.toJS()
-  if (!isRecord(data) || !Array.isArray(data['flows'])) return undefined
+  if (!isRecord(data)) return undefined
+
+  /** 单图文件：节点直接在根上。 */
+  if (Array.isArray(data['nodes'])) {
+    for (const [nodeIndex, node] of data['nodes'].entries()) {
+      if (isRecord(node) && node['id'] === nodeId) return { flowIndex: -1, nodeIndex }
+    }
+    return undefined
+  }
+
+  if (!Array.isArray(data['flows'])) return undefined
   for (const [flowIndex, flow] of data['flows'].entries()) {
     if (!isRecord(flow) || !Array.isArray(flow['nodes'])) continue
     for (const [nodeIndex, node] of flow['nodes'].entries()) {

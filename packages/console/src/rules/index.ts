@@ -166,6 +166,8 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       const nodeId = textOf(body, 'nodeId')
       if (nodeId === undefined) return { ok: false, error: 'nodeId must not be empty' }
       const record = isObject(body) ? body : {}
+      // `trigger` / `branch` 这类 id 每张图里都有，必须靠 flowId 才知道改的是哪张图。
+      const flowId = textOf(body, 'flowId')
       const config = record['config']
       const rawPos = record['pos']
       const x = isObject(rawPos) ? rawPos['x'] : undefined
@@ -176,6 +178,7 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
         ok: true,
         command: engine => engine.saveFlowNode({
           nodeId,
+          ...(flowId === undefined ? {} : { flowId }),
           ...(isObject(config) ? { config } : {}),
           ...(typeof x === 'number' && typeof y === 'number' ? { pos: { x, y } } : {}),
           ...(typeof label === 'string' ? { label } : {}),

@@ -280,7 +280,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    * 只是页面手上的还是上一份数据。
    */
   const onMove = useCallback((id: string, x: number, y: number) => {
-    void triage.saveFlowNode({ nodeId: id, pos: { x, y } }).then(result => {
+    void triage.saveFlowNode({ nodeId: id, flowId: flow?.id, pos: { x, y } }).then(result => {
       if (!result.ok) {
         setFailure(result.message ?? '坐标没有存下来')
         return
@@ -288,7 +288,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       setFailure('')
       void load()
     })
-  }, [triage, load])
+  }, [triage, load, flow])
 
   const onSave = useCallback(() => {
     if (node === undefined) return

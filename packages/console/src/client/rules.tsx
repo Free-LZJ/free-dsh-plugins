@@ -204,6 +204,8 @@ export interface TriageNodeType {
 /** 改一节节点的输入。 */
 export interface TriageFlowPatch {
   readonly nodeId: string
+  /** 这个节点在哪张图里；	rigger 这类 id 每张图都有，缺了就写错文件。 */
+  readonly flowId?: string | undefined
   readonly config?: Readonly<Record<string, unknown>>
   readonly pos?: { readonly x: number; readonly y: number }
   readonly label?: string
