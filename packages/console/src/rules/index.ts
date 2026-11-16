@@ -54,7 +54,7 @@ export function rulesHome(dshHome: string): string {
 export type RulesEngine = Pick<
   TaskEngine,
   | 'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
-  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'autoLayout'
+  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'addRule' | 'autoLayout'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -142,10 +142,10 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
         }
         const result = await parsed.command(host.engine)
         // A refusal carries the reason so the page can show it next to the rule.
-        respond(res, result.ok ? 200 : 400, result.ok ? { ok: true } : { error: result.message ?? 'rejected' })
+        // 除了 ok，还可能有 nodeId / edgeIndex 这类「刚做了什么」的信息，一并交回去。
+        respond(res, result.ok ? 200 : 400, result.ok ? { ...result, ok: true } : { error: result.message ?? 'rejected' })
       }, what), `console.${what.replaceAll(' ', '-')}-route`)
     }
-
     register(RULES_STATE_PATH, guard((_req, res) => {
       respond(res, 200, host.engine.rules())
     }, 'reading rule file'), 'console.rules-state-route')
@@ -212,6 +212,17 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
     registerWrite(RULES_FLOW_NODE_PATH, 'editing the flow structure', (body) => {
       const record = isObject(body) ? body : {}
       // 新增一条出边：从 A 连到 B，可选带条件。这就是「新建规则」的最后一环。
+      // 改一条边的条件：条件是「这条规则凭什么被选中」。
+      // 新建一条规则：建子工作流 + 加节点 + 连线，一次做完。
+      if (record['action'] === 'rule') {
+        const flowId = textOf(body, 'flowId')
+        const from = textOf(body, 'from')
+        const name = textOf(body, 'name')
+        if (flowId === undefined || from === undefined || name === undefined) {
+          return { ok: false, error: 'flowId, from and name are required' }
+        }
+        return { ok: true, command: engine => engine.addRule({ flowId, from, name }) }
+      }
       // 改一条边的条件：条件是「这条规则凭什么被选中」。
       if (record['action'] === 'when') {
         const from = textOf(body, 'from')

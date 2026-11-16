@@ -112,6 +112,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
     relinkFlowEdge: overrides.relinkFlowEdge ?? (async () => ({ ok: true })),
     addFlowEdge: async () => ({ ok: true }),
     saveFlowEdge: async () => ({ ok: true }),
+    addRule: async () => ({ ok: true }),
     autoLayout: overrides.autoLayout ?? (async () => ({ ok: true })),
     setEnabled: async (ruleId, enabled): Promise<TriageResult> => {
       calls.enabled.push({ ruleId, enabled })

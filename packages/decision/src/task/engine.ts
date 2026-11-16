@@ -15,7 +15,7 @@
  */
 
 import { dirname, join } from 'node:path'
-import { existsSync, readFileSync, readdirSync, watch, type FSWatcher } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { parseDocument as parseYaml } from 'yaml'
 import type { DecisionConfigBase, RuleVocabulary } from '../config.ts'
 import { DEFAULT_DECISION_CONFIG, isRecord } from '../config.ts'
@@ -38,6 +38,7 @@ import { createDeferredStore, type DeferredStore } from './deferred.ts'
 import { actionsToFlowNodes } from '../flow/adapt.ts'
 import { createControlNodes } from '../flow/control.ts'
 import { parseFlowDocument, parseFlowFile } from '../flow/parse.ts'
+import { stringifyFlowDocument } from '../flow/serialize.ts'
 import { FlowNodeRegistry } from '../flow/registry.ts'
 import type { Flow } from '../flow/types.ts'
 import type { TaskContext } from './context.ts'
@@ -1325,6 +1326,106 @@ export class TaskEngine {
     await this.reloadRules()
     return { ok: true }
   }
+  /**
+   * 新建一条规则：建一个子工作流文件、在事件流里加一个 `workflow` 节点、再连到 `from`。
+   *
+   * 这是「新建规则」的一步到位版本。手写 YAML 时要建文件、加节点、连线三处一起改，
+   * 少了哪步都不成图；这里一次做完，失败则不留半成品（先写子工作流，再改事件流，
+   * 后者失败时把前者删掉）。
+   * @param input - 哪个事件流、从哪个节点连出去、规则叫什么。
+   * @returns 成功，以及新节点 id 与新边的下标。
+   */
+  async addRule(input: {
+    readonly flowId: string
+    readonly from: string
+    readonly name: string
+    readonly when?: readonly Readonly<Record<string, unknown>>[]
+  }): Promise<TaskEdit & { readonly nodeId?: string; readonly edgeIndex?: number }> {
+    const name = input.name.trim()
+    if (name === '') return { ok: false, message: '规则得有个名字' }
+
+    const located = this.locateFlow(input.from, input.flowId)
+    if (located === undefined) return { ok: false, message: `找不到节点「${input.from}」所属的图` }
+    if (located.flow.trigger === undefined) {
+      return { ok: false, message: '这是子工作流；规则只能从事件流里加' }
+    }
+
+    /** 规则 id：中文名转不了 slug 时退回时间戳，保证文件能建出来。 */
+    const ascii = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const ruleId = ascii === '' ? 'rule-' + String(Date.now()) : ascii
+    const nodeId = 'call-' + ruleId
+
+    if (this.workflows.has(ruleId)) return { ok: false, message: `已经有叫「${ruleId}」的子工作流了` }
+    if (located.flow.nodes.some(node => node.id === nodeId)) {
+      return { ok: false, message: `事件流里已经有「${nodeId}」这个节点了` }
+    }
+
+    // 1) 先建子工作流文件：一个「结束」就够了，具体动作在它的编排页里加。
+    const workflowPath = join(this.workflowsDir, ruleId + '.yml')
+    try {
+      mkdirSync(this.workflowsDir, { recursive: true })
+      writeFileSync(
+        workflowPath,
+        stringifyFlowDocument(
+          { id: ruleId, name, connector: located.flow.connector, nodes: [{ id: 'end', type: 'end' }] },
+          { header: '新建的规则流程：在这里加它要做的事。' },
+        ),
+        'utf8',
+      )
+    } catch (error: unknown) {
+      return { ok: false, message: '建子工作流失败：' + (error instanceof Error ? error.message : String(error)) }
+    }
+
+    // 2) 再加节点与边。失败就把刚建的文件删掉，不留半成品。
+    // 2) 节点与边**一次写完**：分两步做的话，先连线会报「找不到目标节点」，
+    //    先建节点又要重读一次文件——都不如读完改完一次落盘。
+    let raw = ''
+    try { raw = readFileSync(located.path, 'utf8') } catch { raw = '' }
+    const abort = (message: string): TaskEdit & { nodeId?: string; edgeIndex?: number } => {
+      try { rmSync(workflowPath, { force: true }) } catch { /* 删不掉就留着，下次同名会被拒 */ }
+      return { ok: false, message }
+    }
+    if (raw === '') return abort('读不到规则文件：' + located.path)
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return abort('规则文件读不出来：' + (error instanceof Error ? error.message : String(error)))
+    }
+    if (doc.errors.length > 0) return abort('规则文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? ''))
+
+    const fromFound = locateNode(doc, input.from)
+    if (fromFound === undefined) return abort(`文件里找不到节点「${input.from}」`)
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; type?: string; config?: Record<string, unknown>; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; type?: string; config?: Record<string, unknown>; out?: Record<string, unknown>[] }[] }[]
+    }
+    const single = fromFound.flowIndex < 0
+    const nodes = single ? (plain.nodes ?? []) : (plain.flows?.[fromFound.flowIndex]?.nodes ?? [])
+    const fromIndex = nodes.findIndex(item => item.id === input.from)
+    if (fromIndex < 0) return abort(`文件里找不到节点「${input.from}」`)
+
+    // 新节点排在最末的 `end` 之前，读起来比塞在末尾自然。
+    const endIndex = nodes.findIndex(item => item.type === 'end')
+    const insertAt = endIndex < 0 ? nodes.length : endIndex
+    nodes.splice(insertAt, 0, { id: nodeId, type: 'workflow', config: { workflow: ruleId }, out: [{ to: 'end' }] })
+
+    const edges = [...(nodes[fromIndex]?.out ?? [])]
+    const edgeIndex = edges.length
+    edges.push({
+      to: nodeId,
+      ...(input.when === undefined || input.when.length === 0 ? {} : { when: input.when }),
+    })
+    nodes[fromIndex] = { ...nodes[fromIndex], out: edges }
+
+    const nodesAt = (): (string | number)[] => (single ? ['nodes'] : ['flows', fromFound.flowIndex, 'nodes'])
+    doc.setIn(nodesAt(), nodes)
+    await writeTextFile(located.path, doc.toString())
+    await this.reloadRules()
+    return { ok: true, nodeId, edgeIndex }
+  }
+
+
 
   /** 找出一个节点属于哪张图、那张图在哪个文件。 */
   /**

@@ -259,6 +259,10 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [selected, setSelected] = useState<string | undefined>(undefined)
   /** 选中的连线：`{ from, index }`，用来改它的条件。 */
   const [selectedEdge, setSelectedEdge] = useState<{ from: string; index: number } | undefined>(undefined)
+  /** 等着被选中的新规则边：图重载完才设，因为那时才有 `edgeSpec`。 */
+  const [pendingRuleEdge, setPendingRuleEdge] = useState<{ from: string; index: number } | undefined>(undefined)
+  /** 正在起名的规则；打开输入框时有值。 */
+  const [newRuleName, setNewRuleName] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
@@ -490,6 +494,51 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    *
    * 连线 id 是 `from->to#index`，按最后一个 `->` 和 `#` 切——节点 id 里允许有横线。
    */
+  /**
+   * 新建一条规则：建子工作流、加节点、连线，然后把这条边选中让你填条件。
+   *
+   * 规则只能挂在事件流上——子工作流是被调用的执行体，它没有「事件」这回事。
+   */
+  const createRule = useCallback((name: string) => {
+    if (flow === undefined || flow.trigger === undefined) {
+      setFailure('规则只能加在事件流上')
+      return
+    }
+    setFailure('')
+    /**
+     * 从 **switch** 上连出去——「分支」就是干这个的。
+     *
+     * 不能取「第一个有出边的节点」：那是 `trigger`，它只该有一条通往分支的边。
+     * 之前就是这么写的，结果每建一条规则都在 trigger 上多挂一条，图直接废掉。
+     */
+    const from = flow.nodes.find(item => item.type === 'switch')?.id
+      ?? flow.nodes.find(item => (item.out ?? []).length > 1)?.id
+      ?? flow.nodes[0]?.id
+    if (from === undefined) {
+      setFailure('这张图是空的')
+      return
+    }
+    void triage.addRule({ flowId: flow.id, from, name }).then(result => {
+      if (!result.ok) {
+        setFailure(result.message ?? '没建成')
+        return
+      }
+      setNewRuleName(undefined)
+      // 新边先记下来，等图重载完再由 effect 选中——这里读到的 `flow` 还是旧的。
+      if (typeof result.edgeIndex === 'number') setPendingRuleEdge({ from, index: result.edgeIndex })
+      void load()
+    })
+  }, [triage, flow, load])
+
+  /** 图重载完之后，把新建规则那条边选中——此时才查得到 `edgeSpec`。 */
+  useEffect(() => {
+    if (pendingRuleEdge === undefined) return
+    const from = flow?.nodes.find(item => item.id === pendingRuleEdge.from)
+    if (from?.out?.[pendingRuleEdge.index] === undefined) return
+    setSelectedEdge(pendingRuleEdge)
+    setPendingRuleEdge(undefined)
+  }, [pendingRuleEdge, flow])
+
   const onEdgeClick = useCallback((edgeId: string) => {
     const hash = edgeId.lastIndexOf('#')
     const arrow = edgeId.lastIndexOf('->', hash)
@@ -673,6 +722,44 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
           <option value="">+ 新增节点</option>
           {types.map(type => <option key={type.type} value={type.type}>{type.label}（{type.type}）</option>)}
         </select>
+        {/* 新建规则：一次建好子工作流 + 节点 + 连线，然后直接切到「填条件」。 */}
+        {newRuleName === undefined ? (
+          <button
+            type="button"
+            onClick={() => { setNewRuleName(''); setFailure('') }}
+            style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer' }}
+          >
+            + 新建规则
+          </button>
+        ) : (
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input
+              autoFocus
+              value={newRuleName}
+              placeholder="规则名，比如 github-do"
+              onChange={event => { setNewRuleName(event.target.value) }}
+              onKeyDown={event => {
+                if (event.key === 'Enter') createRule(newRuleName)
+                if (event.key === 'Escape') setNewRuleName(undefined)
+              }}
+              style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-primary)', width: 180 }}
+            />
+            <button
+              type="button"
+              onClick={() => { createRule(newRuleName) }}
+              style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-3)', color: 'var(--dsw-alias-label-primary)', cursor: 'pointer' }}
+            >
+              建
+            </button>
+            <button
+              type="button"
+              onClick={() => { setNewRuleName(undefined) }}
+              style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-tertiary)', cursor: 'pointer' }}
+            >
+              取消
+            </button>
+          </span>
+        )}
       </div>
 
       <div style={{ position: 'relative', display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, height: full ? '100%' : undefined, minWidth: 0 }}>
