@@ -164,6 +164,7 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
     removeFlowNode: () => Promise.resolve({ ok: true }),
     relinkFlowEdge: () => Promise.resolve({ ok: true }),
     addFlowEdge: () => Promise.resolve({ ok: true }),
+    saveFlowEdge: () => Promise.resolve({ ok: true }),
     autoLayout: () => Promise.resolve({ ok: true }),
     nodeTypes: () => [],
     ...overrides,

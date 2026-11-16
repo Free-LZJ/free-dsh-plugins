@@ -211,6 +211,7 @@ function shellFace(
     removeFlowNode: async () => ({ ok: true }),
     relinkFlowEdge: async () => ({ ok: true }),
     addFlowEdge: async () => ({ ok: true }),
+    saveFlowEdge: async () => ({ ok: true }),
     autoLayout: async () => ({ ok: true }),
       },
     },

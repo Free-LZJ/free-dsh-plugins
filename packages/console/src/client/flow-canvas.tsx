@@ -163,6 +163,8 @@ export interface FlowCanvasProps {
   readonly onOpen?: (id: string) => void
   /** 拖出一条新连线。 */
   readonly onConnect?: (from: string, to: string) => void
+  /** 点中一条连线（选中它去改条件）。 */
+  readonly onEdgeClick?: (edgeId: string) => void
   /** 撑满容器（全屏时用）。 */
   readonly fullscreen?: boolean
 }
@@ -189,7 +191,7 @@ function useFlowStyles(): void {
 }
 
 function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
-  const { nodes: sourceNodes, edges: sourceEdges, selected, onSelect, onMove, onOpen, onConnect, fullscreen } = props
+  const { nodes: sourceNodes, edges: sourceEdges, selected, onSelect, onMove, onOpen, onConnect, onEdgeClick, fullscreen } = props
   useFlowStyles()
 
   /** React Flow 自己管节点位置；外部数据变了才重建。 */
@@ -254,6 +256,7 @@ function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
         onNodeDoubleClick={(_event, node) => { onOpen?.(node.id) }}
         onPaneClick={() => { onSelect?.(undefined) }}
         onConnect={handleConnect}
+        onEdgeClick={(_event, edge) => { onEdgeClick?.(edge.id) }}
         fitView
         fitViewOptions={{ padding: 0.12, minZoom: 0.15 }}
         minZoom={0.15}

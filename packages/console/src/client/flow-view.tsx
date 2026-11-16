@@ -257,8 +257,10 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [error, setError] = useState('')
   const [failure, setFailure] = useState('')
   const [selected, setSelected] = useState<string | undefined>(undefined)
-  const [draft, setDraft] = useState<Record<string, unknown>>({})
+  /** 选中的连线：`{ from, index }`，用来改它的条件。 */
+  const [selectedEdge, setSelectedEdge] = useState<{ from: string; index: number } | undefined>(undefined)
   const [loading, setLoading] = useState(true)
+  const [draft, setDraft] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
   /** 最近一次执行在图上留下的状态：节点 id → 成了 / 失败 / 挂起。 */
   const [trail, setTrail] = useState<ReadonlyMap<string, 'ok' | 'failed' | 'suspended'>>(new Map())
@@ -376,6 +378,50 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const node: TriageFlowNode | undefined = flow?.nodes.find(item => item.id === selected)
   const nodeType = node === undefined ? undefined : typeMap.get(node.type)
 
+  /** 选中连线时它的两端与定义，属性面板据此切成「改条件」。 */
+  const edgeFrom = selectedEdge === undefined ? undefined : flow?.nodes.find(item => item.id === selectedEdge.from)
+  const edgeSpec = edgeFrom?.out?.[selectedEdge?.index ?? -1]
+  const edgeKey = selectedEdge === undefined ? '' : `${selectedEdge.from}#${String(selectedEdge.index)}`
+
+  /** 条件的编辑草稿；选中另一条边时整体换掉。 */
+  const [edgeConditions, setEdgeConditions] = useState<Record<string, unknown>[]>([])
+  useEffect(() => {
+    setEdgeConditions((edgeSpec?.when ?? []).map(condition => ({ ...condition })))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edgeKey, flow])
+
+  /** 图上出现过的条件类型，给下拉用。 */
+  const conditionKinds = useMemo(() => {
+    const seen = new Set<string>()
+    for (const item of flow?.nodes ?? []) {
+      for (const edge of item.out ?? []) {
+        for (const condition of edge.when ?? []) {
+          if (typeof condition['kind'] === 'string') seen.add(condition['kind'])
+        }
+      }
+    }
+    if (seen.size === 0) ['from', 'classifier'].forEach(kind => { seen.add(kind) })
+    return [...seen].sort()
+  }, [flow])
+
+  /** 保存这条边的条件。 */
+  const saveEdge = useCallback(() => {
+    if (selectedEdge === undefined || flow === undefined) return
+    setFailure('')
+    void triage.saveFlowEdge({
+      from: selectedEdge.from,
+      index: selectedEdge.index,
+      flowId: flow.id,
+      when: edgeConditions,
+    }).then(result => {
+      if (!result.ok) {
+        setFailure(result.message ?? '没有存下来')
+        return
+      }
+      void load()
+    })
+  }, [triage, selectedEdge, flow, edgeConditions, load])
+
   /** 选中时把当前配置抄进草稿；之后的编辑只动草稿。 */
   useEffect(() => {
     setDraft(node?.config === undefined ? {} : { ...node.config })
@@ -438,6 +484,22 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       void load()
     })
   }, [triage, flow, load])
+
+  /**
+   * 点中一条连线：选中它，属性面板切成「改条件」。
+   *
+   * 连线 id 是 `from->to#index`，按最后一个 `->` 和 `#` 切——节点 id 里允许有横线。
+   */
+  const onEdgeClick = useCallback((edgeId: string) => {
+    const hash = edgeId.lastIndexOf('#')
+    const arrow = edgeId.lastIndexOf('->', hash)
+    if (hash < 0 || arrow < 0) return
+    const from = edgeId.slice(0, arrow)
+    const index = Number(edgeId.slice(hash + 1))
+    if (!Number.isFinite(index)) return
+    setSelected(undefined)
+    setSelectedEdge({ from, index })
+  }, [])
 
   const onDrill = useCallback((id: string) => {
     const node = flow?.nodes.find(item => item.id === id)
@@ -613,7 +675,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
         </select>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, height: full ? '100%' : undefined, minWidth: 0 }}>
+      <div style={{ position: 'relative', display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, height: full ? '100%' : undefined, minWidth: 0 }}>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
           <FlowCanvas
             fullscreen={full}
@@ -624,9 +686,90 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             onMove={onMove}
             onOpen={onDrill}
             onConnect={onConnect}
+            onEdgeClick={onEdgeClick}
           />
         </div>
 
+        {/* 选中连线时，用浮层盖住同一个位置改条件——不动节点面板那套结构。 */}
+        {selectedEdge !== undefined && edgeFrom !== undefined ? (
+          <aside style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 300, zIndex: 10, display: 'flex', flexDirection: 'column', gap: 10, padding: 10, borderRadius: 10, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-1)', overflowY: 'auto' }}>
+            <div>
+              <div style={{ fontSize: 14, lineHeight: '22px', fontWeight: 600 }}>连线的条件</div>
+              <div style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                {edgeFrom.label ?? edgeFrom.id} → {(flow?.nodes.find(item => item.id === edgeSpec?.to)?.label) ?? edgeSpec?.to ?? '(未连接)'}
+                {' · 第 '}{String((selectedEdge?.index ?? 0) + 1)}{' 条出边'}
+              </div>
+            </div>
+            {edgeConditions.map((condition, index) => (
+              <div key={String(index)} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 8, borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <select
+                    value={typeof condition['kind'] === 'string' ? condition['kind'] : ''}
+                    onChange={event => {
+                      setEdgeConditions(prev => prev.map((item, at) => at === index ? { ...item, kind: event.target.value } : item))
+                    }}
+                    style={{ flex: 1, fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-primary)' }}
+                  >
+                    {conditionKinds.map(kind => <option key={kind} value={kind}>{kind}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => { setEdgeConditions(prev => prev.filter((_item, at) => at !== index)) }}
+                    style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-state-error-primary)', cursor: 'pointer' }}
+                  >
+                    删
+                  </button>
+                </div>
+                <textarea
+                  rows={2}
+                  spellCheck={false}
+                  value={Object.entries(condition).filter(([key]) => key !== 'kind').map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : String(value)}`).join('\n')}
+                  onChange={event => {
+                    const next: Record<string, unknown> = { kind: condition['kind'] }
+                    for (const line of event.target.value.split('\n')) {
+                      const at = line.indexOf(':')
+                      if (at <= 0) continue
+                      const key = line.slice(0, at).trim()
+                      const raw = line.slice(at + 1).trim()
+                      if (key === '' || key === 'kind') continue
+                      next[key] = raw.includes(',') ? raw.split(',').map(item => item.trim()).filter(item => item !== '') : raw
+                    }
+                    setEdgeConditions(prev => prev.map((item, at) => at === index ? next : item))
+                  }}
+                  style={{ width: '100%', boxSizing: 'border-box', fontSize: 12, lineHeight: '18px', padding: '6px 8px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-primary)', resize: 'vertical' }}
+                />
+              </div>
+            ))}
+            {edgeConditions.length === 0 ? (
+              <p style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                没有条件 = 兜底，前面的都没中就走这条。
+              </p>
+            ) : null}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => { setEdgeConditions(prev => [...prev, { kind: conditionKinds[0] ?? 'from' }]) }}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer' }}
+              >
+                + 条件
+              </button>
+              <button
+                type="button"
+                onClick={saveEdge}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-3)', color: 'var(--dsw-alias-label-primary)', cursor: 'pointer' }}
+              >
+                保存条件
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedEdge(undefined) }}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-tertiary)', cursor: 'pointer' }}
+              >
+                关闭
+              </button>
+            </div>
+          </aside>
+        ) : null}
         {node === undefined || nodeType === undefined ? null : (
         <aside style={{ width: 300, flex: '0 0 300px', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {(

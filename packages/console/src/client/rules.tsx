@@ -235,6 +235,8 @@ export interface TriageSource {
   relinkFlowEdge(input: { from: string; index: number; to?: string }): Promise<TriageResult>
   /** 新增一条出边：从 A 连到 B，可选带条件。 */
   addFlowEdge(input: { from: string; to: string; flowId?: string; when?: readonly Readonly<Record<string, unknown>>[] }): Promise<TriageResult>
+  /** 改一条边的条件。 */
+  saveFlowEdge(input: { from: string; index: number; flowId?: string; when?: readonly Readonly<Record<string, unknown>>[] }): Promise<TriageResult>
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
   /**
@@ -320,6 +322,7 @@ export function createTriageSource(): TriageSource {
     removeFlowNode: async (nodeId) => await write('/flow/node', { action: 'remove', nodeId }),
     relinkFlowEdge: async (input) => await write('/flow/node', { action: 'link', ...input }),
     addFlowEdge: async (input) => await write('/flow/node', { action: 'connect', ...input }),
+    saveFlowEdge: async (input) => await write('/flow/node', { action: 'when', ...input }),
     setEnabled: async (ruleId, enabled) => await write('/enable', { ruleId, enabled }),
     movePriority: async (ruleId, direction) => await write('/priority', { ruleId, direction }),
     setCondition: async (ruleId, conditionIndex, values) =>

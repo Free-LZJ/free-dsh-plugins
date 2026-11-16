@@ -54,7 +54,7 @@ export function rulesHome(dshHome: string): string {
 export type RulesEngine = Pick<
   TaskEngine,
   | 'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
-  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'addFlowEdge' | 'autoLayout'
+  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'autoLayout'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -211,6 +211,26 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
     // 都不用手动连线；要换指向就单独说一条边。
     registerWrite(RULES_FLOW_NODE_PATH, 'editing the flow structure', (body) => {
       const record = isObject(body) ? body : {}
+      // 新增一条出边：从 A 连到 B，可选带条件。这就是「新建规则」的最后一环。
+      // 改一条边的条件：条件是「这条规则凭什么被选中」。
+      if (record['action'] === 'when') {
+        const from = textOf(body, 'from')
+        const index = intOf(body, 'index')
+        if (from === undefined || index === undefined) {
+          return { ok: false, error: 'from and index are required' }
+        }
+        const flowId = textOf(body, 'flowId')
+        const when = Array.isArray(record['when']) ? record['when'] : undefined
+        return {
+          ok: true,
+          command: engine => engine.saveFlowEdge({
+            from,
+            index,
+            ...(flowId === undefined ? {} : { flowId }),
+            ...(when === undefined ? {} : { when: when as never }),
+          }),
+        }
+      }
       // 新增一条出边：从 A 连到 B，可选带条件。这就是「新建规则」的最后一环。
       if (record['action'] === 'connect') {
         const from = textOf(body, 'from')

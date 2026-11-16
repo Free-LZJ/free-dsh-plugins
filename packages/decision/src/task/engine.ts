@@ -1263,6 +1263,68 @@ export class TaskEngine {
     await this.reloadRules()
     return { ok: true }
   }
+  /**
+   * 改一条边的条件。
+   *
+   * 条件是「这条规则凭什么被选中」，`when: []` 表示无条件（兜底，总是成立）。
+   * 只动条件，不动指向——要改指向用 `relinkFlowEdge`。
+   * @param input - 从哪个节点、第几条出边、新的条件。
+   * @returns 成功或为什么没改成。
+   */
+  async saveFlowEdge(input: {
+    readonly from: string
+    readonly index: number
+    readonly flowId?: string
+    readonly when?: readonly Readonly<Record<string, unknown>>[]
+  }): Promise<TaskEdit> {
+    const located = this.locateFlow(input.from, input.flowId)
+    if (located === undefined) return { ok: false, message: `找不到节点「${input.from}」所属的图` }
+    const path = located.path
+
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: '读不到规则文件：' + path }
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: '规则文件读不出来：' + (error instanceof Error ? error.message : String(error)) }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: '规则文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? '') }
+    }
+
+    const found = locateNode(doc, input.from)
+    if (found === undefined) return { ok: false, message: `文件里找不到节点「${input.from}」` }
+    const { flowIndex, nodeIndex } = found
+    const at = (key: string): (string | number)[] =>
+      flowIndex < 0 ? ['nodes', nodeIndex, key] : ['flows', flowIndex, 'nodes', nodeIndex, key]
+
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[]
+    }
+    const allNodes = flowIndex < 0 ? (plain.nodes ?? []) : (plain.flows?.[flowIndex]?.nodes ?? [])
+    const edges = [...(allNodes[nodeIndex]?.out ?? [])]
+    if (input.index < 0 || input.index >= edges.length) {
+      return { ok: false, message: `「${input.from}」没有第 ${String(input.index + 1)} 条出边` }
+    }
+
+    if (input.when === undefined) return { ok: true }
+    const when = input.when
+    /** 条件空着就把 `when` 整个去掉——文件里只该出现「有条件」这个例外。 */
+    edges[input.index] = when.length === 0
+      ? (() => {
+        const { when: _drop, ...rest } = edges[input.index] as Record<string, unknown>
+        return rest
+      })()
+      : { ...edges[input.index], when }
+
+    doc.setIn(at('out'), edges)
+    await writeTextFile(path, doc.toString())
+    await this.reloadRules()
+    return { ok: true }
+  }
 
   /** 找出一个节点属于哪张图、那张图在哪个文件。 */
   /**
