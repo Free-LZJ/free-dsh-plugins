@@ -2,11 +2,16 @@
  * 节点图画布。
  *
  * **自己画，不引图库**：CSS 是通过 `styles.ts` 手工注入的（浏览器半边拿不到打包器
- * 生成的样式表），图库带来的那份样式进不来；而我们的图是规整的分层 DAG，节点不转、
- * 边不交叉，几百行 SVG 就够了。
+ * 生成的样式表），图库带来的那份样式进不来；而我们的图是规整的分层 DAG，几百行
+ * SVG 就够。
  *
- * 分工：**坐标由 Host 算**（`/rules/flow` 已经带回 `pos`），这里只负责画、拖、选。
- * 拖过之后把新坐标交回去，由保存流程决定写不写盘——渲染信息不该悄悄改文件。
+ * 三条硬规则：
+ *
+ * 1. **只用 `--dsw-alias-*` 语义 token**，不写死颜色。深色主题下写死的浅色会变成
+ *    一片白方块。
+ * 2. **形状区分角色**：触发器是胶囊、分支是小圆角、动作是圆角块、有副作用的带一道
+ *    竖条。光靠文字读图太慢。
+ * 3. **坐标由 Host 算**（`/rules/flow` 已经带回 `pos`），这里只负责画、拖、选。
  *
  * @module @free-lzj/dsh-console/client/flow-canvas
  */
@@ -21,12 +26,12 @@ export interface CanvasNode {
   readonly label: string
   /** `trigger` | `control` | `action`。 */
   readonly group: string
-  /** 会不会改外部世界；有副作用的节点带一个记号。 */
+  /** 会不会改外部世界；有副作用的节点带一道竖条。 */
   readonly sideEffect: boolean
   readonly x: number
   readonly y: number
   readonly enabled: boolean
-  /** 这一格最近一次执行的结果；没有就跑过。 */
+  /** 这一格最近一次执行的结果；没跑过就是 undefined。 */
   readonly state?: 'ok' | 'failed' | 'suspended'
 }
 
@@ -40,38 +45,69 @@ export interface CanvasEdge {
   readonly mode?: 'fork'
 }
 
-/** 画布尺寸常量。 */const NODE_WIDTH = 180
-const NODE_HEIGHT = 56
-const MIN_SCALE = 0.4
-const MAX_SCALE = 1.8
+/** 画布尺寸常量。 */
+const NODE_WIDTH = 200
+const NODE_HEIGHT = 64
+const MIN_SCALE = 0.3
+/** 自动 fit 的下限：再小字就读不出来，宁可让人滚动。 */
+const FIT_FLOOR = 0.55
+const MAX_SCALE = 2
 
-/** 一类节点的颜色。 */
-function toneOf(group: string): { bg: string; border: string; fg: string } {
-  switch (group) {
-    case 'trigger':
-      return { bg: 'var(--dsw-alias-fill-tint-brand, #eef4ff)', border: 'var(--dsw-alias-line-brand, #6b8cff)', fg: 'var(--dsw-alias-text-brand, #2a4bd8)' }
-    case 'control':
-      return { bg: 'var(--dsw-alias-fill-tint-neutral, #f4f5f7)', border: 'var(--dsw-alias-line-strong, #b8bcc7)', fg: 'var(--dsw-alias-text-1, #22242a)' }
-    default:
-      return { bg: 'var(--dsw-alias-bg-layer, #fff)', border: 'var(--dsw-alias-line, #dfe1e6)', fg: 'var(--dsw-alias-text-1, #22242a)' }
+/**
+ * 一类节点的外观。
+ *
+ * 颜色全部走语义 token：`settings-card-fill` 是卡片底色，`state-*-primary` 是状态色，
+ * 两者在深色主题下都会自己变。形状按角色分：触发器圆润、分支干脆、动作方中带圆。
+ */
+function lookOf(group: string, sideEffect: boolean): {
+  bg: string
+  border: string
+  fg: string
+  radius: string | number
+  accent?: string
+} {
+  const card = 'var(--dsw-alias-settings-card-fill)'
+  const stroke = 'var(--dsw-alias-settings-card-stroke)'
+  const label = 'var(--dsw-alias-label-primary)'
+  const accent = sideEffect ? 'var(--dsw-alias-state-warn-primary)' : undefined
+
+  // 底色掺入一点语义色：色相区分角色，明度跟着主题走（color-mix 两边都是 token）。
+  if (group === 'trigger') {
+    return {
+      bg: 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 16%, var(--dsw-alias-settings-card-fill))',
+      border: 'var(--dsw-alias-state-business-primary)',
+      fg: label,
+      radius: 999,
+      ...(accent === undefined ? {} : { accent }),
+    }
   }
+  if (group === 'control') {
+    return {
+      bg: 'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, var(--dsw-alias-settings-card-fill))',
+      border: 'var(--dsw-alias-state-warn-primary)',
+      fg: label,
+      radius: 6,
+      ...(accent === undefined ? {} : { accent }),
+    }
+  }
+  return { bg: card, border: stroke, fg: label, radius: 14, ...(accent === undefined ? {} : { accent }) }
 }
 
 /** 执行状态那一点的颜色。 */
 function stateColor(state: CanvasNode['state']): string {
-  if (state === 'ok') return 'var(--dsw-alias-fill-success, #1aa06d)'
-  if (state === 'failed') return 'var(--dsw-alias-fill-danger, #d93f3f)'
-  return 'var(--dsw-alias-fill-warning, #d99a1a)'
+  if (state === 'ok') return 'var(--dsw-alias-state-success-primary)'
+  if (state === 'failed') return 'var(--dsw-alias-state-error-primary)'
+  return 'var(--dsw-alias-state-warn-primary)'
 }
 
-/** 两个节点之间那条曲线。 */
+/** 自上而下：从下边缘中点出发，落到上边缘中点。 */
 function edgePath(from: CanvasNode, to: CanvasNode): string {
-  const x1 = from.x + NODE_WIDTH
-  const y1 = from.y + NODE_HEIGHT / 2
-  const x2 = to.x
-  const y2 = to.y + NODE_HEIGHT / 2
-  const dx = Math.max(40, Math.abs(x2 - x1) / 2)
-  return `M ${String(x1)} ${String(y1)} C ${String(x1 + dx)} ${String(y1)}, ${String(x2 - dx)} ${String(y2)}, ${String(x2)} ${String(y2)}`
+  const x1 = from.x + NODE_WIDTH / 2
+  const y1 = from.y + NODE_HEIGHT
+  const x2 = to.x + NODE_WIDTH / 2
+  const y2 = to.y
+  const dy = Math.max(28, Math.abs(y2 - y1) / 2)
+  return `M ${String(x1)} ${String(y1)} C ${String(x1)} ${String(y1 + dy)}, ${String(x2)} ${String(y2 - dy)}, ${String(x2)} ${String(y2)}`
 }
 
 /** 画布的属性。 */
@@ -84,6 +120,8 @@ export interface FlowCanvasProps {
   readonly onMove?: (id: string, x: number, y: number) => void
   /** 双击节点：通常是「打开属性面板」。 */
   readonly onOpen?: (id: string) => void
+  /** 撑满整个窗口；由外层控制，画布只管铺满自己那块。 */
+  readonly fullscreen?: boolean
 }
 
 /**
@@ -91,10 +129,11 @@ export interface FlowCanvasProps {
  * @param props - 节点、边与回调。
  * @returns 可缩放平移的画布。
  */
-export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }: FlowCanvasProps) {
+export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen, fullscreen = false }: FlowCanvasProps) {
   const [scale, setScale] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [dragging, setDragging] = useState<{ id: string; dx: number; dy: number; x: number; y: number } | undefined>()
+  /** 拖动中的临时坐标；松手才交给 onMove。 */
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number; x: number; y: number } | undefined>()
   const [panning, setPanning] = useState<{ x: number; y: number; panX: number; panY: number } | undefined>()
   const hostRef = useRef<HTMLDivElement | null>(null)
   /** 已经自动对过焦没有。只做一次：之后人怎么缩放平移都算他的。 */
@@ -103,8 +142,8 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
   /**
    * 把所有节点缩放到视野里。
    *
-   * 没有这一步，一张 36 个节点的图打开时只看得见最左边两个——「可视化」就成了摆设。
-   * 只在第一次拿到节点时做，之后人的缩放与平移不再被覆盖。
+   * 没有这一步，一张 36 个节点的图打开时只看得见最上面几个。只在第一次拿到节点时做，
+   * 之后人的缩放与平移不再被覆盖。
    */
   useEffect(() => {
     if (fittedRef.current || nodes.length === 0) return
@@ -113,57 +152,78 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
     const rect = host.getBoundingClientRect()
     if (rect.width < 50 || rect.height < 50) return
 
-    const padding = 32
+    const padding = 28
     const minX = Math.min(...nodes.map(node => node.x))
     const minY = Math.min(...nodes.map(node => node.y))
     const maxX = Math.max(...nodes.map(node => node.x + NODE_WIDTH))
     const maxY = Math.max(...nodes.map(node => node.y + NODE_HEIGHT))
     const spanX = Math.max(1, maxX - minX)
     const spanY = Math.max(1, maxY - minY)
+    // 下限 0.55：缩到 40% 以下字就读不出来了，那种「全览」没有意义——宁可让人滚动。
     const next = Math.min(
       1,
-      Math.max(MIN_SCALE, Math.min((rect.width - padding * 2) / spanX, (rect.height - padding * 2) / spanY)),
+      Math.max(FIT_FLOOR, Math.min((rect.width - padding * 2) / spanX, (rect.height - padding * 2) / spanY)),
     )
     setScale(next)
-    // 居中：内容比视野小时摆中间，比视野大时从左上的留白开始。
-    const offsetX = Math.max(padding, (rect.width - spanX * next) / 2)
-    const offsetY = Math.max(padding, (rect.height - spanY * next) / 2)
+    // 内容比视野大时不居中（会裁掉左上）；从小留白开始，让人滚。
+    const offsetX = spanX * next > rect.width - padding * 2 ? padding : (rect.width - spanX * next) / 2
+    const offsetY = spanY * next > rect.height - padding * 2 ? padding : (rect.height - spanY * next) / 2
     setPan({ x: offsetX - minX * next, y: offsetY - minY * next })
     fittedRef.current = true
-  }, [nodes])
+  }, [nodes, fullscreen])
 
+  /**
+   * 拖动与平移统一在 `window` 上收事件。
+   *
+   * 不用 `setPointerCapture`：那要求被捕获的元素在整个拖动期间都活着，而这个画布每帧
+   * 都在重渲染节点——捕获一丢，`pointermove` 就再没人接，表现出来正是「拖不动」。
+   */
+  useEffect(() => {
+    if (drag === undefined && panning === undefined) return
+    const host = hostRef.current
+    if (host === null) return
+
+    const move = (event: PointerEvent): void => {
+      const rect = host.getBoundingClientRect()
+      if (drag !== undefined) {
+        const x = (event.clientX - rect.left - pan.x) / scale - drag.dx
+        const y = (event.clientY - rect.top - pan.y) / scale - drag.dy
+        setDrag({ ...drag, x, y })
+        return
+      }
+      if (panning !== undefined) {
+        setPan({ x: panning.panX + (event.clientX - panning.x), y: panning.panY + (event.clientY - panning.y) })
+      }
+    }
+    const up = (): void => {
+      if (drag !== undefined) {
+        onMove?.(drag.id, Math.round(drag.x), Math.round(drag.y))
+        setDrag(undefined)
+      }
+      setPanning(undefined)
+    }
+
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [drag, panning, pan, scale, onMove])
+
+  /** 在节点上按下：选中并准备拖。 */
   const onPointerDownNode = useCallback((event: React.PointerEvent, node: CanvasNode) => {
-    if (onMove === undefined) return
     event.stopPropagation()
+    onSelect?.(node.id)
+    if (onMove === undefined) return
     const rect = hostRef.current?.getBoundingClientRect()
     if (rect === undefined) return
     const x = (event.clientX - rect.left - pan.x) / scale
     const y = (event.clientY - rect.top - pan.y) / scale
-    setDragging({ id: node.id, dx: x - node.x, dy: y - node.y, x: node.x, y: node.y })
-    ;(event.target as Element).setPointerCapture?.(event.pointerId)
-  }, [onMove, pan, scale])
-
-  const onPointerMove = useCallback((event: React.PointerEvent) => {
-    const rect = hostRef.current?.getBoundingClientRect()
-    if (rect === undefined) return
-    if (dragging !== undefined) {
-      const x = (event.clientX - rect.left - pan.x) / scale - dragging.dx
-      const y = (event.clientY - rect.top - pan.y) / scale - dragging.dy
-      setDragging({ ...dragging, x, y })
-      return
-    }
-    if (panning !== undefined) {
-      setPan({ x: panning.panX + (event.clientX - panning.x), y: panning.panY + (event.clientY - panning.y) })
-    }
-  }, [dragging, panning, pan, scale])
-
-  const onPointerUp = useCallback(() => {
-    if (dragging !== undefined) {
-      onMove?.(dragging.id, Math.round(dragging.x), Math.round(dragging.y))
-      setDragging(undefined)
-    }
-    setPanning(undefined)
-  }, [dragging, onMove])
+    setDrag({ id: node.id, dx: x - node.x, dy: y - node.y, x: node.x, y: node.y })
+  }, [onMove, onSelect, pan, scale])
 
   /** 空白处按下：平移；同时清掉选中。 */
   const onPointerDownCanvas = useCallback((event: React.PointerEvent) => {
@@ -175,14 +235,13 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
   const onWheel = useCallback((event: React.WheelEvent) => {
     if (!event.ctrlKey && !event.metaKey) return
     event.preventDefault()
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * (event.deltaY > 0 ? 0.92 : 1.08)))
-    setScale(next)
-  }, [scale])
+    setScale(prev => Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev * (event.deltaY > 0 ? 0.92 : 1.08))))
+  }, [])
 
   /** 拖动中的位置优先于存下来的位置。 */
   const placed = useMemo(() => nodes.map(node => (
-    dragging?.id === node.id ? { ...node, x: dragging.x, y: dragging.y } : node
-  )), [nodes, dragging])
+    drag?.id === node.id ? { ...node, x: drag.x, y: drag.y } : node
+  )), [nodes, drag])
 
   const placedById = useMemo(() => {
     const map = new Map<string, CanvasNode>()
@@ -190,29 +249,27 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
     return map
   }, [placed])
 
-  const width = Math.max(1200, ...placed.map(node => node.x + NODE_WIDTH + 200))
-  const height = Math.max(600, ...placed.map(node => node.y + NODE_HEIGHT + 200))
+  const width = Math.max(900, ...placed.map(node => node.x + NODE_WIDTH + 200))
+  const height = Math.max(500, ...placed.map(node => node.y + NODE_HEIGHT + 200))
 
   return (
     <div
       ref={hostRef}
       className="dsh-console-flow-canvas"
       onPointerDown={onPointerDownCanvas}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerLeave={onPointerUp}
       onWheel={onWheel}
       style={{
         position: 'relative',
         overflow: 'hidden',
         width: '100%',
-        height: '100%',
-        minHeight: 420,
-        cursor: panning === undefined ? 'default' : 'grabbing',
-        background: 'var(--dsw-alias-bg-layer-2, #fafbfc)',
-        borderRadius: 'var(--dsw-radius-r16, 16px)',
-        border: '0.5px solid var(--dsw-alias-line, #dfe1e6)',
+        height: fullscreen ? '100%' : '100%',
+        minHeight: fullscreen ? 0 : 380,
+        cursor: drag !== undefined ? 'grabbing' : panning === undefined ? 'default' : 'grabbing',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        borderRadius: fullscreen ? 0 : 'var(--dsw-radius-lg)',
+        border: fullscreen ? 'none' : '0.5px solid var(--dsw-alias-border-l2)',
         userSelect: 'none',
+        touchAction: 'none',
       }}
     >
       <div
@@ -226,32 +283,31 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
       >
         <svg width={width} height={height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <defs>
-            <marker id="dsh-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dsw-alias-line-strong, #b8bcc7)" />
+            <marker id="dsh-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dsw-alias-border-l3)" />
             </marker>
           </defs>
           {edges.map(edge => {
             const from = placedById.get(edge.from)
             const to = placedById.get(edge.to)
             if (from === undefined || to === undefined) return null
-            const path = edgePath(from, to)
             return (
               <g key={edge.id}>
                 <path
-                  d={path}
+                  d={edgePath(from, to)}
                   fill="none"
-                  stroke="var(--dsw-alias-line-strong, #b8bcc7)"
-                  strokeWidth={1.5}
-                  {...(edge.mode === 'fork' ? { strokeDasharray: '6 4' } : {})}
+                  stroke="var(--dsw-alias-border-l3)"
+                  strokeWidth={1.4}
+                  {...(edge.mode === 'fork' ? { strokeDasharray: '5 4' } : {})}
                   markerEnd="url(#dsh-flow-arrow)"
                 />
                 {edge.label === undefined ? null : (
                   <text
-                    x={(from.x + NODE_WIDTH + to.x) / 2}
-                    y={(from.y + to.y) / 2 + NODE_HEIGHT / 2 - 6}
+                    x={(from.x + to.x) / 2 + NODE_WIDTH / 2}
+                    y={(from.y + NODE_HEIGHT + to.y) / 2}
                     textAnchor="middle"
                     fontSize={11}
-                    fill="var(--dsw-alias-text-3, #8b8f99)"
+                    fill="var(--dsw-alias-label-tertiary)"
                   >
                     {edge.label}
                   </text>
@@ -262,7 +318,7 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
         </svg>
 
         {placed.map(node => {
-          const tone = toneOf(node.group)
+          const look = lookOf(node.group, node.sideEffect)
           const isSelected = selected === node.id
           const style: CSSProperties = {
             position: 'absolute',
@@ -271,36 +327,43 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
             width: NODE_WIDTH,
             height: NODE_HEIGHT,
             boxSizing: 'border-box',
-            padding: '8px 10px',
-            borderRadius: 'var(--dsw-radius-r12, 12px)',
-            border: `1px solid ${isSelected ? 'var(--dsw-alias-line-brand, #6b8cff)' : tone.border}`,
-            background: tone.bg,
-            color: tone.fg,
+            padding: '8px 12px',
+            borderRadius: look.radius,
+            border: isSelected
+              ? '1.5px solid var(--dsw-alias-state-business-primary)'
+              : `1px solid ${look.border}`,
+            background: look.bg,
+            color: look.fg,
             opacity: node.enabled ? 1 : 0.45,
             cursor: onMove === undefined ? 'pointer' : 'grab',
-            boxShadow: isSelected ? '0 0 0 2px var(--dsw-alias-line-brand, #6b8cff)' : 'none',
+            boxShadow: isSelected ? '0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary) 22%, transparent)' : 'none',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
             gap: 2,
+            overflow: 'hidden',
           }
           return (
             <div
               key={node.id}
               style={style}
-              onPointerDown={event => { onSelect?.(node.id); onPointerDownNode(event, node) }}
+              onPointerDown={event => { onPointerDownNode(event, node) }}
               onDoubleClick={() => { onOpen?.(node.id) }}
               title={`${node.type}${node.sideEffect ? ' · 有副作用' : ''}`}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {/* 有副作用的节点：左边一道竖条，不看文字也知道它会动外部世界。 */}
+              {look.accent === undefined ? null : (
+                <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: look.accent }} />
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                 {node.state === undefined ? null : (
-                  <span style={{ width: 6, height: 6, borderRadius: 3, background: stateColor(node.state) }} />
+                  <span style={{ width: 6, height: 6, borderRadius: 3, flex: 'none', background: stateColor(node.state) }} />
                 )}
                 <span style={{ fontSize: 13, lineHeight: '18px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {node.label}
                 </span>
               </div>
-              <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-text-3, #8b8f99)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {node.type}
               </span>
             </div>
@@ -308,13 +371,26 @@ export function FlowCanvas({ nodes, edges, selected, onSelect, onMove, onOpen }:
         })}
       </div>
 
-      <div style={{ position: 'absolute', right: 12, bottom: 12, display: 'flex', gap: 6 }}>
-        <button type="button" className="dsh-console-flow-zoom" onClick={() => { setScale(prev => Math.max(MIN_SCALE, prev * 0.9)) }}>−</button>
-        <span style={{ fontSize: 11, lineHeight: '24px', color: 'var(--dsw-alias-text-3, #8b8f99)', minWidth: 36, textAlign: 'center' }}>
+      <div style={{ position: 'absolute', right: 12, bottom: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
+        <button type="button" onClick={() => { setScale(prev => Math.max(MIN_SCALE, prev * 0.9)) }} style={zoomStyle}>−</button>
+        <span style={{ fontSize: 11, lineHeight: '24px', color: 'var(--dsw-alias-label-tertiary)', minWidth: 36, textAlign: 'center' }}>
           {Math.round(scale * 100)}%
         </span>
-        <button type="button" className="dsh-console-flow-zoom" onClick={() => { setScale(prev => Math.min(MAX_SCALE, prev * 1.1)) }}>+</button>
+        <button type="button" onClick={() => { setScale(prev => Math.min(MAX_SCALE, prev * 1.1)) }} style={zoomStyle}>+</button>
       </div>
     </div>
   )
+}
+
+/** 缩放按钮：与画布其它控件同一套 token。 */
+const zoomStyle: CSSProperties = {
+  width: 26,
+  height: 26,
+  borderRadius: 8,
+  border: '0.5px solid var(--dsw-alias-border-l2)',
+  background: 'var(--dsw-alias-settings-card-fill)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 14,
+  lineHeight: '24px',
+  cursor: 'pointer',
 }

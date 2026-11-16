@@ -49,17 +49,21 @@ describe('resolvePositions', () => {
     expect(resolvePositions(after).get('c')).toBeDefined()
   })
 
-  it('同一层的节点不重叠', () => {
+  it('同一层的节点横向排开、不重叠', () => {
     const f = flow({ a: ['b', 'c', 'd'], b: [], c: [], d: [] })
     const positions = resolvePositions(f)
     const b = positions.get('b')!
     const c = positions.get('c')!
     const d = positions.get('d')!
-    expect(new Set([`${String(b.y)}`, `${String(c.y)}`, `${String(d.y)}`]).size).toBe(3)
+    // 同层：纵坐标相同，横坐标互不相同。
+    expect(new Set([b.y, c.y, d.y]).size).toBe(1)
+    expect(new Set([b.x, c.x, d.x]).size).toBe(3)
   })
 
-  it('后一层的 x 比前一层大', () => {
+  it('后一层的 y 比前一层大（自上而下）', () => {
     const positions = resolvePositions(flow({ a: ['b'], b: [] }))
-    expect(positions.get('b')!.x).toBeGreaterThan(positions.get('a')!.x)
+    expect(positions.get('b')!.y).toBeGreaterThan(positions.get('a')!.y)
+    // 单链不左右晃。
+    expect(positions.get('b')!.x).toBe(positions.get('a')!.x)
   })
 })

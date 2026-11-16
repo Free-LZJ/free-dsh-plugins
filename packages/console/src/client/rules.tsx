@@ -215,7 +215,7 @@ export interface TriageSource {
   rules(): Promise<TriageRules>
   runs(): Promise<readonly TriageRun[]>
   /** 当前生效的图，坐标已算好。 */
-  flow(): Promise<{ readonly flows: readonly TriageFlow[]; readonly error?: string }>
+  flow(focus?: string): Promise<{ readonly flows: readonly TriageFlow[]; readonly error?: string }>
   /** 能放什么、每种要填什么。 */
   nodeTypes(): Promise<readonly TriageNodeType[]>
   /** 改一个节点；只写这一处。 */
@@ -301,7 +301,9 @@ export function createTriageSource(): TriageSource {
   return {
     rules: async () => await read<TriageRules>('/state'),
     runs: async () => (await read<{ runs: readonly TriageRun[] }>('/runs')).runs,
-    flow: async () => await read<{ flows: readonly TriageFlow[]; error?: string }>('/flow'),
+    flow: async (focus) => await read<{ flows: readonly TriageFlow[]; error?: string }>(
+      focus === undefined ? '/flow' : '/flow?focus=' + encodeURIComponent(focus),
+    ),
     nodeTypes: async () => (await read<{ types: readonly TriageNodeType[] }>('/node-types')).types,
     saveFlowNode: async (patch) => await write('/flow/save', patch),
     addFlowNode: async (input) => await write('/flow/node', { action: 'add', ...input }),
@@ -499,8 +501,8 @@ export function RulesView({ t, triage }: {
               onClick={() => { setMode(mode) }}
               style={{
                 fontSize: 13, lineHeight: '20px', padding: '2px 0', border: 'none', background: 'transparent', cursor: 'pointer',
-                color: view === mode ? 'var(--dsw-alias-text-brand, #2a4bd8)' : 'var(--dsw-alias-text-3, #8b8f99)',
-                borderBottom: view === mode ? '2px solid var(--dsw-alias-line-brand, #6b8cff)' : '2px solid transparent',
+                color: view === mode ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-label-tertiary)',
+                borderBottom: view === mode ? '2px solid var(--dsw-alias-state-business-primary)' : '2px solid transparent',
               }}
             >
               {mode === 'flow' ? '编排' : '规则列表'}

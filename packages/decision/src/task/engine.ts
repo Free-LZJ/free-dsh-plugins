@@ -83,6 +83,9 @@ export interface TaskRulesView {
   readonly flowMode?: boolean
 }
 
+/** 每张图共有的入口节点；聚焦某条规则时它们一起保留。 */
+const SHARED_FLOW_NODES = new Set(['start', 'classify', 'route', 'rest'])
+
 /** 一次写操作的结果。 */
 export interface TaskEdit {
   readonly ok: boolean
@@ -485,12 +488,18 @@ export class TaskEngine {
    * 所以刷新一次不会把文件写脏。
    * @returns 图列表与错误说明。
    */
-  flowView(): { readonly flows: readonly Flow[]; readonly error?: string } {
+  flowView(focus?: string): { readonly flows: readonly Flow[]; readonly error?: string } {
     const flows = this.currentFlows.map(flow => {
-      const positions = resolvePositions(flow)
+      // 聚焦某条规则时**先筛再算坐标**：否则节点会散落在总览时的旧位置上，
+      // 布局要按真正要画的那些节点重新来。
+      const nodes = focus === undefined || focus === ''
+        ? flow.nodes
+        : flow.nodes.filter(node => SHARED_FLOW_NODES.has(node.id) || node.id.startsWith(focus + '__'))
+      const scoped: Flow = { ...flow, nodes }
+      const positions = resolvePositions(scoped)
       return {
-        ...flow,
-        nodes: flow.nodes.map(node => ({
+        ...scoped,
+        nodes: nodes.map(node => ({
           ...node,
           pos: node.pos ?? positions.get(node.id) ?? { x: 0, y: 0 },
         })),

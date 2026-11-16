@@ -24,9 +24,9 @@ export interface Point {
 
 /** 布局的尺寸参数。 */
 export interface LayoutOptions {
-  /** 相邻层的水平间距。 */
+  /** 相邻层之间的垂直间距（层自上而下排列）。 */
   readonly columnWidth?: number
-  /** 同层相邻节点的垂直间距。 */
+  /** 同层相邻节点的水平间距。 */
   readonly rowHeight?: number
   /** 节点估算宽度，用来判重叠。 */
   readonly nodeWidth?: number
@@ -37,15 +37,20 @@ export interface LayoutOptions {
 }
 
 const DEFAULTS = {
-  columnWidth: 260,
-  rowHeight: 120,
-  nodeWidth: 180,
+  /** 层间距：自上而下，所以这是纵向的。 */
+  columnWidth: 140,
+  /** 同层节点的横向间距（比节点宽度大一点，留出连线与标签的空间）。 */
+  rowHeight: 250,
+  nodeWidth: 200,
   nodeHeight: 64,
-  origin: { x: 40, y: 40 } as Point,
+  origin: { x: 60, y: 40 } as Point,
 }
 
 /**
  * 算出每个节点的位置。
+ *
+ * **自上而下**：层号决定 `y`，层内顺序决定 `x`。流程图读起来是"先发生什么、再发生
+ * 什么"，纵向排列比横向的扫视成本低——这也是几乎所有流程设计器的默认方向。
  * @param flow - 图。
  * @param options - 尺寸参数。
  * @returns 节点 id → 坐标；包含全部节点。
@@ -65,19 +70,39 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
     }
   }
 
-  /** 按层、再按图里的先后顺序分配，保证确定性。 */
+  /** 每个节点的前驱，用来算「重心」。 */
+  const inbound = new Map<string, string[]>()
+  for (const node of flow.nodes) inbound.set(node.id, [])
+  for (const node of flow.nodes) {
+    for (const edge of node.out ?? []) inbound.get(edge.to)?.push(node.id)
+  }
+
+  /**
+   * 重心：前驱 x 的平均值。
+   *
+   * 没有这一步，同层节点只会按文件顺序从左往右排，一条链走下来是**斜的**——看图的人
+   * 得追着线跑。让每个节点尽量落在它前驱的正下方，链就直了。
+   */
+  const barycenter = (id: string): number => {
+    const sources = (inbound.get(id) ?? []).map(source => result.get(source)?.x).filter((x): x is number => x !== undefined)
+    if (sources.length === 0) return sized.origin.x + indexOf(flow, id) * sized.rowHeight
+    return sources.reduce((sum, x) => sum + x, 0) / sources.length
+  }
+
   const pending = flow.nodes.filter(node => node.pos === undefined)
   pending.sort((left, right) => {
     const byLayer = (layers.get(left.id) ?? 0) - (layers.get(right.id) ?? 0)
-    return byLayer !== 0 ? byLayer : indexOf(flow, left.id) - indexOf(flow, right.id)
+    if (byLayer !== 0) return byLayer
+    const byCenter = barycenter(left.id) - barycenter(right.id)
+    return byCenter !== 0 ? byCenter : indexOf(flow, left.id) - indexOf(flow, right.id)
   })
 
   for (const node of pending) {
     const layer = layers.get(node.id) ?? 0
-    const x = sized.origin.x + layer * sized.columnWidth
-    let y = sized.origin.y
-    // 往下找第一个不与已占位置相交的槽位。
-    while (overlaps({ x, y }, taken, sized)) y += sized.rowHeight
+    const y = sized.origin.y + layer * sized.columnWidth
+    // 从"前驱正下方"开始往右找空位，找不到再往左找一格。
+    let x = Math.max(sized.origin.x, barycenter(node.id))
+    while (overlaps({ x, y }, taken, sized)) x += sized.rowHeight
     const point = { x, y }
     result.set(node.id, point)
     taken.push(point)

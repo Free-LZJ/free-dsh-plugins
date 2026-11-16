@@ -150,8 +150,10 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
     }, 'reading rule file'), 'console.rules-state-route')
 
     // 节点图：画布要的那一份。坐标在这里就算好，前端只管画。
-    register(RULES_FLOW_PATH, guard((_req, res) => {
-      respond(res, 200, host.engine.flowView())
+    register(RULES_FLOW_PATH, guard((req, res) => {
+      // ?focus=<规则 id> 只画那一条分支，坐标按筛完的节点重算。
+      const focus = queryOf(req).get('focus') ?? undefined
+      respond(res, 200, host.engine.flowView(focus))
     }, 'reading flow graph'), 'console.rules-flow-route')
 
     // 能放什么。属性面板靠它生成表单，所以字段表也一并给出去。

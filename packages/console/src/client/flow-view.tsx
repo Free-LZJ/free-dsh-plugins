@@ -74,7 +74,7 @@ function Field(props: {
 }): ReactNode {
   const { name, spec, value, onChange } = props
   const label = spec.label ?? name
-  const base = { width: '100%', boxSizing: 'border-box' as const, fontSize: 13, lineHeight: '20px', padding: '6px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'var(--dsw-alias-bg-layer, #fff)', color: 'var(--dsw-alias-text-1, #22242a)' }
+  const base = { width: '100%', boxSizing: 'border-box' as const, fontSize: 13, lineHeight: '20px', padding: '6px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-primary)' }
 
   if (spec.type === 'boolean') {
     return (
@@ -86,7 +86,7 @@ function Field(props: {
   }
   if (spec.type === 'enum' && spec.options !== undefined) {
     return (
-      <label style={{ display: 'block', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+      <label style={{ display: 'block', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>
         {label}
         <select style={base} value={typeof value === 'string' ? value : ''} onChange={event => { onChange(event.target.value) }}>
           <option value="">（未设置）</option>
@@ -98,7 +98,7 @@ function Field(props: {
   if (spec.type === 'text' || spec.type === 'json') {
     const shown = spec.type === 'json' ? JSON.stringify(value ?? spec.default ?? null, null, 2) : String(value ?? '')
     return (
-      <label style={{ display: 'block', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+      <label style={{ display: 'block', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>
         {label}
         <textarea
           style={{ ...base, minHeight: spec.type === 'json' ? 96 : 64, fontFamily: spec.type === 'json' ? 'monospace' : 'inherit', resize: 'vertical' }}
@@ -121,7 +121,7 @@ function Field(props: {
     )
   }
   return (
-    <label style={{ display: 'block', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+    <label style={{ display: 'block', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>
       {label}
       <input
         style={base}
@@ -165,10 +165,21 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [dirty, setDirty] = useState(false)
   /** 最近一次执行在图上留下的状态：节点 id → 成了 / 失败 / 挂起。 */
   const [trail, setTrail] = useState<ReadonlyMap<string, 'ok' | 'failed' | 'suspended'>>(new Map())
+  /** 全屏看板：把规则页其余部分让出来，只留画布与面板。 */
+  const [full, setFull] = useState(false)
+  /**
+   * 只看某一条规则的分支。
+   *
+   * 一张「全部分支并列」的大图必然拥挤：8 条链横着铺开，每条只占几个像素。聚焦之后
+   * 剩下的节点仍留在原位，于是**空间记忆还在**——切回来时不用重新认图。
+   */
+  const [focus, setFocus] = useState<string | undefined>(undefined)
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      const [graph, catalogue, runs] = await Promise.all([triage.flow(), triage.nodeTypes(), triage.runs()])
+      const [graph, catalogue, runs] = await Promise.all([
+        triage.flow(focus), triage.nodeTypes(), triage.runs(),
+      ])
       // 取最新那条有图足迹的记录：画布上标的是「上一次真跑过什么」，不是历史汇总。
       const latest = runs.find(run => (run.nodes ?? []).some(node => node.nodeId !== undefined))
       const nextTrail = new Map<string, 'ok' | 'failed' | 'suspended'>()
@@ -187,7 +198,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       setFailure(thrown instanceof Error ? thrown.message : String(thrown))
       setLoading(false)
     }
-  }, [triage])
+  }, [triage, focus])
 
   useEffect(() => { void load() }, [load])
 
@@ -200,15 +211,30 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const flow = flows[step] ?? flows[0]
   const canvas = useMemo(() => {
     const base = flow === undefined ? { nodes: [], edges: [] } : toCanvas(flow, typeMap)
+    // 聚焦由 Host 做（筛完再算坐标）；这里只拿到已经筛好的图。
+    const scoped = base
     // 把执行足迹贴到方块上；没跑过的保持无状态。
     return {
-      ...base,
-      nodes: base.nodes.map(node => {
+      ...scoped,
+      nodes: scoped.nodes.map(node => {
         const state = trail.get(node.id)
         return state === undefined ? node : { ...node, state }
       }),
     }
   }, [flow, typeMap, trail])
+
+  /** 换聚焦对象时重挂载画布，让它按新坐标重新 fit。 */
+  const canvasKey = (flow?.id ?? 'none') + ':' + (focus ?? 'all')
+
+  /** 图里出现过的规则 id（节点 id 是 <ruleId>__<序号>）。 */
+  const ruleIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const item of flow?.nodes ?? []) {
+      const cut = item.id.indexOf('__')
+      if (cut > 0) ids.add(item.id.slice(0, cut))
+    }
+    return [...ids].sort()
+  }, [flow])
 
   const node: TriageFlowNode | undefined = flow?.nodes.find(item => item.id === selected)
   const nodeType = node === undefined ? undefined : typeMap.get(node.type)
@@ -243,45 +269,69 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     })
   }, [node, draft, triage, load])
 
-  if (loading) return <p style={{ fontSize: 13, color: 'var(--dsw-alias-text-3, #8b8f99)' }}>正在读规则图…</p>
+  if (loading) return <p style={{ fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' }}>正在读规则图…</p>
 
   if (flows.length === 0) {
     return (
-      <div style={{ fontSize: 13, color: 'var(--dsw-alias-text-3, #8b8f99)', lineHeight: '22px' }}>
+      <div style={{ fontSize: 13, color: 'var(--dsw-alias-label-tertiary)', lineHeight: '22px' }}>
         <p>还没有节点图。</p>
         <p style={{ marginTop: 6 }}>
           现在的规则文件是旧格式（规则列表）。把规则一次性转成节点图之后，这里会显示可编排的流程。
         </p>
-        {error === '' ? null : <p style={{ marginTop: 6, color: 'var(--dsw-alias-text-danger, #d93f3f)' }}>{error}</p>}
+        {error === '' ? null : <p style={{ marginTop: 6, color: 'var(--dsw-alias-state-error-primary)' }}>{error}</p>}
       </div>
     )
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, flex: 1 }}>
-      {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-text-danger, #d93f3f)' }}>{failure}</p>}
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, flex: 1,
+      ...(full
+        ? { position: 'fixed' as const, inset: 0, zIndex: 60, background: 'var(--dsw-alias-bg-layer-1)', padding: 16 }
+        : {}),
+    }}>
+      {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {flows.length > 1 ? (
           <select
             value={String(step)}
             onChange={event => { setStep(Number(event.target.value)); setSelected(undefined) }}
-            style={{ fontSize: 13, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)' }}
+            style={{ fontSize: 13, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)' }}
           >
-            {flows.map((item, index) => <option key={item.id} value={String(index)}>{item.name}</option>)}
+            {flows.map((item, index) => (
+              <option key={item.id} value={String(index)}>{item.name}（{item.connector}）</option>
+            ))}
           </select>
         ) : <span style={{ fontSize: 13, fontWeight: 500 }}>{flow?.name}</span>}
-        <span style={{ fontSize: 12, color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+        <span style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>
           {String(flow?.nodes.length ?? 0)} 个节点 · connector {flow?.connector}
           {selected === undefined ? ' · 点一个节点看它的配置，拖动能调位置' : ''}
         </span>
         <button
           type="button"
           onClick={() => { void load() }}
-          style={{ marginLeft: 'auto', fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'transparent', cursor: 'pointer' }}
+          style={{ marginLeft: 'auto', fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer' }}
         >
           重新读取
         </button>
+        <button
+          type="button"
+          onClick={() => { setFull(prev => !prev) }}
+          title={full ? '退出全屏' : '全屏看这张图'}
+          style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer' }}
+        >
+          {full ? '退出全屏' : '全屏'}
+        </button>
+        <select
+          value={focus ?? ''}
+          onChange={event => { setFocus(event.target.value === '' ? undefined : event.target.value) }}
+          title="只看某一条规则的分支"
+          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)', color: 'var(--dsw-alias-label-secondary)' }}
+        >
+          <option value="">全部 {String(ruleIds.length)} 条规则</option>
+          {ruleIds.map(id => <option key={id} value={id}>{id}</option>)}
+        </select>
         <select
           value=""
           onChange={event => {
@@ -295,17 +345,18 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             event.target.value = ''
           }}
           title={selected === undefined ? '加到流程末尾' : '加在选中节点之后'}
-          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'var(--dsw-alias-bg-layer, #fff)' }}
+          style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)' }}
         >
           <option value="">+ 新增节点</option>
           {types.map(type => <option key={type.type} value={type.type}>{type.label}（{type.type}）</option>)}
         </select>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: 460 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', minHeight: full ? 0 : 460, flex: full ? 1 : undefined, minWidth: 0 }}>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
           <FlowCanvas
-            key={flow?.id ?? 'none'}
+            key={canvasKey}
+            fullscreen={full}
             nodes={canvas.nodes}
             edges={canvas.edges}
             selected={selected}
@@ -320,14 +371,14 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             <>
               <div>
                 <div style={{ fontSize: 14, lineHeight: '22px', fontWeight: 600 }}>{node.label ?? nodeType.label}</div>
-                <div style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+                <div style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
                   {node.type} · {nodeType.group}{nodeType.sideEffect ? ' · 有副作用' : ''}
                 </div>
               </div>
 
               {node.out === undefined || node.out.length === 0 ? null : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+                  <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
                     去向（改这里就是连线）
                   </span>
                   {node.out.map((edge, index) => (
@@ -343,7 +394,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                             void load()
                           })
                         }}
-                        style={{ flex: 1, fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'var(--dsw-alias-bg-layer, #fff)' }}
+                        style={{ flex: 1, fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-settings-card-fill)' }}
                       >
                         {flow?.nodes.filter(item => item.id !== node.id).map(item => (
                           <option key={item.id} value={item.id}>{item.label ?? item.type}</option>
@@ -359,7 +410,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                             void load()
                           })
                         }}
-                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'transparent', cursor: 'pointer' }}
+                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', cursor: 'pointer' }}
                       >
                         ×
                       </button>
@@ -387,7 +438,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                   />
                 ))}
                 {Object.keys(nodeType.config ?? {}).length === 0 ? (
-                  <p style={{ fontSize: 12, color: 'var(--dsw-alias-text-3, #8b8f99)' }}>
+                  <p style={{ fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }}>
                     这种节点没有可填的字段。
                   </p>
                 ) : null}
@@ -400,9 +451,9 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                   disabled={!dirty}
                   style={{
                     fontSize: 13, padding: '6px 14px', borderRadius: 8, cursor: dirty ? 'pointer' : 'default',
-                    border: '0.5px solid var(--dsw-alias-line-brand, #6b8cff)',
-                    background: dirty ? 'var(--dsw-alias-fill-tint-brand, #eef4ff)' : 'transparent',
-                    color: 'var(--dsw-alias-text-brand, #2a4bd8)',
+                    border: '0.5px solid var(--dsw-alias-state-business-primary)',
+                    background: dirty ? 'var(--dsw-alias-bg-layer-3)' : 'transparent',
+                    color: 'var(--dsw-alias-state-business-primary)',
                     opacity: dirty ? 1 : 0.5,
                   }}
                 >
@@ -412,7 +463,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                   type="button"
                   onClick={() => { setDraft(node.config === undefined ? {} : { ...node.config }); setDirty(false) }}
                   disabled={!dirty}
-                  style={{ fontSize: 13, padding: '6px 14px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'transparent', cursor: dirty ? 'pointer' : 'default', opacity: dirty ? 1 : 0.5 }}
+                  style={{ fontSize: 13, padding: '6px 14px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', cursor: dirty ? 'pointer' : 'default', opacity: dirty ? 1 : 0.5 }}
                 >
                   撤销改动
                 </button>
@@ -428,7 +479,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                     void load()
                   })
                 }}
-                style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-line, #dfe1e6)', background: 'transparent', color: 'var(--dsw-alias-text-danger, #d93f3f)', cursor: 'pointer' }}
+                style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '0.5px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'var(--dsw-alias-state-error-primary)', cursor: 'pointer' }}
               >
                 删除这个节点
               </button>
