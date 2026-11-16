@@ -578,7 +578,11 @@ export class TaskEngine {
   }
 
   flowView(focus?: string): { readonly flows: readonly Flow[]; readonly error?: string } {
-    const flows = this.currentFlows.map(flow => {
+    // 事件流与子工作流优先；`flows/` 是老结构，迁移完就该空了。
+    const source = this.eventFlows.size + this.workflows.size > 0
+      ? [...this.eventFlows.values(), ...this.workflows.values()]
+      : this.currentFlows
+    const flows = source.map(flow => {
       // 聚焦某条规则时**先筛再算坐标**：否则节点会散落在总览时的旧位置上，
       // 布局要按真正要画的那些节点重新来。
       const nodes = focus === undefined || focus === ''

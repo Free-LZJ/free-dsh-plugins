@@ -177,6 +177,8 @@ export interface TriageFlow {
   readonly id: string
   readonly name: string
   readonly connector: string
+  /** 归属的事件触发器；子工作流没有这个字段。 */
+  readonly trigger?: string
   readonly nodes: readonly TriageFlowNode[]
 }
 

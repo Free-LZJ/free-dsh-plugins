@@ -208,6 +208,10 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       // 专属连接器的图排前面，`*` 的兜底排最后——兜底是「谁都没管时才走」的那条，
       // 默认落在一张兜底图上没有意义。
       setFlows([...graph.flows].sort((left, right) => {
+        // 事件流排最前：它是入口，子工作流是被它调用的。
+        const byKind = (left.trigger === undefined ? 1 : 0) - (right.trigger === undefined ? 1 : 0)
+        if (byKind !== 0) return byKind
+        // 专属连接器在全局兜底前面。
         const byGlobal = (left.connector === '*' ? 1 : 0) - (right.connector === '*' ? 1 : 0)
         return byGlobal !== 0 ? byGlobal : left.name.localeCompare(right.name)
       }))
