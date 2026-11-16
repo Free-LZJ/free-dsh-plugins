@@ -56,7 +56,10 @@ function toCanvas(flow: TriageFlow, types: ReadonlyMap<string, TriageNodeType>):
     return {
       id: node.id,
       type: node.type,
-      label: node.label ?? type?.label ?? node.type,
+      // `workflow` 节点显示它引用的工作流名——否则一排都叫「工作流」，看不出路由到谁。
+      label: node.label ?? (node.type === 'workflow' && typeof node.config?.['workflow'] === 'string'
+        ? '→ ' + node.config['workflow']
+        : (type?.label ?? node.type)),
       group: type?.group ?? 'action',
       sideEffect: type?.sideEffect ?? false,
       x: node.pos?.x ?? 0,
@@ -188,7 +191,8 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    * 剩下的节点仍留在原位，于是**空间记忆还在**——切回来时不用重新认图。
    */
   /** 当前连接器 tab；undefined 表示「全部」。 */
-  const [tab, setTab] = useState<string | undefined>(undefined)
+  /** vents = 看事件流（路由），workflows = 看子工作流。 */
+  const [tab, setTab] = useState<'events' | 'workflows'>('events')
   /** 当前选中的图 id（一规则一文件之后，一张图就是一条规则）。 */
   const [flowId, setFlowId] = useState<string | undefined>(undefined)
 
@@ -234,24 +238,28 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     return map
   }, [types])
 
-  /** 当前 tab 下能选的图。`tab` 为空表示全部。 */
-  const visibleFlows: readonly TriageFlow[] = useMemo(
-    () => (tab === undefined ? flows : flows.filter(item => item.connector === tab)),
-    [flows, tab],
+  /** 事件流：接事件的图（有 `trigger`）。 */
+  const eventFlows: readonly TriageFlow[] = useMemo(
+    () => flows.filter(item => item.trigger !== undefined),
+    [flows],
+  )
+  /** 子工作流：被 workflow 节点调用的执行体。 */
+  const workflows: readonly TriageFlow[] = useMemo(
+    () => flows.filter(item => item.trigger === undefined),
+    [flows],
   )
 
+  /** 当前 tab 下能选的图。 */
+  const visibleFlows: readonly TriageFlow[] = useMemo(
+    () => (tab === 'workflows' ? workflows : eventFlows),
+    [tab, eventFlows, workflows],
+  )
   /** 实际画哪张：优先当前选中的，否则取 tab 下第一张。 */
   const flow: TriageFlow | undefined = useMemo(() => {
     const picked = visibleFlows.find(item => item.id === flowId)
     return picked ?? visibleFlows[0]
   }, [visibleFlows, flowId])
 
-  /** 有哪些连接器（tab 用）。`*` 显示成「全局兜底」。 */
-  const tabs = useMemo(() => {
-    const seen = new Set<string>()
-    for (const item of flows) seen.add(item.connector)
-    return [...seen].sort((left, right) => (left === '*' ? 1 : right === '*' ? -1 : left.localeCompare(right)))
-  }, [flows])
 
   const canvas = useMemo(() => {
     const base = flow === undefined ? { nodes: [], edges: [] } : toCanvas(flow, typeMap)
@@ -294,6 +302,25 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     })
   }, [triage, load, flow])
 
+  /**
+   * 双击节点：`workflow` 节点钻进去看它引用的子工作流，其余节点只是选中。
+   *
+   * 事件流里「路由到谁」和「谁在干什么」是两层，双击是最自然的进入方式。
+   */
+  const onDrill = useCallback((id: string) => {
+    const node = flow?.nodes.find(item => item.id === id)
+    const target = node?.type === 'workflow' && typeof node.config?.['workflow'] === 'string'
+      ? node.config['workflow']
+      : undefined
+    if (target !== undefined && workflows.some(item => item.id === target)) {
+      setTab('workflows')
+      setFlowId(target)
+      setSelected(undefined)
+      return
+    }
+    setSelected(id)
+  }, [flow, workflows])
+
   const onSave = useCallback(() => {
     if (node === undefined) return
     void triage.saveFlowNode({ nodeId: node.id, config: draft }).then(result => {
@@ -330,25 +357,26 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     }}>
       {failure === '' ? null : <p role="status" style={{ fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' }}>{failure}</p>}
 
-      {/* 连接器 tab：一张图就是一条规则，所以先按连接器分，再选具体规则。 */}
+      {/* 两类东西分开看：**事件流**是路由（一个事件一张），**子工作流**是被调用的执行体。 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          onClick={() => { setTab(undefined); setFlowId(undefined); setSelected(undefined) }}
-          style={tabStyle(tab === undefined)}
-        >
-          全部（{String(flows.length)}）
-        </button>
-        {tabs.map(item => (
+        {eventFlows.map(item => (
           <button
-            key={item}
+            key={item.id}
             type="button"
-            onClick={() => { setTab(item); setFlowId(undefined); setSelected(undefined) }}
-            style={tabStyle(tab === item)}
+            onClick={() => { setTab('events'); setFlowId(item.id); setSelected(undefined) }}
+            style={tabStyle(tab === 'events' && flow?.id === item.id)}
+            title={item.trigger === undefined ? '' : '事件 ' + item.trigger}
           >
-            {item === '*' ? '全局兜底' : item}（{String(flows.filter(entry => entry.connector === item).length)}）
+            事件流 · {item.trigger ?? item.name}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => { setTab('workflows'); setFlowId(undefined); setSelected(undefined) }}
+          style={tabStyle(tab === 'workflows')}
+        >
+          子工作流（{String(workflows.length)}）
+        </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -412,6 +440,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             selected={selected}
             onSelect={setSelected}
             onMove={onMove}
+            onOpen={onDrill}
           />
         </div>
 
