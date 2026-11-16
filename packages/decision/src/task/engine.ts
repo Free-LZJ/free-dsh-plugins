@@ -234,6 +234,50 @@ export class TaskEngine {
    * @param vocabulary - 合并后的词表。
    * @returns 图列表与「图 id → 文件路径」的映射。
    */
+  /**
+   * 读事件规则：`events/<事件>/ *.yml`，顶层直接放 `.yml` 也认。
+   *
+   * 每个文件是**一条规则**（`when` + `nodes`），不是一张大图——一条规则一张图，
+   * 图里不会混进别的规则的节点。
+   * @param vocabulary - 合并后的词表。
+   * @returns 全部规则图与「图 id → 文件路径」。
+   */
+  private readEventRules(vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>): {
+    readonly flows: readonly Flow[]
+    readonly files: ReadonlyMap<string, string>
+  } {
+    if (!existsSync(this.eventsDir)) return { flows: [], files: new Map() }
+
+    const flows: Flow[] = []
+    const files = new Map<string, string>()
+
+    /** 先收顶层文件，再按目录名顺序收子目录，保证结果是确定的。 */
+    const targets: string[] = [this.eventsDir]
+    try {
+      for (const entry of readdirSync(this.eventsDir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+        if (entry.isDirectory()) targets.push(join(this.eventsDir, entry.name))
+      }
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error)
+      this.warn('任务引擎: 读不了事件目录 ' + this.eventsDir + '（' + detail + '）')
+      return { flows: [], files: new Map() }
+    }
+
+    for (const dir of targets) {
+      const part = this.readDirFlows(dir, vocabulary)
+      for (const flow of part.flows) {
+        if (files.has(flow.id)) {
+          this.warn('任务引擎: 规则 id「' + flow.id + '」重复，后一个被跳过')
+          continue
+        }
+        flows.push(flow)
+        const path = part.files.get(flow.id)
+        if (path !== undefined) files.set(flow.id, path)
+      }
+    }
+    return { flows, files }
+  }
+
   private readDirFlows(dir: string, vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>): {
     readonly flows: readonly Flow[]
     readonly files: ReadonlyMap<string, string>
@@ -650,7 +694,9 @@ export class TaskEngine {
     const wfDir = this.readDirFlows(this.workflowsDir, vocabulary)
     this.workflows = new Map(wfDir.flows.map(flow => [flow.id, flow]))
 
-    const evDir = this.readDirFlows(this.eventsDir, vocabulary)
+    // `events/` 下每个子目录是一个事件的规则集（`events/mail-new/*.yml`）；
+    // 顶层直接放 `.yml` 也认，方便手写单文件试试。
+    const evDir = this.readEventRules(vocabulary)
     this.eventFlows = new Map()
     for (const flow of evDir.flows) {
       if (flow.trigger === undefined) {
@@ -671,7 +717,8 @@ export class TaskEngine {
     if (this.eventFlows.size > 0 || this.workflows.size > 0) {
       this.currentRules = []
       this.currentFlows = []
-      this.flowFiles = evDir.files
+      // 子工作流的文件也要在里面：否则保存它们的节点时会去 rules.yml 找，报「找不到节点」。
+      this.flowFiles = new Map([...evDir.files, ...wfDir.files])
       this.unassigned = 0
       this.dropped = []
       this.rulesError = undefined

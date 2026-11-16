@@ -80,6 +80,9 @@ export class TaskRunner {
   private readonly running = new Set<Promise<void>>()
 
   /** @param deps - 存储、注册表、规则与配置。 */
+  /** 分类结果按任务缓存：一封邮件只问一次模型。 */
+  private readonly classifications = new Map<string, Promise<{ readonly label: string; readonly confidence: number }>>()
+
   constructor(private readonly deps: RunnerDeps) {}
 
   /**
@@ -266,6 +269,69 @@ export class TaskRunner {
    * @param ports - 连接器端口。
    * @param config - 判定配置。
    */
+  /**
+   * 问一次模型「这属于哪一类」，结果按任务缓存。
+   *
+   * 判定层要的就是「一封邮件只判一次」：`switch` 上可能挂着好几条 `classifier` 出边，
+   * 每条都问一次既慢又可能给出不一致的答案。
+   *
+   * 条件里的 `labels` / `prompt` 直接交给连接器的分类节点——核心不认识标签的含义，
+   * 那是连接器（邮件词表）的事。
+   * @param connector - 连接器。
+   * @param task - 任务。
+   * @param when - 正在求值的那组条件（从里面取 `classifier` 的标签与提示词）。
+   * @param ports - 连接器端口。
+   * @returns 标签与置信度；没有分类能力时返回 `uncertain`。
+   */
+  private async classifyOnce(
+    connector: TaskConnector,
+    task: Task,
+    when: readonly ConditionSpecLike[],
+    ports: Readonly<Record<string, unknown>>,
+  ): Promise<{ readonly label: string; readonly confidence: number }> {
+    const cacheKey = task.id
+    const cached = this.classifications.get(cacheKey)
+    if (cached !== undefined) return await cached
+
+    const pending = (async () => {
+      const classify = connector.classify
+      if (classify === undefined) return { label: 'uncertain', confidence: 0 }
+      /** 从条件里找第一个 `classifier`，它带着标签集与提示词。 */
+      const spec = when.find(condition => condition.kind === 'classifier') as
+        | { readonly labels?: readonly string[]; readonly prompt?: string }
+        | undefined
+      if (spec === undefined) return { label: 'uncertain', confidence: 0 }
+
+      try {
+        const outcome = await classify.node.run(
+          {
+            kind: 'classify',
+            ...(spec.labels === undefined ? {} : { labels: spec.labels }),
+            ...(spec.prompt === undefined ? {} : { prompt: spec.prompt }),
+          } as never,
+          {
+            task,
+            event: task.event,
+            vars: task.vars,
+            node: { id: 'classify', kind: 'classify' },
+            ports,
+            now: this.deps.now(),
+            log: line => this.deps.log(line),
+          },
+        )
+        const label = typeof outcome.label === 'string' ? outcome.label : 'uncertain'
+        const confidence = typeof outcome.confidence === 'number' ? outcome.confidence : 0
+        return { label, confidence }
+      } catch (error: unknown) {
+        this.deps.warn('分类失败：' + (error instanceof Error ? error.message : String(error)))
+        return { label: 'uncertain', confidence: 0 }
+      }
+    })()
+
+    this.classifications.set(cacheKey, pending)
+    return await pending
+  }
+
   private async runFlow(
     task: Task,
     connector: TaskConnector,
@@ -301,10 +367,14 @@ export class TaskRunner {
         task,
         event: task.event,
         ports,
-        classification: async () => ({
-          label: context.facts.label ?? 'uncertain',
-          confidence: context.facts.confidence ?? 0,
-        }),
+        // 分类：图里跑过 classify 节点就用它的结果；没有就**现场问一次模型**并缓存。
+        // 一张 switch 上有多条 classifier 出边时，这里保证只花一次调用。
+        classification: async () => {
+          if (context.facts.label !== undefined && context.facts.label !== '') {
+            return { label: context.facts.label, confidence: context.facts.confidence ?? 0 }
+          }
+          return await this.classifyOnce(connector, task, when, ports)
+        },
         facts: context.facts,
       })
       return await ruleMatches(
@@ -340,6 +410,45 @@ export class TaskRunner {
           return ok
             ? { ok: true, detail: kind }
             : { ok: false, detail: `${kind} 失败`, failure: 'transient' as const }
+        },
+        // 子工作流：从 `workflows/` 找图，用同一个执行器跑，进度独立。
+        runWorkflow: async (workflowId, vars, outer) => {
+          const sub = this.deps.workflowOf?.(workflowId)
+          if (sub === undefined) {
+            return { ok: false, detail: '没有工作流「' + workflowId + '」', failure: 'config' as const }
+          }
+          const nested = await executeFlow(sub, {
+            taskId: outer.taskId,
+            runId: outer.runId,
+            event: outer.event,
+            vars: { ...vars },
+            facts: outer.facts,
+            ...(outer.task === undefined ? {} : { task: outer.task }),
+            ...(outer.ports === undefined ? {} : { ports: outer.ports }),
+            ...(outer.evaluate === undefined ? {} : { evaluate: outer.evaluate }),
+            ...(outer.signal === undefined ? {} : { signal: outer.signal }),
+            ...(outer.runWorkflow === undefined ? {} : { runWorkflow: outer.runWorkflow }),
+          }, {
+            registry: this.deps.nodes,
+            dryRun: config.dryRun,
+            log: line => this.deps.log(line),
+            record: async (entry) => {
+              await this.deps.store.appendNode(task.id, {
+                id: 'node-' + randomUUID(),
+                kind: entry.type,
+                nodeId: entry.nodeId,
+                at: this.deps.now().toISOString(),
+                ok: entry.ok,
+                detail: entry.detail,
+                runId,
+                ...(entry.failure === undefined ? {} : { failure: entry.failure }),
+              } as never)
+              this.deps.changed()
+            },
+          })
+          return nested.status === 'done' || nested.status === 'skipped'
+            ? { ok: true, detail: sub.name }
+            : { ok: false, detail: nested.error ?? nested.matched ?? nested.status, failure: 'transient' as const }
         },
         ...(resuming && task.progress !== undefined ? { progress: task.progress } : {}),
       },
