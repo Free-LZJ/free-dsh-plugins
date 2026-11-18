@@ -21,12 +21,13 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Button, MenuSurface, Tag, useAnchoredPosition, useDismissOnOutsidePointer,
+  Button, MenuSurface, Tag, useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   ConsoleLayout, ConsoleLogEntry, ConsoleNoticeRecord, ConsoleView, RunningSession,
 } from '../protocol.ts'
 import type { PanelRow } from './registry.ts'
+import { useAnchoredMenu } from './anchor.ts'
 import { FocusPage } from './focus.tsx'
 import { ViewNav } from './nav.tsx'
 import { RulesView, type TriageSource } from './rules.tsx'
@@ -327,7 +328,7 @@ function NoticeButton({ t, notices, awaiting, onClear, actOnItem, dismissItem }:
   const [failure, setFailure] = useState('')
   const rootRef = useRef<HTMLSpanElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const position = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, align: 'end', gap: 6, margin: 12 })
+  const position = useAnchoredMenu({ open, anchor: rootRef, panel: panelRef, align: 'end', gap: 6, margin: 12, signal: notices.length })
   useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
   useEffect(() => {
     if (!open) return

@@ -54,7 +54,7 @@ export function rulesHome(dshHome: string): string {
 export type RulesEngine = Pick<
   TaskEngine,
   | 'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
-  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'addRule' | 'autoLayout'
+  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'moveFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'addRule' | 'autoLayout' | 'addFlowScaffold' | 'scaffoldFlows' | 'addWorkflow'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -221,7 +221,35 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
         if (flowId === undefined || from === undefined || name === undefined) {
           return { ok: false, error: 'flowId, from and name are required' }
         }
-        return { ok: true, command: engine => engine.addRule({ flowId, from, name }) }
+        // 条件必须和边一起落盘：分两步做的话，中间那一刻文件里会躺着一条**无条件**的
+        // 出边——它会把后面所有规则都挡掉，等于新建一条规则顺手改了路由。
+        const when = Array.isArray(record['when']) ? record['when'] : undefined
+        return {
+          ok: true,
+          command: engine => engine.addRule({
+            flowId,
+            from,
+            name,
+            ...(when === undefined ? {} : { when: when as never }),
+          }),
+        }
+      }
+      // 新建一张独立的子工作流：不挂事件，先搭好之后再用。
+      if (record['action'] === 'newFlow') {
+        return {
+          ok: true,
+          command: engine => engine.addWorkflow({
+            name: textOf(body, 'name') ?? '',
+            ...(textOf(body, 'connector') === undefined ? {} : { connector: textOf(body, 'connector') ?? '' }),
+          }),
+        }
+      }
+      // 给子工作流补上「开始 / 结束」：入参出参要有地方声明。只在人点按钮时执行，
+      // 不自动改写已有的规则文件。不给 flowId 就是「把所有缺端点的都补齐」，逐张先备份。
+      if (record['action'] === 'scaffold') {
+        const flowId = textOf(body, 'flowId')
+        if (flowId === undefined) return { ok: true, command: engine => engine.scaffoldFlows() }
+        return { ok: true, command: engine => engine.addFlowScaffold(flowId) }
       }
       // 改一条边的条件：条件是「这条规则凭什么被选中」。
       if (record['action'] === 'when') {
@@ -263,6 +291,28 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
           }),
         }
       }
+      // 挪一条边的顺序：分支按顺序判定，顺序就是优先级。
+      if (record['action'] === 'order') {
+        const from = textOf(body, 'from')
+        const index = intOf(body, 'index')
+        const direction = textOf(body, 'direction')
+        if (from === undefined || index === undefined) {
+          return { ok: false, error: 'from and index are required' }
+        }
+        if (direction !== 'up' && direction !== 'down') {
+          return { ok: false, error: 'direction must be up or down' }
+        }
+        const flowId = textOf(body, 'flowId')
+        return {
+          ok: true,
+          command: engine => engine.moveFlowEdge({
+            from,
+            index,
+            direction,
+            ...(flowId === undefined ? {} : { flowId }),
+          }),
+        }
+      }
       if (record['action'] === 'link') {
         const from = textOf(body, 'from')
         const index = intOf(body, 'index')
@@ -288,12 +338,16 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       const type = textOf(body, 'type')
       if (type === undefined) return { ok: false, error: 'type must not be empty' }
       const after = textOf(body, 'after')
+      // `trigger` / `route` 这类 id 每张图里都有：不带上 flowId，新节点会落到另一张图
+      // （甚至另一份文件）里。
+      const flowId = textOf(body, 'flowId')
       const config = record['config']
       return {
         ok: true,
         command: engine => engine.addFlowNode({
           type,
           ...(after === undefined ? {} : { after }),
+          ...(flowId === undefined ? {} : { flowId }),
           ...(isObject(config) ? { config } : {}),
         }),
       }
@@ -431,11 +485,20 @@ function toRunView(task: Task): Record<string, unknown> {
      */
     nodes: task.nodes.map(node => ({
       ...(node.nodeId === undefined ? {} : { nodeId: node.nodeId }),
+      ...(node.flowId === undefined ? {} : { flowId: node.flowId }),
       kind: node.kind,
       ok: node.ok,
       detail: node.detail,
       ...(node.failure === undefined ? {} : { failure: node.failure }),
     })),
+    /**
+     * 这条执行**走过哪几张图**。
+     *
+     * 一次事件会跨图：`mail-new` 判完之后调 `promo`，两边的方块 id 风格不一样，但
+     * `trigger` / `route` / `end` 这类到处都有。页面拿它把「这条记录属于哪张图」说清楚，
+     * 画布也据此只标自己那张图里跑过的方块。
+     */
+    flows: [...new Set(task.nodes.map(node => node.flowId).filter((id): id is string => id !== undefined))],
     status: task.status,
     ...(task.undoableUntil === undefined ? {} : { undoableUntil: task.undoableUntil }),
     ...(task.acknowledged === true ? { acknowledged: true } : {}),
@@ -471,3 +534,4 @@ function queryOf(req: IncomingMessage): URLSearchParams {
     return new URLSearchParams()
   }
 }
+

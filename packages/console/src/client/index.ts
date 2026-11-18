@@ -40,6 +40,7 @@ import type { BoardFace, WorkbenchFace } from './workbench/board.tsx'
 import { PanelRegistry, panelRows, type PanelRow } from './registry.ts'
 import { createTriageSource } from './rules.tsx'
 import { ConsoleIcon, ConsoleShell, FocusShell, type ConsoleShellProps } from './shell.tsx'
+import { withPanelBoundary } from './boundary.tsx'
 import { ConsoleSettingsRow } from './settings-row.tsx'
 import { createPageFace, desktopBlockedReason } from './surfaces.ts'
 import { installConsoleStyles } from './styles.ts'
@@ -353,7 +354,7 @@ export function apply(ctx: ClientContext): void {
     key: CONSOLE_PANEL_ID,
     locale: NS,
     inject: () => seatProps('console'),
-  }, ConsoleShell)), 'console: workbench page')
+  }, withPanelBoundary(ConsoleShell))), 'console: workbench page')
 
   // 聚焦页是**第二个** main panel（决策 Q1）：导航点「聚焦」时是真正的页面切换，
   // 两个页面各自持自己的内容。
@@ -362,7 +363,7 @@ export function apply(ctx: ClientContext): void {
     key: CONSOLE_FOCUS_PANEL_ID,
     locale: NS,
     inject: () => seatProps('console-focus'),
-  }, FocusShell)), 'console: focus page')
+  }, withPanelBoundary(FocusShell))), 'console: focus page')
 
   ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',

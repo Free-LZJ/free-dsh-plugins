@@ -108,8 +108,12 @@ function engine(overrides: Partial<TriageSource> = {}) {
     nodeTypes: overrides.nodeTypes ?? (async () => []),
     saveFlowNode: overrides.saveFlowNode ?? (async () => ({ ok: true })),
     addFlowNode: overrides.addFlowNode ?? (async () => ({ ok: true })),
+    addFlowScaffold: async () => ({ ok: true }),
+    scaffoldFlows: async () => ({ ok: true }),
+    createFlow: async () => ({ ok: true, flowId: 'flow-1' }),
     removeFlowNode: overrides.removeFlowNode ?? (async () => ({ ok: true })),
     relinkFlowEdge: overrides.relinkFlowEdge ?? (async () => ({ ok: true })),
+    moveFlowEdge: async () => ({ ok: true }),
     addFlowEdge: async () => ({ ok: true }),
     saveFlowEdge: async () => ({ ok: true }),
     addRule: async () => ({ ok: true }),
@@ -163,6 +167,27 @@ function ruleOf(name: string): HTMLElement {
 }
 
 describe('the rules view on screen', () => {
+  it('没有邮件位置的命中记录：试跑按钮灰着，并说明原因', async () => {
+    // 试跑要读那封真邮件，记录里没留下邮箱与 uid 就重跑不了。以前按钮直接不渲染，
+    // 人会以为「这条规则不支持试跑」，而不是「这条记录缺东西」。
+    const { source } = engine({
+      runs: async () => [{
+        id: 'run-bare',
+        at: '2026-10-27T09:00:00.000Z',
+        ruleId: 'github',
+        ruleName: 'GitHub 通知',
+        label: 'GitHub 通知',
+        event: { from: 'lzj@example.com', subject: '没有邮件位置', folder: 'INBOX' },
+        actions: [],
+        status: 'done',
+      } as unknown as TriageRun],
+    })
+    await renderList(source)
+    const button = await screen.findByRole('button', { name: '试跑' })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+    expect(button.getAttribute('title')).toBe('这条记录没记下邮件在哪，重跑不了')
+  })
+
   it('draws each rule with its conditions and its actions', async () => {
     const { source } = engine()
     await renderList(source)
@@ -191,6 +216,18 @@ describe('the rules view on screen', () => {
     expect(screen.queryByText(/C:\/dsh\/dsh-console\/rules\/rules\.yml/)).toBeNull()
   })
 
+  it('可以只看没跑完的记录：问题不该被按时间排到下面去', async () => {
+    const { source } = engine()
+    await draw(source)
+    const filter = await screen.findByRole('button', { name: '只看有问题的' })
+    expect(filter.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(filter)
+    await waitFor(() => { expect(screen.getByRole('button', { name: '只看有问题的（已开）' })).toBeTruthy() })
+    // 开之前只说「其中 N 条没跑完」，开之后变成「N 条没跑完，共 M 条」——数字对得上。
+    expect(screen.getByText(/条没跑完，共 2 条/)).toBeTruthy()
+  })
+
   it('flips one rule on and off', async () => {
     const { calls, source } = engine()
     await draw(source)
@@ -210,6 +247,38 @@ describe('the rules view on screen', () => {
     await waitFor(() => { expect(calls.priority).toEqual([{ ruleId: 'promo', direction: 'up' }]) })
   })
 
+  it('点开一条命中记录，能看到它当时走了哪几步', async () => {
+    const failed = {
+      id: 'run-steps',
+      at: '2026-10-27T12:00:00.000Z',
+      ruleId: 'github',
+      ruleName: 'GitHub 通知',
+      label: 'GitHub 通知',
+      event: { from: 'lzj@example.com', subject: '看步骤', folder: 'INBOX' },
+      actions: [],
+      status: 'failed' as const,
+      nodes: [
+        { nodeId: 'trigger', flowId: 'mail-new', kind: 'trigger', ok: true, detail: '事件 mail.received' },
+        { nodeId: 'route', flowId: 'mail-new', kind: 'switch', ok: true, detail: '命中 call-github' },
+        { nodeId: 'call-github', flowId: 'mail-new', kind: 'workflow', ok: false, detail: '第 2 步挂了', failure: 'transient' },
+      ],
+    }
+    const { source } = engine({ runs: async () => [failed] })
+    await draw(source)
+
+    // 折起来时只说有几步：一屏里几十条记录，全铺开会没法看。
+    const summary = await screen.findByText('过程（3 步）')
+    fireEvent.click(summary)
+    await waitFor(() => { expect(screen.getByText(/第 2 步挂了/)).toBeTruthy() })
+    expect(screen.getByText(/transient/)).toBeTruthy()
+  })
+
+  it('没有步骤记录的老记录不摆一个空折叠块', async () => {
+    const { source } = engine()
+    await draw(source)
+    expect(screen.queryByText(/过程（/)).toBeNull()
+  })
+
   it('shows what it did, and offers undo only while the window is open', async () => {
     const { calls, source } = engine()
     await draw(source)
@@ -218,10 +287,20 @@ describe('the rules view on screen', () => {
     expect(screen.getByText('已移动到 归档')).toBeTruthy()
     expect(screen.getByText('标记已读失败：连接中断')).toBeTruthy()
     const undo = screen.getAllByRole('button', { name: t('ruleUndo') })
-    // 只有仍在撤销窗口里的那次给了按钮。
-    expect(undo.length).toBe(1)
+    // 仍在窗口里的那次：可以点。
+    expect((undo[0] as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(undo[0] as HTMLElement)
     await waitFor(() => { expect(calls.undo).toEqual(['run-live']) })
+  })
+
+  it('撤销窗口过了：按钮留着但灰着，鼠标停上去说明为什么不能用', async () => {
+    const { source } = engine()
+    await draw(source)
+    // 第二次命中早已过期：它的按钮不该凭空消失。
+    const expired = screen.getAllByRole('button', { name: t('ruleUndo') })
+      .filter((button) => (button as HTMLButtonElement).disabled)
+    expect(expired.length).toBe(1)
+    expect(expired[0]?.getAttribute('title')).toBe(t('ruleUndoExpired'))
   })
 
   it('says the engine is absent when it does not answer at all', async () => {
@@ -342,12 +421,15 @@ describe('changing a rule', () => {
   })
 
   it('offers no dry run for a record with no mailbox reference', async () => {
-    // 旧记录可能没存 accountId：宁可没有这个按钮，也不发一个必然被拒的请求。
+    // 旧记录可能没存 accountId：不发必然被拒的请求，但**按钮要留着**（灰着）——
+    // 凭空消失会让人以为「这条规则不支持试跑」，而不是「这条记录缺东西」。
     const { source } = engine({
       runs: async () => [{ ...(runs()[0] as TriageRun), event: { from: 'a@b', subject: 'x', folder: 'INBOX' } }],
     })
     await draw(source)
-    expect(screen.queryByRole('button', { name: t('ruleTest') })).toBeNull()
+    const button = screen.getByRole('button', { name: t('ruleTest') }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.getAttribute('title')).toBe(t('ruleTestNoMail'))
   })
 
   it('shows the file itself when the engine hands it over', async () => {
@@ -377,3 +459,4 @@ describe('condition values', () => {
     expect(conditionValue({ kind: 'attachment', has: true })).toBe('')
   })
 })
+

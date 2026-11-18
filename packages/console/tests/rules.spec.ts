@@ -74,6 +74,8 @@ interface Engaged {
   readonly undo: string[]
   readonly acked: { runId: string; acknowledged: boolean }[]
   readonly flowSaves: { nodeId: string }[]
+  readonly addedNodes: { type: string; after?: string; flowId?: string }[]
+  readonly addedRules: { flowId: string; from: string; name: string; when?: readonly Readonly<Record<string, unknown>>[] }[]
   readonly tests: { accountId: string; folder: string; uid: number }[]
   readonly since: (string | undefined)[]
 }
@@ -124,7 +126,7 @@ function taskFixture(): Task {
 function bench(overrides: Partial<RulesEngine> = {}): Bench {
   const routes = new Map<string, Handler>()
   const written: string[] = []
-  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [], flowSaves: [] }
+  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [], flowSaves: [], addedNodes: [], addedRules: [] }
   const engine: RulesEngine = {
     rules: () => VIEW,
     setEnabled: (ruleId, enabled) => {
@@ -160,12 +162,16 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
       engaged.flowSaves.push(input)
       return Promise.resolve({ ok: true })
     },
-    addFlowNode: () => Promise.resolve({ ok: true }),
+    addFlowNode: (input) => { engaged.addedNodes.push(input); return Promise.resolve({ ok: true }) },
     removeFlowNode: () => Promise.resolve({ ok: true }),
     relinkFlowEdge: () => Promise.resolve({ ok: true }),
+    moveFlowEdge: () => Promise.resolve({ ok: true }),
     addFlowEdge: () => Promise.resolve({ ok: true }),
     saveFlowEdge: () => Promise.resolve({ ok: true }),
-    addRule: async () => ({ ok: true }),
+    addRule: async (input) => { engaged.addedRules.push(input); return { ok: true } },
+    addFlowScaffold: async () => ({ ok: true }),
+    scaffoldFlows: async () => ({ ok: true }),
+    addWorkflow: async () => ({ ok: true, flowId: 'flow-1' }),
     autoLayout: () => Promise.resolve({ ok: true }),
     nodeTypes: () => [],
     ...overrides,
@@ -256,6 +262,27 @@ describe('the rule engine’s routes', () => {
     const res = await write(route, RULES_FLOW_SAVE_PATH, { config: {} })
     expect(res.status).toBe(400)
     expect(route.engaged.flowSaves).toEqual([])
+  })
+
+  it('passes the flow id along when adding a node', async () => {
+    // `trigger` / `route` 这类 id 每张图里都有：路由必须把 flowId 转交给引擎，
+    // 否则新节点会落到另一张图（甚至另一份文件）里。
+    const route = bench()
+    const res = await write(route, RULES_FLOW_NODE_PATH, { action: 'add', type: 'llm', flowId: 'mail-new' })
+    expect(res.status).toBe(200)
+    expect(route.engaged.addedNodes).toEqual([{ type: 'llm', flowId: 'mail-new' }])
+  })
+
+  it('carries the conditions when creating a rule', async () => {
+    // 条件必须和那条边一起交给引擎：分两步的话，文件里会先出现一条无条件边，
+    // 它会把后面所有规则都挡掉。
+    const route = bench()
+    const when = [{ kind: 'from', any: ['a@example.com'] }]
+    const res = await write(route, RULES_FLOW_NODE_PATH, { action: 'rule', flowId: 'mail-new', from: 'route', name: 'promo-2', when })
+    expect(res.status).toBe(200)
+    expect(route.engaged.addedRules).toEqual([
+      { flowId: 'mail-new', from: 'route', name: 'promo-2', when },
+    ])
   })
 
   it('answers the rule file to a same-origin read', async () => {
@@ -377,3 +404,4 @@ describe('the rule engine’s routes', () => {
     expect(route.written.some(line => line.includes('disk on fire'))).toBe(true)
   })
 })
+

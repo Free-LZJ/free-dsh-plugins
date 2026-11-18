@@ -21,6 +21,13 @@ export default defineConfig({
     setupFiles: ['packages/agent-import/tests/support/module-loader.ts'],
     // The live-configuration specs drive the real Loader, which mounts and disposes fibers.
     testTimeout: 20_000,
+    /**
+     * 一个文件一个文件地跑。
+     *
+     * 并行时 CPU 会跑满，React Flow 的用例偶发在「节点还没挂上去」的那一帧里查询：
+     * 单文件跑必过、全量跑偶发红。慢一点没关系，红得可信更重要。
+     */
+    fileParallelism: false,
     server: {
       deps: {
         // The harness publishes its browser-facing UI packages as Node halves whose

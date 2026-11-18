@@ -105,11 +105,15 @@ export interface TriageRun {
   /** 图上的足迹：带节点 id，画布用它标出哪些方块跑过。 */
   readonly nodes?: readonly {
     readonly nodeId?: string
+    /** 这一格在哪张图里跑的。 */
+    readonly flowId?: string
     readonly kind: string
     readonly ok: boolean
     readonly detail: string
     readonly failure?: string
   }[]
+  /** 这条执行走过哪几张图（事件流 + 被它调用的子工作流）。 */
+  readonly flows?: readonly string[]
   readonly status: string
   readonly undoableUntil?: string
   /** 人已经说过「这条我看到了」：它不再占待办。 */
@@ -163,6 +167,8 @@ export interface TriageFlowNode {
   readonly id: string
   readonly type: string
   readonly label?: string
+  /** 第二行说明；缺省用被调用工作流的 `description`。 */
+  readonly desc?: string
   readonly config?: Readonly<Record<string, unknown>>
   readonly out?: readonly {
     readonly to: string
@@ -177,6 +183,8 @@ export interface TriageFlowNode {
 export interface TriageFlow {
   readonly id: string
   readonly name: string
+  /** 一句话简介：这张图干什么用；`workflow` 节点拿它当第二行说明。 */
+  readonly description?: string
   readonly connector: string
   /** 归属的事件触发器；子工作流没有这个字段。 */
   readonly trigger?: string
@@ -226,19 +234,36 @@ export interface TriageSource {
   /** 改一个节点；只写这一处。 */
   saveFlowNode(patch: TriageFlowPatch): Promise<TriageResult>
   /** 重新自动布局：换方向、换策略，位置写回文件。 */
-  autoLayout(input: { flowId: string; direction?: string; strategy?: string; align?: string }): Promise<TriageResult>
+  /** 自动布局：顺手把新坐标带回来，画布不必等下一次整图重读。 */
+  autoLayout(input: { flowId: string; direction?: string; strategy?: string; align?: string }): Promise<
+    TriageResult & { readonly positions?: readonly { readonly id: string; readonly x: number; readonly y: number }[] }
+  >
   /** 在 after 之后插一个节点；不传 after 表示接到末尾。 */
-  addFlowNode(input: { after?: string; type: string }): Promise<TriageResult & { nodeId?: string }>
+  addFlowNode(input: { after?: string; type: string; flowId?: string }): Promise<TriageResult & { nodeId?: string }>
+  /** 新建一张独立的子工作流（不挂事件流）。 */
+  createFlow(name: string, connector?: string): Promise<TriageResult & { flowId?: string }>
+  /** 给子工作流补上「开始 / 结束」，好声明入参出参。 */
+  addFlowScaffold(flowId: string): Promise<TriageResult>
+  /** 把所有缺端点的子工作流一次补齐（逐张先备份）。 */
+  scaffoldFlows(): Promise<TriageResult>
   /** 删一个节点，入边接到它的出边。 */
   removeFlowNode(nodeId: string): Promise<TriageResult>
-  /** 改一条出边指向谁；	o 省略就是删掉这条边。 */
+  /** 改一条出边指向谁；to 省略就是删掉这条边。 */
   relinkFlowEdge(input: { from: string; index: number; to?: string }): Promise<TriageResult>
+  /** 挪一条出边：分支按顺序判定，顺序即优先级。 */
+  moveFlowEdge(input: { from: string; index: number; direction: 'up' | 'down'; flowId?: string }): Promise<TriageResult>
   /** 新增一条出边：从 A 连到 B，可选带条件。 */
   addFlowEdge(input: { from: string; to: string; flowId?: string; when?: readonly Readonly<Record<string, unknown>>[] }): Promise<TriageResult>
   /** 改一条边的条件。 */
   saveFlowEdge(input: { from: string; index: number; flowId?: string; when?: readonly Readonly<Record<string, unknown>>[] }): Promise<TriageResult>
   /** 新建一条规则：建子工作流 + 加节点 + 连线。 */
-  addRule(input: { flowId: string; from: string; name: string }): Promise<TriageResult & { nodeId?: string; edgeIndex?: number }>
+  addRule(input: {
+    flowId: string
+    from: string
+    name: string
+    /** 条件与边一次落盘：否则中间那一刻文件里会有一条无条件的边，把后面的规则全挡掉。 */
+    when?: readonly Readonly<Record<string, unknown>>[]
+  }): Promise<TriageResult & { nodeId?: string; edgeIndex?: number }>
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
   movePriority(ruleId: string, direction: 'up' | 'down'): Promise<TriageResult>
   /**
@@ -299,15 +324,22 @@ export function createTriageSource(): TriageSource {
     return await response.json() as T
   }
 
-  /** One guarded POST against the engine. */
+  /**
+   * One guarded POST against the engine.
+   *
+   * 回包要**整份交回去**：Host 除了 `ok` 还会说「刚建的是哪个节点 / 第几条出边」，
+   * 页面靠这两个 id 把新东西选中。以前这里只 `return { ok: true }`，把 `nodeId` /
+   * `edgeIndex` 一起丢了——于是「加完节点自动选中它」「建完规则自动打开它的条件」两件事
+   * 静悄悄地从来没生效过。
+   */
   const write = async (path: string, body: unknown): Promise<TriageResult> => {
     const response = await fetch(`${RULES_PREFIX}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', [RULES_MUTATION_HEADER]: '1' },
       body: JSON.stringify(body),
     })
-    const payload = await response.json().catch(() => ({})) as { error?: unknown }
-    if (response.ok) return { ok: true }
+    const payload = await response.json().catch(() => ({})) as Omit<TriageResult, 'ok'> & { error?: unknown }
+    if (response.ok) return { ...payload, ok: true }
     return { ok: false, message: typeof payload.error === 'string' ? payload.error : `HTTP ${String(response.status)}` }
   }
 
@@ -321,8 +353,13 @@ export function createTriageSource(): TriageSource {
     saveFlowNode: async (patch) => await write('/flow/save', patch),
     autoLayout: async (input) => await write('/flow/layout', input),
     addFlowNode: async (input) => await write('/flow/node', { action: 'add', ...input }),
+    createFlow: async (name, connector) =>
+      await write('/flow/node', { action: 'newFlow', name, ...(connector === undefined ? {} : { connector }) }),
+    addFlowScaffold: async (flowId) => await write('/flow/node', { action: 'scaffold', flowId }),
+    scaffoldFlows: async () => await write('/flow/node', { action: 'scaffold' }),
     removeFlowNode: async (nodeId) => await write('/flow/node', { action: 'remove', nodeId }),
     relinkFlowEdge: async (input) => await write('/flow/node', { action: 'link', ...input }),
+    moveFlowEdge: async (input) => await write('/flow/node', { action: 'order', ...input }),
     addFlowEdge: async (input) => await write('/flow/node', { action: 'connect', ...input }),
     saveFlowEdge: async (input) => await write('/flow/node', { action: 'when', ...input }),
     addRule: async (input) => await write('/flow/node', { action: 'rule', ...input }),
@@ -358,23 +395,51 @@ interface TriageSnapshot {
 /** How many hit records the page draws before it stops and says how many are left. */
 export const RUNS_SHOWN = 20
 
-/** Locale key naming one run status. */
-function runStatusKey(status: string): Parameters<Translate>[0] {
+/**
+ * Locale key naming one run status.
+ *
+ * **不能只有几条 case**：以前 `failed` 落到 default，于是一次「执行器没有提供工作流能力」
+ * 的失败在执行记录里被写成「已跳过」——灰色标签、看起来像没轮到它，跟真的跳过一模一样。
+ * 状态词是这一列的**全部信息**，写错比不写更糟。
+ */
+export function runStatusKey(status: string): Parameters<Translate>[0] {
   switch (status) {
     case 'done': return 'ruleRunDone'
     case 'partial': return 'ruleRunPartial'
     case 'suggested': return 'ruleRunSuggested'
     case 'undone': return 'ruleRunUndone'
-    default: return 'ruleRunSkipped'
+    case 'skipped': return 'ruleRunSkipped'
+    case 'failed': return 'ruleRunFailed'
+    case 'running': return 'ruleRunRunning'
+    case 'suspended': return 'ruleRunSuspended'
+    default: return 'ruleRunUnknown'
   }
 }
 
 /** The tone one run status wears. */
-function runTone(status: string): TagTone {
+export function runTone(status: string): TagTone {
   if (status === 'done') return 'success'
+  if (status === 'failed') return 'warning'
   if (status === 'partial') return 'warning'
   if (status === 'suggested') return 'info'
+  if (status === 'running' || status === 'suspended') return 'info'
   return 'outline'
+}
+
+/**
+ * 「哪条规则命中了」这一列显示什么。
+ *
+ * 图模式下的执行**没有** `rule` 那一格（规则就是图里选中的那条分支），所以 `ruleName`
+ * 是空的——于是整列空白，而这一列正是这张表的意义所在。没有名字就退回被调用的那条
+ * 分支（`workflow` 那一格的描述），再退到分支节点 id，实在没有才留空。
+ * @param run - 一条执行记录。
+ * @returns 该显示在这一列的文本。
+ */
+export function ruleLabelOf(run: TriageRun): string {
+  if (run.ruleName !== '') return run.ruleName
+  const branch = (run.nodes ?? []).find(node => node.kind === 'workflow')
+  if (branch?.detail !== undefined && branch.detail !== '') return branch.detail
+  return branch?.nodeId ?? ''
 }
 
 /**
@@ -570,6 +635,9 @@ function TriageBody({ t, data, triage, act }: {
   const [notice, setNotice] = useState('')
   /** Dry-run answers, keyed by the run they were asked from. */
   const [tests, setTests] = useState<Readonly<Record<string, TriageTestAnswer | 'pending'>>>({})
+  /** 只看跑挂的命中记录：失败最该被看见，但列表是按时间排的。 */
+  const [onlyFailed, setOnlyFailed] = useState(false)
+  const shownRuns = onlyFailed ? runs.filter((run) => run.status !== 'done') : runs
 
   /**
    * Run the current rules against the mail one hit record is about.
@@ -749,33 +817,70 @@ function TriageBody({ t, data, triage, act }: {
         )}
 
       <h3 className={CLS.viewSubheading}>{t('rulesRuns', { count: runs.length })}</h3>
+      {/* 69 条记录里真正要看的是跑挂了的那几条，但列表只按时间排。
+          「只看失败的」不是为了少看几行，是为了让失败不被淹没。 */}
+      {runs.some((run) => run.status !== 'done') ? (
+        <p className={CLS.viewMeta}>
+          <button
+            type='button'
+            aria-pressed={onlyFailed}
+            onClick={() => { setOnlyFailed((current) => !current) }}
+            style={{
+              fontSize: 11,
+              lineHeight: '16px',
+              padding: '2px 8px',
+              borderRadius: 'var(--dsw-radius-sm)',
+              border: `0.5px solid ${onlyFailed ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-border-l2)'}`,
+              background: 'transparent',
+              color: onlyFailed ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            {onlyFailed ? '只看有问题的（已开）' : '只看有问题的'}
+          </button>
+          {onlyFailed
+            ? ` · ${String(shownRuns.length)} 条没跑完，共 ${String(runs.length)} 条`
+            : ` · 其中 ${String(runs.filter((run) => run.status !== 'done').length)} 条没跑完`}
+        </p>
+      ) : null}
       {runs.length === 0
         ? <p className={CLS.empty}>{t('rulesRunsNone')}</p>
         : (
           <>
           <ul className={CLS.runList}>
-            {runs.slice(0, RUNS_SHOWN).map((run) => {
+            {shownRuns.slice(0, RUNS_SHOWN).map((run) => {
               /** This record's dry-run answer, if it has been asked for. */
               const test = tests[run.id]
               return (
               <li key={run.id} className={CLS.runItem}>
                 <div className={CLS.runHead}>
                   <span className={CLS.runWhen}>{new Date(run.at).toLocaleString()}</span>
-                  <span className={CLS.runRule}>{run.ruleName}</span>
+                  <span className={CLS.runRule}>{ruleLabelOf(run)}</span>
                   <span className={CLS.runSubject}>{run.event.subject === '' ? run.event.from : run.event.subject}</span>
                   <span className={CLS.runTail}>
                     <Tag tone={runTone(run.status)}>{t(runStatusKey(run.status))}</Tag>
-                    {run.event.accountId !== undefined && run.event.uid !== undefined && (
+                    {/* 试跑要读那封真邮件，所以需要记录里留下邮箱与 uid。以前这种情况
+                        按钮直接不渲染：人会以为「这条规则不支持试跑」，而不是「这条记录
+                        没留下邮件位置」。现在按钮在、灰着，鼠标停上去说明原因。 */}
+                    <Button
+                      size="sm"
+                      disabled={run.event.accountId === undefined || run.event.uid === undefined || tests[run.id] === 'pending'}
+                      title={run.event.accountId === undefined || run.event.uid === undefined ? t('ruleTestNoMail') : undefined}
+                      onClick={() => { tryRun(run) }}
+                    >
+                      {t('ruleTest')}
+                    </Button>
+                    {/* 撤销窗口过了按钮就消失，人只会觉得「刚才那个按钮呢」。留位置、灰掉、
+                        说明原因；从没可撤销的记录（`undoableUntil` 没有值）本来就不该有按钮。 */}
+                    {run.undoableUntil === undefined ? null : (
                       <Button
                         size="sm"
-                        disabled={tests[run.id] === 'pending'}
-                        onClick={() => { tryRun(run) }}
+                        disabled={!(Date.parse(run.undoableUntil) > now)}
+                        title={Date.parse(run.undoableUntil) > now ? undefined : t('ruleUndoExpired')}
+                        onClick={() => { act(triage.undo(run.id)) }}
                       >
-                        {t('ruleTest')}
+                        {t('ruleUndo')}
                       </Button>
-                    )}
-                    {run.undoableUntil !== undefined && Date.parse(run.undoableUntil) > now && (
-                      <Button size="sm" onClick={() => { act(triage.undo(run.id)) }}>{t('ruleUndo')}</Button>
                     )}
                   </span>
                 </div>
@@ -787,6 +892,27 @@ function TriageBody({ t, data, triage, act }: {
                     </li>
                   ))}
                 </ul>
+                {/* 这条记录当时是怎么走的：引擎把每一步都记下来了（`nodes`），但页面上
+                    一直只有结果那一行。出了问题时，缺的正是「哪一步、为什么」。 */}
+                {(run.nodes ?? []).length === 0 ? null : (
+                  <details className={CLS.ruleRawBlock}>
+                    <summary className={CLS.ruleRawTitle}>
+                      过程（{String((run.nodes ?? []).length)} 步）
+                    </summary>
+                    <ul className={CLS.runActions}>
+                      {(run.nodes ?? []).map((step, index) => (
+                        <li key={`${step.nodeId}-${String(index)}`} className={CLS.runAction}>
+                          <StateDot state={step.ok ? 'done' : 'error'} />
+                          <span>
+                            {step.nodeId}
+                            {step.detail === undefined || step.detail === '' ? '' : ` · ${step.detail}`}
+                            {step.failure === undefined ? '' : `（${step.failure}）`}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 {test === undefined ? null : test === 'pending'
                   ? <p className={CLS.viewMeta}>{t('ruleTestRunning')}</p>
                   : (
@@ -813,8 +939,8 @@ function TriageBody({ t, data, triage, act }: {
               )
             })}
           </ul>
-          {runs.length > RUNS_SHOWN && (
-            <p className={CLS.viewMeta}>{t('rulesRunsMore', { shown: RUNS_SHOWN, total: runs.length })}</p>
+          {shownRuns.length > RUNS_SHOWN && (
+            <p className={CLS.viewMeta}>{t('rulesRunsMore', { shown: RUNS_SHOWN, total: shownRuns.length })}</p>
           )}
           </>
         )}
@@ -823,3 +949,4 @@ function TriageBody({ t, data, triage, act }: {
 }
 
 /* 动作行现在是纯展示：没有三态、没有菜单。要它不跑，就把动作从 `then` 里删掉。 */
+

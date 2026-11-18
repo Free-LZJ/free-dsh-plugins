@@ -208,8 +208,12 @@ function shellFace(
     nodeTypes: async () => [],
     saveFlowNode: async () => ({ ok: true }),
     addFlowNode: async () => ({ ok: true }),
+    addFlowScaffold: async () => ({ ok: true }),
+    scaffoldFlows: async () => ({ ok: true }),
+    createFlow: async () => ({ ok: true, flowId: 'flow-1' }),
     removeFlowNode: async () => ({ ok: true }),
     relinkFlowEdge: async () => ({ ok: true }),
+    moveFlowEdge: async () => ({ ok: true }),
     addFlowEdge: async () => ({ ok: true }),
     saveFlowEdge: async () => ({ ok: true }),
     addRule: async () => ({ ok: true }),
@@ -723,3 +727,4 @@ describe('the notification row', () => {
     expect(screen.getByText(new RegExp(t('noticePermissionDenied')))).toBeTruthy()
   })
 })
+
