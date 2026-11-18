@@ -23,6 +23,13 @@ import type { BrowserTab } from './protocol.ts'
 /** How long one JSON-RPC round trip may take. */
 const CALL_TIMEOUT_MS = 30_000
 
+/**
+ * Listing the menu cannot afford the full call budget: the person is typing,
+ * and a dead daemon has to show as "this menu section is unavailable" quickly
+ * instead of freezing the menu for half a minute.
+ */
+const LIST_TIMEOUT_MS = 8_000
+
 /** How long the server may take to answer `initialize`. */
 const START_TIMEOUT_MS = 15_000
 
@@ -82,9 +89,19 @@ export class BskMcpChannel {
    * @param signal - caller cancellation; a cancelled call stops waiting, not the server.
    * @returns the tabs, or none when the browser is unreachable.
    */
+  /** The session this channel drives, when one was started already. */
+  currentSession(): string | undefined {
+    return this.#session
+  }
+
+  /** @returns the session this channel drives, starting it if needed. */
+  async ensureSession(signal: AbortSignal): Promise<string> {
+    return this.#ensureSession(signal)
+  }
+
   async listUserTabs(signal: AbortSignal): Promise<readonly BrowserTab[]> {
     const session = await this.#ensureSession(signal)
-    const answer = await this.#tool('bsk_tabs', { action: 'list', scope: 'user', session }, signal)
+    const answer = await this.#tool('bsk_tabs', { action: 'list', scope: 'user', session }, signal, LIST_TIMEOUT_MS)
     const tabs = Array.isArray(answer.tabs) ? answer.tabs : []
     const parsed: BrowserTab[] = []
     for (const row of tabs) {
@@ -139,8 +156,13 @@ export class BskMcpChannel {
    * @param signal - caller cancellation.
    * @returns the parsed answer body.
    */
-  async #tool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
-    const message = await this.#request('tools/call', { name, arguments: args }, signal) as {
+  async #tool(
+    name: string,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+    timeoutMs: number = CALL_TIMEOUT_MS,
+  ): Promise<Record<string, unknown>> {
+    const message = await this.#request('tools/call', { name, arguments: args }, signal, timeoutMs) as {
       result?: { content?: readonly { text?: unknown }[]; isError?: unknown }
       error?: unknown
     }
@@ -170,7 +192,12 @@ export class BskMcpChannel {
    * @param signal - caller cancellation.
    * @returns the whole response message.
    */
-  async #request(method: string, params: unknown, signal: AbortSignal): Promise<unknown> {
+  async #request(
+    method: string,
+    params: unknown,
+    signal: AbortSignal,
+    timeoutMs: number = CALL_TIMEOUT_MS,
+  ): Promise<unknown> {
     if (this.#disposed) throw new Error('browser-use: channel disposed')
     await this.#ensureChild(signal)
     const child = this.#child
@@ -180,8 +207,8 @@ export class BskMcpChannel {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id)
-        reject(new Error(`browser-use: ${method} timed out after ${CALL_TIMEOUT_MS}ms`))
-      }, CALL_TIMEOUT_MS)
+        reject(new Error(`browser-use: ${method} timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
       const onAbort = (): void => {
         clearTimeout(timer)
         this.#pending.delete(id)
@@ -216,6 +243,10 @@ export class BskMcpChannel {
     // starts a fresh one rather than waiting on a dead pipe.
     child.on('exit', () => {
       if (this.#child === child) this.#child = undefined
+      // The session lived in that process. Keeping the id would make every
+      // later call fail with "session unknown" instead of starting a new one.
+      this.#session = undefined
+      this.#starting = undefined
       this.#rejectAll('browser-use: bsk mcp exited')
     })
     await this.#request('initialize', {

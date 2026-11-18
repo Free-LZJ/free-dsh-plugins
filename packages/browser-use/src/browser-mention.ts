@@ -80,11 +80,22 @@ export function browserMentionProvider(cli: BskMcpChannel): MentionProvider {
         throw new Error(`${diagnosis.reason}。${diagnosis.action}`)
       }
       if (signal.aborted) return []
-      return tabs.filter(tab => matches(tab, needle)).map(tab => ({
-        ref: `${PROVIDER_ID}:${tab.tabId}`,
-        label: tab.title,
-        description: describe(tab),
-      }))
+      // The session id travels with the tab id: the agent must borrow into the
+      // session this menu already started instead of opening another one. A
+      // stale id costs one failed call, never a new window.
+      const session = cli.currentSession()
+      return tabs
+        .filter(tab => matches(tab, needle))
+        // An empty page is the session's own scratch tab, never something the
+        // person meant to hand over.
+        .filter(tab => tab.url !== 'about:blank' && tab.url !== '')
+        .map(tab => ({
+          ref: session === undefined
+            ? `${PROVIDER_ID}:${tab.tabId}`
+            : `${PROVIDER_ID}:${tab.tabId}#${session}`,
+          label: tab.title,
+          description: describe(tab),
+        }))
     },
   }
 }

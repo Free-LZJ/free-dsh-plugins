@@ -2,6 +2,8 @@ node_modules/
 lib/
 .tarballs/
 *.tsbuildinfo
+# 本地插件打包产物（dsh plugin add 指向的就是它，不进仓库）
+packages/*/*.tgz
 *.log
 .DS_Store
 /.idea/

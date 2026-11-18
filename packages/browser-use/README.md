@@ -13,8 +13,11 @@
 列出你窗口里的所有标签页（当前激活的排前面，每行带站点与路径），选中插入原子提及：
 
 ```text
-@[AI场景设置](dsh-browser:299872373)
+@[AI场景设置](dsh-browser:299872373#owfy)
 ```
+
+`#` 前面是标签页 id，`#` 后面是插件已经起好的 BrowserSkill 会话。agent 拿到它就
+`borrow` 这一页，**不会再起一个会话、开一个新窗口**。
 
 **二、BrowserSkill 的全部工具**
 
@@ -68,7 +71,11 @@ dsh --profile web --patch examples/browser-use.cordis.yml --port 0 --no-open
 
 1. 输入框打 `@`，在「浏览器」里挑一行（打字同时过滤标题和 URL）。
 2. 回车插入提及，然后说要干什么。
-3. agent 自己 `bsk_session` 起会话、`bsk_inspect` 观察、`bsk_interact` 操作。
+3. agent 直接 `bsk_tabs` 用 `borrow` 接管这一页，然后 `bsk_session` 的 `sync` 观察、
+   `bsk_interact` 操作。
+
+**borrow 是就地接管，不是搬运。** 页面留在你原来的窗口和标签位置，不复制、不换页；
+agent 和自己的会话共享这个标签页，你能同时看见和操作。会话结束只放开控制，页面留在原处。
 
 没 `@` 也能用：直接说"看看我浏览器里那个 Jira 页面"，它会 `bsk_tabs` 列出来再挑。
 
@@ -101,6 +108,7 @@ export interface MentionProvider {
 - **图标借用 `session` 字形**：`ui-primitives` 里还没有专门的窗口图标。
 - **不做上下文注入**：选中的标签页不会自动把内容塞进上下文，agent 得自己 `observe` 一次。
 - **`bsk` 会话归 BrowserSkill 管**：插件的 `@` 侧自己维持一个常驻 bsk 会话用来列标签页，dsh 正常退出会停掉；进程被强杀时会留在 `bsk session list` 里，需要手动 `bsk session stop <id>`。
+- **要装本仓库 fork 过的扩展**：就地接管与窗口最小化在 `vendor/browser-skill` 里，商店版装上仍是老行为。构建与加载步骤见 [docs/browser-skill-fork.md](../../docs/browser-skill-fork.md)。
 - **只列用户窗口**：agent 自己那个 Agent Window（`scope: agent`）不会出现在 `@` 里——它是工具，不是你想提的东西。
 
 ## 第三方声明
