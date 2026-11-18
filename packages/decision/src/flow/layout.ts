@@ -4,6 +4,11 @@
  * 分两步：先定**层**（谁在谁后面），再定**层内顺序**，最后按方向映射成坐标。
  * 这样做的好处是加一个方向只是换映射公式，加一种策略只影响层内顺序。
  *
+ * **间距是「卡片尺寸 + 空隙」，不是固定像素。** 早先这里直接写 140 / 250 两档步长，
+ * 而画布上的卡片是 280×104——于是同层相邻的两张卡必定叠 30px，左右走向时相邻两层
+ * 更是叠掉 140px。布局算得对不对不取决于这里的数字好不好看，而取决于它和画布画的
+ * 那张卡是不是同一个尺寸，所以尺寸只有 {@link NODE_SIZE} 一处，画布也从这里取。
+ *
  * @module @free-dsh-plugins/dsh-decision/flow/layout
  */
 
@@ -14,6 +19,14 @@ export interface Point {
   readonly x: number
   readonly y: number
 }
+
+/**
+ * 画布上一张卡片的估算尺寸。
+ *
+ * 布局按它算间距，画布按它决定自己的宽高——**两处必须是同一个数**，否则排得再整齐
+ * 卡片也会叠在一起。改这里等于同时改布局与界面。
+ */
+export const NODE_SIZE = { width: 280, height: 104 } as const
 
 /**
  * 流程的走向。
@@ -29,7 +42,7 @@ export type LayoutDirection = 'TB' | 'BT' | 'LR' | 'RL'
  * 排列方式。
  *
  * - `layered` 分层：同一层的节点对齐成一行，层与层拉开距离，一眼看清阶段
- * - `compact` 紧凑：间距缩一半，节点多的时候一屏能看全
+ * - `compact` 紧凑：空隙缩一半，节点多的时候一屏能看全
  */
 export type LayoutStrategy = 'layered' | 'compact'
 
@@ -38,10 +51,14 @@ export type LayoutAlign = 'start' | 'center' | 'end'
 
 /** 布局的尺寸参数。 */
 export interface LayoutOptions {
-  /** 相邻层之间的间距。 */
-  readonly columnWidth?: number
-  /** 同层相邻节点的间距。 */
-  readonly rowHeight?: number
+  /**
+   * 层与层之间的空隙（**不含**卡片自身厚度）。
+   *
+   * 层轴上的实际步长 = 该方向上的卡片厚度 + 这个空隙：纵向排列时是高度，横向是宽度。
+   */
+  readonly layerGap?: number
+  /** 同一层里相邻两个节点之间的空隙（不含卡片尺寸）；层内实际步长 = 卡片宽/高 + 它。 */
+  readonly laneGap?: number
   /** 节点估算宽度，用来判重叠。 */
   readonly nodeWidth?: number
   /** 节点估算高度。 */
@@ -58,7 +75,7 @@ export interface LayoutOptions {
    * - center（默认）以父节点为中心左右展开——父节点落在子节点的正中上方，
    *   这是看流程图最自然的读法
    * - start 从父节点往一侧铺开（父节点在排头）
-   * - nd 往另一侧铺开（父节点在排尾）
+   * - end 往另一侧铺开（父节点在排尾）
    */
   readonly align?: LayoutAlign
   /**
@@ -70,22 +87,49 @@ export interface LayoutOptions {
   readonly keepManual?: boolean
 }
 
-const DEFAULTS = {
-  /** 层间距（纵向排列时是 y 方向）。 */
-  columnWidth: 140,
-  /** 同层间距（纵向排列时是 x 方向）。 */
-  rowHeight: 250,
-  nodeWidth: 200,
-  nodeHeight: 64,
-  origin: { x: 60, y: 40 } as Point,
-  direction: 'TB' as LayoutDirection,
-  strategy: 'layered' as LayoutStrategy,
-  align: 'center' as LayoutAlign,
+/** 合并完选项之后的尺寸参数：每一项都有值。 */
+interface Sizing {
+  readonly layerGap: number
+  readonly laneGap: number
+  readonly nodeWidth: number
+  readonly nodeHeight: number
+  readonly origin: Point
+  readonly direction: LayoutDirection
+  readonly strategy: LayoutStrategy
+  readonly align: LayoutAlign
+  readonly keepManual: boolean
+}
+
+const DEFAULTS: Sizing = {
+  /** 层间空隙。 */
+  layerGap: 64,
+  /** 层内空隙。 */
+  laneGap: 56,
+  nodeWidth: NODE_SIZE.width,
+  nodeHeight: NODE_SIZE.height,
+  origin: { x: 60, y: 40 },
+  direction: 'TB',
+  strategy: 'layered',
+  align: 'center',
   keepManual: true,
 }
 
-/** 紧凑模式把两个间距都收紧。 */
-const COMPACT = { columnWidth: 90, rowHeight: 160 }
+/** 紧凑模式把两个空隙都收紧。 */
+const COMPACT = { layerGap: 32, laneGap: 20 }
+
+/** 一张图算坐标时要用到的尺寸与步长；先算一次，后面都读它。 */
+interface Geometry {
+  readonly direction: LayoutDirection
+  readonly width: number
+  readonly height: number
+  readonly origin: Point
+  /** 层轴上的步长（纵向排列时是 y）。 */
+  readonly layerPitch: number
+  /** 层内那一轴上的步长（纵向排列时是 x）。 */
+  readonly lanePitch: number
+  /** 层内那一轴的原点分量：没有前驱的节点从这里开始排。 */
+  readonly laneAxisOrigin: number
+}
 
 /**
  * 算出每个节点的位置。
@@ -94,10 +138,19 @@ const COMPACT = { columnWidth: 90, rowHeight: 160 }
  * @returns 节点 id → 坐标；包含全部节点。
  */
 export function resolvePositions(flow: Flow, options: LayoutOptions = {}): ReadonlyMap<string, Point> {
-  const base = { ...DEFAULTS, ...options }
-  const sized = base.strategy === 'compact'
-    ? { ...base, ...COMPACT, ...options }
-    : base
+  const base: Sizing = {
+    layerGap: options.layerGap ?? DEFAULTS.layerGap,
+    laneGap: options.laneGap ?? DEFAULTS.laneGap,
+    nodeWidth: options.nodeWidth ?? DEFAULTS.nodeWidth,
+    nodeHeight: options.nodeHeight ?? DEFAULTS.nodeHeight,
+    origin: options.origin ?? DEFAULTS.origin,
+    direction: options.direction ?? DEFAULTS.direction,
+    strategy: options.strategy ?? DEFAULTS.strategy,
+    align: options.align ?? DEFAULTS.align,
+    keepManual: options.keepManual ?? DEFAULTS.keepManual,
+  }
+  const sized: Sizing = base.strategy === 'compact' ? { ...base, ...COMPACT } : base
+  const geom = geometryOf(sized)
 
   const layers = layerOf(flow)
 
@@ -135,18 +188,13 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
    *
    * 没有这一步，同层节点只会按文件顺序排，一条链走下来是斜的——看图的人得追着线跑。
    */
-  /** 层内那一轴上 `origin` 的分量：没有前驱的节点从这里开始排。 */
-  const originAlong = sized.direction === 'LR' || sized.direction === 'RL'
-    ? sized.origin.y
-    : sized.origin.x
-
   const barycenter = (id: string): number => {
     const sources = (inbound.get(id) ?? [])
       .map(source => result.get(source) ?? raw.get(source))
       .filter((point): point is Point => point !== undefined)
       .map(point => alongOf(point, sized.direction))
     // 没有前驱时从原点上按声明顺序排开，别的节点才有得对齐。
-    if (sources.length === 0) return originAlong + indexOf(flow, id) * sized.rowHeight
+    if (sources.length === 0) return geom.laneAxisOrigin + indexOf(flow, id) * geom.lanePitch
     return sources.reduce((sum, value) => sum + value, 0) / sources.length
   }
 
@@ -174,6 +222,8 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
     const centers = list.map(node => barycenter(node.id))
     const layerCenter = centers.reduce((sum, value) => sum + value, 0) / centers.length
     const last = list.length - 1
+    /** 这一层已经摆下的位置——判重叠只在**同一层**里判，跨层在层轴上本来就是分开的。 */
+    const taken = takenByLayer.get(layer) ?? []
 
     list.forEach((node, index) => {
       // `center`：以层中心为中轴左右展开，父节点正好落在子节点中间的上方。
@@ -182,29 +232,33 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
         : sized.align === 'end'
           ? index - last
           : index - last / 2
-      let along = layerCenter + offset * sized.rowHeight
-      let point = place(layer, along, sized)
-      // 同层撞上了就往同侧让一格。
+      let along = layerCenter + offset * geom.lanePitch
+      let point = place(layer, along, geom)
+      // 撞上同层的谁就往同侧让一格（取真实宽度判，不让半步）。
       let guard = 0
-      while (overlaps(point, [...raw.values()].filter(other => other.y === point.y || other.x === point.x), sized) && guard < 8) {
+      while (taken.some(other => overlaps(point, other, geom)) && guard < 32) {
         guard += 1
-        along += sized.rowHeight
-        point = place(layer, along, sized)
+        along += geom.lanePitch
+        point = place(layer, along, geom)
       }
       raw.set(node.id, point)
+      taken.push(point)
     })
   }
 
-  /** 归一化：把负的层内坐标整体挪回 `origin`，图不会被摆到画布外面去。 */
+  /**
+   * 归一化：把整张图平移到 `origin` 右上，别让算出来的坐标落到画布外面去。
+   *
+   * **两个轴都要归一化**：`BT` / `RL` 的层轴是往负方向长的，只收层内那一轴的话，
+   * 反方向布局会把半张图甩到负坐标里。
+   */
   if (raw.size > 0) {
-    const alongValues = [...raw.values()].map(point => alongOf(point, sized.direction))
-    const shift = originAlong - Math.min(...alongValues)
-    if (shift !== 0) {
-      for (const [id, point] of raw) {
-        raw.set(id, sized.direction === 'LR' || sized.direction === 'RL'
-          ? { x: point.x, y: point.y + shift }
-          : { x: point.x + shift, y: point.y })
-      }
+    const xs = [...raw.values()].map(point => point.x)
+    const ys = [...raw.values()].map(point => point.y)
+    const shiftX = geom.origin.x - Math.min(...xs)
+    const shiftY = geom.origin.y - Math.min(...ys)
+    if (shiftX !== 0 || shiftY !== 0) {
+      for (const [id, point] of raw) raw.set(id, { x: point.x + shiftX, y: point.y + shiftY })
     }
   }
 
@@ -217,17 +271,36 @@ export function resolvePositions(flow: Flow, options: LayoutOptions = {}): Reado
 }
 
 /**
+ * 算出一张图用到的尺寸与两个轴上的步长。
+ * @param sized - 合并好的选项。
+ * @returns 几何参数。
+ */
+function geometryOf(sized: Sizing): Geometry {
+  const vertical = sized.direction === 'TB' || sized.direction === 'BT'
+  return {
+    direction: sized.direction,
+    width: sized.nodeWidth,
+    height: sized.nodeHeight,
+    origin: sized.origin,
+    // 层轴：纵向排列时沿 y 走，卡片占的是**高度**；横向排列时沿 x 走，占的是宽度。
+    layerPitch: (vertical ? sized.nodeHeight : sized.nodeWidth) + sized.layerGap,
+    lanePitch: (vertical ? sized.nodeWidth : sized.nodeHeight) + sized.laneGap,
+    laneAxisOrigin: vertical ? sized.origin.x : sized.origin.y,
+  }
+}
+
+/**
  * 把「第几层 + 层内位置」映射成一个坐标。
  * @param layer - 层号，0 是最上游。
- * @param along - 层内位置（离原点多远）。
- * @param sized - 尺寸与方向。
+ * @param along - 层内位置（绝对坐标）。
+ * @param geom - 尺寸与步长。
  * @returns 坐标。
  */
-function place(layer: number, along: number, sized: typeof DEFAULTS | (typeof DEFAULTS & typeof COMPACT)): Point {
+function place(layer: number, along: number, geom: Geometry): Point {
   // `along` 已经是绝对坐标（重心算出来的就是），只有层轴要加 `origin`。
-  const depth = layer * sized.columnWidth
-  const { x: ox, y: oy } = sized.origin
-  switch (sized.direction) {
+  const depth = layer * geom.layerPitch
+  const { x: ox, y: oy } = geom.origin
+  switch (geom.direction) {
     case 'LR':
       return { x: ox + depth, y: along }
     case 'RL':
@@ -295,17 +368,17 @@ export function layerOf(flow: Flow): ReadonlyMap<string, number> {
   return layers
 }
 
-/** 两个矩形是否相交（按尺寸估算）。 */
-function overlaps(
-  point: Point,
-  taken: readonly Point[],
-  sized: typeof DEFAULTS | (typeof DEFAULTS & typeof COMPACT),
-): boolean {
-  return taken.some(other => {
-    const dx = Math.abs(other.x - point.x)
-    const dy = Math.abs(other.y - point.y)
-    return dx < sized.nodeWidth && dy < sized.nodeHeight
-  })
+/**
+ * 两张卡片是否叠在一起。
+ *
+ * 边贴边不算叠：`<` 而不是 `<=`。
+ * @param point - 待摆的位置。
+ * @param other - 这一层已经占住的一个位置。
+ * @param geom - 卡片尺寸。
+ * @returns 撞上了就是 true。
+ */
+function overlaps(point: Point, other: Point, geom: Geometry): boolean {
+  return Math.abs(other.x - point.x) < geom.width && Math.abs(other.y - point.y) < geom.height
 }
 
 /** 节点在图里的下标，用来给同层节点排一个稳定的先后。 */

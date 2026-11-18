@@ -37,6 +37,8 @@ export interface TaskNodeRecord {
    * 一个图里有 8 个 notify 时会全亮。
    */
   readonly nodeId?: string
+  /** 这一格是在哪张图里跑的（事件流 / 子工作流）。跨图执行靠它分归属。 */
+  readonly flowId?: string
   /** ISO 时间。 */
   readonly at: string
   readonly ok: boolean

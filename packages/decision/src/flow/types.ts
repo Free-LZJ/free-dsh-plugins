@@ -30,6 +30,13 @@ export interface Flow {
    * 子工作流没有这个字段——它由 `workflow` 节点按 id 调用，不接事件。
    */
   readonly trigger?: string
+  /**
+   * 一句话简介：这张图干什么用。
+   *
+   * 事件流里的 `workflow` 节点靠它把「调了哪个子工作流」说成人话——只有名字（`name`）
+   * 的时候，十一个分支在图上仍然分不清谁是谁。
+   */
+  readonly description?: string
   readonly nodes: readonly FlowNodeSpec[]
 }
 
@@ -59,6 +66,12 @@ export interface FlowNodeSpec {
   readonly enabled?: boolean
   /** 图上显示的名字；缺省用节点类型的 label。 */
   readonly label?: string
+  /**
+   * 图上显示的第二行说明；缺省用它引用的工作流的 `description`。
+   *
+   * `label` / `desc` 都是**渲染信息**，不参与执行：改它不会改变谁被调用。
+   */
+  readonly desc?: string
   /**
    * 复合节点自己的子图（目前只有 loop 用）。
    *
@@ -90,7 +103,7 @@ export interface FlowEdgeSpec {
 /* ─────────────────────────────── 节点类型 ─────────────────────────────── */
 
 /** 属性面板的字段类型。 */
-export type ConfigFieldType = 'string' | 'text' | 'number' | 'boolean' | 'enum' | 'json'
+export type ConfigFieldType = 'string' | 'text' | 'number' | 'boolean' | 'enum' | 'json' | 'names'
 
 /** 一个配置字段的声明。 */
 export interface ConfigField {
@@ -228,6 +241,14 @@ export interface NodeRecordInput {
   readonly type: string
   readonly ok: boolean
   readonly detail: string
+  /**
+   * 这一格是在**哪张图**里跑的。
+   *
+   * 一次执行会跨图（事件流 `mail-new` 调子工作流 `promo`），光有 `nodeId` 分不清哪张图：
+   * `trigger` / `route` / `end` 这些 id 每张图都有。有了它，画布才能只标「这张图里跑过的
+   * 方块」，页面才能说「这条执行走过哪几张图」。
+   */
+  readonly flowId?: string
   readonly failure?: FailureKind
   readonly sessionId?: string
   /** 结构化证据；**不得包含 `memory` 层的内容**。 */

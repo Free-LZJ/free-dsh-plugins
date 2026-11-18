@@ -217,6 +217,92 @@ function passWorkflowVars(
 }
 
 /**
+ * 把 `params` / `outputs` 这类声明收成一份字符串清单。
+ *
+ * 两种写法都认：`['subject', 'body']` 或者 `[{ name: 'subject', required: true }]`。
+ * 手写 yml 时前者省事，界面上生成的后者带必填信息。
+ * @param value - 配置里的原始值。
+ * @returns 名字与必填标记。
+ */
+function declaredNames(value: unknown): readonly { readonly name: string; readonly required: boolean }[] {
+  if (!Array.isArray(value)) return []
+  const out: { name: string; required: boolean }[] = []
+  for (const item of value) {
+    if (typeof item === 'string' && item.trim() !== '') {
+      out.push({ name: item.trim(), required: false })
+      continue
+    }
+    if (typeof item !== 'object' || item === null) continue
+    const name = (item as { readonly name?: unknown }).name
+    if (typeof name !== 'string' || name.trim() === '') continue
+    out.push({ name: name.trim(), required: (item as { readonly required?: unknown }).required === true })
+  }
+  return out
+}
+
+/**
+ * `start`：子工作流的**入口**，声明它要什么参数。
+ *
+ * 声明过就是契约：必填的没收到，这一步**明确失败**（`failure: 'config'`），原因里列出
+ * 缺了哪些——而不是让它带着空值往下跑，最后在某一步莫名其妙地出错。没有声明就什么都不
+ * 做，老图照样能跑。
+ */
+const startNode: FlowNode = {
+  type: 'start',
+  label: '开始',
+  group: 'control',
+  sideEffect: false,
+  config: {
+    params: { type: 'names', label: '入参', hint: '调用方按名字传；勾了必填的收不到就判这一步失败' },
+  },
+  async run(spec: FlowNodeSpec, context: FlowContext): Promise<NodeResult> {
+    const declared = declaredNames(spec.config?.['params'])
+    if (declared.length === 0) return { ok: true, detail: '开始' }
+    const missing = declared
+      .filter(item => item.required)
+      .filter(item => {
+        const value = context.vars[item.name] ?? context.event[item.name]
+        return value === undefined || value === null || value === ''
+      })
+      .map(item => item.name)
+    if (missing.length > 0) {
+      return { ok: false, detail: `缺少入参：${missing.join(', ')}`, failure: 'config' }
+    }
+    const provided = declared.filter(item => (context.vars[item.name] ?? context.event[item.name]) !== undefined)
+    return { ok: true, detail: `开始（收到 ${String(provided.length)}/${String(declared.length)} 个入参）` }
+  },
+}
+
+/**
+ * `end`：一段流程的**出口**，可声明它交出什么。
+ *
+ * 出参缺失只**如实说**，不判失败：一段流程经常在早期分支就结束，那时后面的变量本来就
+ * 还没有。这一格记下来，看板上就能回答「这条规则为什么没给我要的东西」。
+ */
+const endNode: FlowNode = {
+  type: 'end',
+  label: '结束',
+  group: 'control',
+  sideEffect: false,
+  config: {
+    outputs: { type: 'names', label: '出参', hint: '这一步结束时应该带着哪些变量' },
+  },
+  async run(spec: FlowNodeSpec, context: FlowContext): Promise<NodeResult> {
+    const declared = declaredNames(spec.config?.['outputs'])
+    if (declared.length === 0) return { ok: true, detail: '结束' }
+    const absent = declared
+      .map(item => item.name)
+      .filter(name => {
+        const value = context.vars[name] ?? context.memory[name]
+        return value === undefined || value === null || value === ''
+      })
+    return absent.length === 0
+      ? { ok: true, detail: `结束（交出 ${String(declared.length)} 个出参）` }
+      : { ok: true, detail: `结束（没有出参：${absent.join(', ')}）` }
+  },
+}
+
+/**
  * 把控制流节点装成一份清单。
  * @returns 可以注册进 `FlowNodeRegistry` 的节点。
  */
@@ -224,12 +310,15 @@ export function createControlNodes(): readonly FlowNode[] {
   return [
     // 入口只是落点：事件进不进来由触发器决定，图上它不做任何事。
     passThrough('trigger', '触发', 'trigger'),
+    // 子工作流的入口：声明入参，缺必填就明确失败。
+    startNode,
     switchNode,
     ifNode,
     loopNode,
     workflowNode,
     passThrough('parallel', '并行'),
     passThrough('join', '汇合'),
-    passThrough('end', '结束'),
+    // 出口：可以声明出参，缺了如实说。
+    endNode,
   ]
 }

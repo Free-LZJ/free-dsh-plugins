@@ -122,7 +122,9 @@ export async function executeFlow(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.evaluate === undefined ? {} : { evaluate: options.evaluate }),
     ...(options.executeAction === undefined ? {} : { executeAction: options.executeAction }),
-    record: entry => { return deps.record(entry) },
+    // 每一格都盖上「哪张图」：一次执行会跨图（事件流调子工作流），只有 nodeId 时
+    // `trigger` / `route` / `end` 这类到处都有的 id 分不清归属。
+    record: entry => { return deps.record({ ...entry, flowId: flow.id }) },
     log: line => { deps.log(line) },
     // 子图借用同一个执行器跑：复合节点（`loop`）不该自己实现一遍调度。
     // 进度独立——子图跑完一轮，主图还是停在那个 loop 节点上。

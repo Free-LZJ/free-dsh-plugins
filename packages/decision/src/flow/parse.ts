@@ -235,11 +235,13 @@ function readFlow(
 
   // `trigger` 只出现在事件流文件里；子工作流没有它，靠 workflow 节点被调用。
   const trigger = text(raw['trigger'])
+  const description = text(raw['description'])
   return {
     id,
     name: text(raw['name']) ?? id,
     connector,
     ...(trigger === undefined ? {} : { trigger }),
+    ...(description === undefined ? {} : { description }),
     nodes,
   }
 }
@@ -276,6 +278,7 @@ function readNode(
       enabled: false,
       ...(isRecord(raw['config']) ? { config: raw['config'] } : {}),
       ...(text(raw['label']) === undefined ? {} : { label: text(raw['label']) as string }),
+      ...(text(raw['desc']) === undefined ? {} : { desc: text(raw['desc']) as string }),
     }
   }
 
@@ -284,6 +287,7 @@ function readNode(
   const pos = readPos(raw['pos'])
   const runner = text(raw['runner'])
   const label = text(raw['label'])
+  const desc = text(raw['desc'])
 
   return {
     id,
@@ -294,6 +298,7 @@ function readNode(
     ...(pos === undefined ? {} : { pos }),
     ...(raw['enabled'] === false ? { enabled: false } : {}),
     ...(label === undefined ? {} : { label }),
+    ...(desc === undefined ? {} : { desc }),
     ...(body === undefined ? {} : { body }),
   }
 }

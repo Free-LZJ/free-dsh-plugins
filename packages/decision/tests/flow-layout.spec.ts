@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layerOf, resolvePositions } from '../src/flow/layout.ts'
+import { NODE_SIZE, layerOf, resolvePositions } from '../src/flow/layout.ts'
 import type { Flow, FlowNodeSpec } from '../src/flow/types.ts'
 
 /** 造一张图；`out` 用 id 列表简写。 */
@@ -79,5 +79,49 @@ describe('resolvePositions', () => {
     const positions = resolvePositions(flow({ root: ['a', 'b', 'c'], a: [], b: [], c: [] }), { align: 'start' })
     const xs = ['a', 'b', 'c'].map(id => positions.get(id)!.x).sort((l, r) => l - r)
     expect(Math.abs(positions.get('root')!.x - xs[0]!)).toBeLessThan(1)
+  })
+})
+
+/**
+ * 间距必须按**画布上那张卡的真实尺寸**算。
+ *
+ * 这一组是回归用例：间距早先是写死的 250 / 140，比卡片窄，于是排出来的图同层两张卡
+ * 叠 30px、横向走向时相邻两层叠掉小半张卡。布局算得对不对，判据是「两张卡会不会碰到」，
+ * 不是「数字好不好看」。
+ */
+describe('resolvePositions 不许把卡片排到彼此身上', () => {
+  it('同层相邻两张卡横向至少隔开一张卡的宽度', () => {
+    const positions = resolvePositions(flow({ root: ['a', 'b'], a: [], b: [] }))
+    const gap = Math.abs(positions.get('a')!.x - positions.get('b')!.x)
+    expect(gap).toBeGreaterThanOrEqual(NODE_SIZE.width)
+  })
+
+  it('相邻两层在层轴上至少隔开一张卡的厚度（纵向）', () => {
+    const positions = resolvePositions(flow({ a: ['b'], b: [] }))
+    const gap = Math.abs(positions.get('b')!.y - positions.get('a')!.y)
+    expect(gap).toBeGreaterThanOrEqual(NODE_SIZE.height)
+  })
+
+  it('相邻两层在层轴上至少隔开一张卡的宽度（横向）', () => {
+    // 横向排列时层轴是 x，卡片占的是宽度——这一步过去只走了 140，直接把两层叠穿。
+    const positions = resolvePositions(flow({ a: ['b'], b: [] }), { direction: 'LR' })
+    const gap = Math.abs(positions.get('b')!.x - positions.get('a')!.x)
+    expect(gap).toBeGreaterThanOrEqual(NODE_SIZE.width)
+  })
+
+  it('反方向布局不会把节点甩到负坐标去', () => {
+    for (const direction of ['BT', 'RL'] as const) {
+      const positions = resolvePositions(flow({ a: ['b', 'c'], b: [], c: [] }), { direction })
+      for (const [id, point] of positions) {
+        expect(point.x, `${direction} ${id}.x`).toBeGreaterThanOrEqual(0)
+        expect(point.y, `${direction} ${id}.y`).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+
+  it('紧凑模式只是收紧空隙，不会收到叠起来', () => {
+    const positions = resolvePositions(flow({ root: ['a', 'b'], a: [], b: [] }), { strategy: 'compact' })
+    const gap = Math.abs(positions.get('a')!.x - positions.get('b')!.x)
+    expect(gap).toBeGreaterThanOrEqual(NODE_SIZE.width)
   })
 })

@@ -37,6 +37,57 @@ function chain(...types: string[]): Flow {
   return { id: 'f', name: 'f', connector: 'test', nodes }
 }
 
+describe('开始 / 结束：入参出参的软校验', () => {
+  /** 一张 `start → a → end` 的图，两端都带声明。 */
+  function ioFlow(startConfig?: Record<string, unknown>, endConfig?: Record<string, unknown>): Flow {
+    return {
+      id: 'f',
+      name: 'f',
+      connector: 'test',
+      nodes: [
+        { id: 's', type: 'start', ...(startConfig === undefined ? {} : { config: startConfig }), out: [{ to: 'a' }] },
+        { id: 'a', type: 'echo', out: [{ to: 'e' }] },
+        { id: 'e', type: 'end', ...(endConfig === undefined ? {} : { config: endConfig }) },
+      ],
+    }
+  }
+
+  const echo = fakeNode('echo', async () => ({ ok: true, detail: '做了点事' }))
+
+  it('必填入参没收到，这一步明确失败并列出缺了谁', async () => {
+    const { deps, records } = harness([echo])
+    await executeFlow(ioFlow({ params: [{ name: 'subject', required: true }, { name: 'body' }] }), {
+      taskId: 't', runId: 'r', event: {}, vars: { body: '正文' },
+    }, deps)
+    const start = records.find(record => record.nodeId === 's')
+    expect(start?.ok).toBe(false)
+    expect(start?.failure).toBe('config')
+    expect(start?.detail).toContain('subject')
+    // 缺必填就停在这一步（带着 config 失败），而不是让后面的动作拿着空值乱跑。
+    expect(records.some(record => record.nodeId === 'a')).toBe(false)
+  })
+
+  it('入参齐了就说收到了几个', async () => {
+    const { deps, records } = harness([echo])
+    await executeFlow(ioFlow({ params: [{ name: 'subject', required: true }] }), {
+      taskId: 't', runId: 'r', event: { subject: '标题' },
+    }, deps)
+    const start = records.find(record => record.nodeId === 's')
+    expect(start?.ok).toBe(true)
+    expect(start?.detail).toContain('1/1')
+  })
+
+  it('出参缺了如实说，但不判失败——早期分支结束本来就没有这些变量', async () => {
+    const { deps, records } = harness([echo])
+    await executeFlow(ioFlow(undefined, { outputs: ['body', 'subject'] }), {
+      taskId: 't', runId: 'r', event: {}, vars: { subject: '标题' },
+    }, deps)
+    const end = records.find(record => record.nodeId === 'e')
+    expect(end?.ok).toBe(true)
+    expect(end?.detail).toContain('没有出参：body')
+  })
+})
+
 describe('executeFlow：顺序与上下文', () => {
   it('按出边顺序跑完，产出进 vars', async () => {
     const { deps, records } = harness([
@@ -47,6 +98,16 @@ describe('executeFlow：顺序与上下文', () => {
     expect(result.status).toBe('done')
     expect(records.map(r => r.nodeId)).toEqual(['n0', 'n1'])
     expect(records[1]?.detail).toBe('b 看到 1')
+  })
+
+  it('每一格都带着「哪张图」——跨图执行靠它分归属', async () => {
+    // 一次事件会跨图（事件流调子工作流），而 `trigger` / `route` / `end` 这些 id 到处
+    // 都有：只有 nodeId 时，页面分不清这条记录属于哪张图，画布也只能整片标或整片不标。
+    const { deps, records } = harness([
+      fakeNode('a', async () => ({ ok: true, detail: 'a' })),
+    ])
+    await executeFlow(chain('a'), { taskId: 't', runId: 'r', event: {} }, deps)
+    expect(records[0]?.flowId).toBe('f')
   })
 
   it('persist: false 的产出进 memory，不进 vars', async () => {

@@ -29,6 +29,7 @@ export function stringifyFlowFile(flows: readonly Flow[], options: SerializeOpti
     flows: flows.map(flow => ({
       id: flow.id,
       name: flow.name,
+      ...(flow.description === undefined ? {} : { description: flow.description }),
       connector: flow.connector,
       nodes: flow.nodes.map(serializeNode),
     })),
@@ -54,11 +55,19 @@ export function stringifyFlowDocument(flow: Flow, options: { readonly header?: s
   const doc = new Document({
     id: flow.id,
     name: flow.name,
+    ...(flow.description === undefined ? {} : { description: flow.description }),
     connector: flow.connector,
     nodes: flow.nodes.map(serializeNode),
   })
   doc.contents = doc.createNode(doc.toJS())
-  if (options.header !== undefined) doc.commentBefore = options.header
+  // YAML 库把 `commentBefore` 原样接在 `#` 后面：不补一个空格就成了 `#新建的…`，
+  // 和手写的 `# 带退订头的群发` 摆在一起明显不齐。多行注释逐行补。
+  if (options.header !== undefined) {
+    doc.commentBefore = options.header
+      .split('\n')
+      .map(line => (line.startsWith(' ') ? line : ' ' + line))
+      .join('\n')
+  }
   return doc.toString({ lineWidth: 0 })
 }
 
@@ -68,6 +77,7 @@ function serializeNode(node: FlowNodeSpec): Record<string, unknown> {
     id: node.id,
     type: node.type,
     ...(node.label === undefined ? {} : { label: node.label }),
+    ...(node.desc === undefined ? {} : { desc: node.desc }),
     ...(node.config === undefined || Object.keys(node.config).length === 0 ? {} : { config: node.config }),
     ...(node.runner === undefined ? {} : { runner: node.runner }),
     ...(node.enabled === false ? { enabled: false } : {}),

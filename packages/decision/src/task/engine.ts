@@ -15,7 +15,7 @@
  */
 
 import { dirname, join } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { parseDocument as parseYaml } from 'yaml'
 import type { DecisionConfigBase, RuleVocabulary } from '../config.ts'
 import { DEFAULT_DECISION_CONFIG, isRecord } from '../config.ts'
@@ -26,7 +26,7 @@ import {
 import type { Rule, RuleFileError } from '../types.ts'
 
 import { readJson, writeTextFile } from '../store.ts'
-import { resolvePositions, type LayoutAlign, type LayoutDirection, type LayoutStrategy } from '../flow/layout.ts'
+import { NODE_SIZE, resolvePositions, type LayoutAlign, type LayoutDirection, type LayoutStrategy } from '../flow/layout.ts'
 import type { TaskConnector, TaskTestAnswer, TaskTestRef } from './connector.ts'
 import type { EmitAck, TaskEvent } from './event.ts'
 import type { ActionNode } from './node.ts'
@@ -84,8 +84,22 @@ export interface TaskRulesView {
   readonly flowMode?: boolean
 }
 
+/** 补端点时读出来的节点形状：只关心 id / 类型 / 出边 / 坐标。 */
+interface ScaffoldNode {
+  readonly id?: string
+  readonly type?: string
+  readonly out?: readonly { readonly to?: string }[]
+  readonly pos?: { readonly x?: number; readonly y?: number }
+}
+
 /** 每张图共有的入口节点；聚焦某条规则时它们一起保留。 */
 const SHARED_FLOW_NODES = new Set(['start', 'classify', 'route', 'rest'])
+
+/** 新节点与它的上游之间留一行（和自动布局的分层间距同一量级）。 */
+const NEW_NODE_ROW_STEP = NODE_SIZE.height + 96
+
+/** 让位时两列之间留的空。 */
+const NEW_NODE_MARGIN = 64
 
 /** 一次写操作的结果。 */
 export interface TaskEdit {
@@ -675,13 +689,67 @@ export class TaskEngine {
     return await this.applyEdit(raw => swapPriority(raw, id, this.currentRules, direction))
   }
 
-  /** 拿一条真实事件试跑；引擎不认识事件，所以由连接器回答。 */
+  /**
+   * 拿一条真实事件试跑；引擎不认识事件，所以由连接器回答。
+   *
+   * **图模式要换一套喂法**：那时 `currentRules` 是空的（规则写在图里），直接把空数组
+   * 交给连接器，它只能回答「没有规则命中——这封邮件会被留在面板里」，而实际上这封邮件
+   * 明明会被流程图分走。所以这里把图里的**分支边**翻成一组临时规则（每条边就是一条
+   * 「凭什么走这条路」），连接器照旧逐条判——试跑的答案就变成「会走哪条边、其它边为什么
+   * 没走」，而不是一句假话。
+   *
+   * 只判不走：`then` 留空，试跑不执行任何动作。
+   */
   async test(ref: TaskTestRef): Promise<TaskTestAnswer> {
     for (const connector of this.connectors.values()) {
       if (connector.test === undefined) continue
-      return await connector.test(ref, this.currentRules)
+      const flow = this.flowFor(connector.id)
+      const rules = flow === undefined ? this.currentRules : this.edgesAsRules(flow)
+      return await connector.test(ref, rules)
     }
     return { ok: false, message: '还没有连接器能试跑事件' }
+  }
+
+  /**
+   * 这个连接器的事件流是哪张图。
+   *
+   * 试跑只对「事件流」有意义：子工作流没有自己的事件，它由事件流调用。没有专属的
+   * 就用 `connector: '*'` 的兜底图——和真正派活时的顺序一致。
+   * @param connectorId - 连接器 id。
+   * @returns 图，或 undefined（这份规则里没有它的事件流）。
+   */
+  private flowFor(connectorId: string): Flow | undefined {
+    const flows = [...this.eventFlows.values()]
+    return flows.find(flow => flow.connector === connectorId)
+      ?? flows.find(flow => flow.connector === '*')
+  }
+
+  /**
+   * 把一张图里的分支边翻成一组「临时规则」，给试跑用。
+   *
+   * 只有带 `switch` 的图才有「走哪条」这回事；没有分支的图让连接器按空规则表回答
+   * （它会给「没有规则命中」，那时是实话——这张图不看条件）。
+   * @param flow - 要试跑的图。
+   * @returns 每条出边一条规则，顺序就是图里的顺序。
+   */
+  private edgesAsRules(flow: Flow): readonly Rule<ConditionSpecLike, ActionSpecLike>[] {
+    const rules: Rule<ConditionSpecLike, ActionSpecLike>[] = []
+    for (const node of flow.nodes) {
+      if (node.type !== 'switch' || node.out === undefined) continue
+      node.out.forEach((edge, index) => {
+        rules.push({
+          id: `${node.id}->${edge.to}#${String(index)}`,
+          name: `${node.label ?? node.id} → ${flow.nodes.find(item => item.id === edge.to)?.label ?? edge.to}`,
+          enabled: true,
+          priority: index * 10,
+          connector: flow.connector,
+          when: (edge.when ?? []) as readonly ConditionSpecLike[],
+          // 试跑不执行动作：这一栏空着，比塞一条假的更有用。
+          then: [],
+        })
+      })
+    }
+    return rules
   }
 
   /* ─────────────────────────────── 内部 ─────────────────────────────── */
@@ -1006,7 +1074,7 @@ export class TaskEngine {
     readonly direction?: LayoutDirection
     readonly strategy?: LayoutStrategy
     readonly align?: LayoutAlign
-  }): Promise<TaskEdit> {
+  }): Promise<TaskEdit & { readonly positions?: readonly { readonly id: string; readonly x: number; readonly y: number }[] }> {
     const located = this.locateFlow(undefined, input.flowId)
     if (located === undefined) return { ok: false, message: '没有这张图：' + input.flowId }
 
@@ -1044,7 +1112,12 @@ export class TaskEngine {
 
     await writeTextFile(located.path, doc.toString())
     await this.reloadRules()
-    return { ok: true }
+    // 坐标回传一份：文件写对了、画布却没换位置的时候（实测撞到过），前端可以直接
+    // 把这份画上去，不必等下一次整图重读。
+    return {
+      ok: true,
+      positions: [...positions].map(([id, pos]) => ({ id, x: Math.round(pos.x), y: Math.round(pos.y) })),
+    }
   }
 
   /**
@@ -1061,41 +1134,334 @@ export class TaskEngine {
   async addFlowNode(input: {
     readonly after?: string
     readonly type: string
+    /** 这个节点加进哪张图；`after` 的 id 可能每张图都有，缺了就写错文件。 */
+    readonly flowId?: string
     readonly config?: Readonly<Record<string, unknown>>
   }): Promise<TaskEdit & { readonly nodeId?: string }> {
     if (!this.nodes.has(input.type)) return { ok: false, message: `不认识的节点类型「${input.type}」` }
-    const loaded = this.loadFlowDoc()
+    const loaded = this.loadFlowDoc(input.after, input.flowId)
     if (!loaded.ok) return loaded
-    const { doc, flowIndex, nodes } = loaded
+    const { doc, flowIndex, nodes, path } = loaded
 
     // `items` 里是 YAML 的节点对象，属性读不到——定位一律走 `toJS()` 出来的普通对象。
-    const plain = doc.toJS() as { flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[] }
-    const plainNodes = plain.flows?.[flowIndex]?.nodes ?? []
+    // 两种形状都要认：一图一文件时 `nodes` 在根上，合集文件时在 `flows[i].nodes`。
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; type?: string; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; type?: string; out?: Record<string, unknown>[] }[] }[]
+    }
+    const plainNodes = flowIndex < 0 ? (plain.nodes ?? []) : (plain.flows?.[flowIndex]?.nodes ?? [])
     const items = nodes.items as unknown[]
-    const afterIndex = input.after === undefined
+
+    /**
+     * 接在谁后面。
+     *
+     * 没指定就先看「末尾」认不认得清——认不清就别猜：凭空追加一个没有任何入边的
+     * 节点，界面上说「加好了」，流程里却是一座永远跑不到的孤岛。
+     */
+    const anchor: { readonly ok: true; readonly after?: string } | { readonly ok: false; readonly message: string } =
+      input.after === undefined ? this.tailAnchorOf(plainNodes) : { ok: true, after: input.after }
+    if (anchor.ok === false) return anchor
+    const after = anchor.after
+    const afterIndex = after === undefined
       ? items.length - 1
-      : plainNodes.findIndex(item => item.id === input.after)
-    if (input.after !== undefined && afterIndex < 0) {
-      return { ok: false, message: `找不到节点「${input.after}」` }
+      : plainNodes.findIndex(item => item.id === after)
+    if (after !== undefined && afterIndex < 0) {
+      return { ok: false, message: `找不到节点「${after}」` }
     }
 
     const nodeId = this.freeNodeId(doc, flowIndex, input.type)
     // 新节点继承 after 原来的出路；after 随后只指向新节点。
-    const inherited = input.after === undefined ? [] : (plainNodes[afterIndex]?.out ?? [])
+    const inherited = after === undefined ? [] : (plainNodes[afterIndex]?.out ?? [])
     const spec: Record<string, unknown> = {
       id: nodeId,
       type: input.type,
+      // 坐标必须一起写：不写就落在 (0,0)，压在第一个节点身上，看着像「点了没反应」。
+      pos: this.placeNewNode(plainNodes, after),
       ...(input.config === undefined || Object.keys(input.config).length === 0 ? {} : { config: input.config }),
       ...(inherited.length === 0 ? {} : { out: inherited }),
     }
     items.splice(afterIndex + 1, 0, spec)
-    if (input.after !== undefined) {
-      doc.setIn(['flows', flowIndex, 'nodes', afterIndex, 'out'], [{ to: nodeId }])
+    if (after !== undefined) {
+      // 两种形状的路径不一样：一图一文件时节点在根上，没有 `flows` 这一层。
+      const outAt = flowIndex < 0
+        ? ['nodes', afterIndex, 'out']
+        : ['flows', flowIndex, 'nodes', afterIndex, 'out']
+      doc.setIn(outAt, [{ to: nodeId }])
     }
 
-    await writeTextFile(this.rulesPath, doc.toString())
+    // **写回它所在的那个文件**。写死 `rules.yml` 的话，一图一文件模式下新节点会落进
+    // 一份没人读的文件里，同时把真正的 rules.yml 覆盖成这张图的内容。
+    await writeTextFile(path, doc.toString())
     await this.reloadRules()
     return { ok: true, nodeId }
+  }
+
+  /**
+   * 新节点摆在哪。
+   *
+   * 不写坐标的话它落在 `(0, 0)`：卡片的左上角正好压在图上第一个节点身上，看起来像
+   * 「点了没反应」——加了好几个就叠成一摞。这里给它一个说得通的位置：接在谁后面就摆到
+   * 它下方一层；那块地方有人了就往右让一个车位，直到不压着别人。
+   * @param nodes - 这张图现有的节点（普通对象形式，坐标可能没有）。
+   * @param after - 新节点接在谁后面；没有就摆到整张图的下方。
+   * @returns 写进文件的坐标。
+   */
+  private placeNewNode(
+    nodes: readonly { readonly id?: string; readonly pos?: { readonly x?: number; readonly y?: number } }[],
+    after: string | undefined,
+  ): { x: number; y: number } {
+    const boxes = nodes.map(node => ({ x: Number(node.pos?.x ?? 0), y: Number(node.pos?.y ?? 0) }))
+    const anchor = after === undefined ? undefined : nodes.find(node => node.id === after)
+    const start = anchor === undefined
+      ? { x: 0, y: boxes.reduce((bottom, box) => Math.max(bottom, box.y), 0) + NEW_NODE_ROW_STEP }
+      : { x: Number(anchor.pos?.x ?? 0), y: Number(anchor.pos?.y ?? 0) + NEW_NODE_ROW_STEP }
+
+    // 与已有卡片重叠（留一点余量）就往右挪一列：人看得到它在哪，也不会压在别人身上。
+    const clashes = (box: { readonly x: number; readonly y: number }): boolean => boxes.some(other =>
+      Math.abs(other.x - box.x) < NODE_SIZE.width + NEW_NODE_MARGIN
+      && Math.abs(other.y - box.y) < NODE_SIZE.height + NEW_NODE_MARGIN)
+    let place = start
+    for (let step = 0; step < 64 && clashes(place); step += 1) {
+      place = { x: place.x + NODE_SIZE.width + NEW_NODE_MARGIN, y: place.y }
+    }
+    return { x: Math.round(place.x), y: Math.round(place.y) }
+  }
+
+  /**
+   * 没指定「接在谁后面」时，猜一个末尾——**只有认得清才猜**。
+   *
+   * - 有 `end` 节点：末尾就是那些直接连到 `end` 的节点
+   * - 没有 `end`：末尾是没有出边的节点
+   *
+   * 恰好一个才算认得清；一个都没有（空图）就直接追加；多于一个就闭嘴，让界面去问人。
+   * @param nodes - 这张图的节点（普通对象形式）。
+   * @returns 接在谁后面，或为什么不能猜。
+   */
+  private tailAnchorOf(
+    nodes: readonly { readonly id?: string; readonly type?: string; readonly out?: readonly Record<string, unknown>[] }[],
+  ): { readonly ok: true; readonly after?: string } | { readonly ok: false; readonly message: string } {
+    const end = nodes.find(item => item.type === 'end')
+    const tails = end === undefined
+      ? nodes.filter(item => (item.out ?? []).length === 0)
+      : nodes.filter(item => item.id !== end.id && (item.out ?? []).some(edge => edge['to'] === end.id))
+    if (tails.length === 0) return { ok: true }
+    if (tails.length > 1) {
+      return {
+        ok: false,
+        message: `这张图有 ${String(tails.length)} 个地方直接连到「结束」，先在画布上选中要接在哪个节点后面，再新增`,
+      }
+    }
+    const [only] = tails
+    return only?.id === undefined ? { ok: true } : { ok: true, after: only.id }
+  }
+
+  /**
+   * 给新流程挑一个 id：英文名转 slug，中文名退回 `前缀-1`、`前缀-2`。
+   *
+   * 以前对中文名用时间戳（`rule-1763867123456`），结果事件流上挂着一排
+   * `call-rule-1763867123456` 的方块——看不出是什么，还长得一样。序号短、可预测、
+   * 在画布上也读得出来。
+   * @param prefix - 中文名时用的前缀。
+   * @param ascii - 名字转出来的 slug；空串表示转不出来。
+   * @returns 一个没被别人占用的 id。
+   */
+  private freeFlowId(prefix: string, ascii: string): string {
+    if (ascii !== '') {
+      let id = ascii
+      for (let index = 2; this.workflows.has(id); index += 1) id = `${ascii}-${String(index)}`
+      return id
+    }
+    let index = 1
+    while (this.workflows.has(`${prefix}-${String(index)}`)) index += 1
+    return `${prefix}-${String(index)}`
+  }
+
+  /**
+   * 新建一张**独立**的子工作流（不挂到任何事件流上）。
+   *
+   * 「+ 新建规则」会顺手建一个子工作流，但那只发生在你想让某条规则命中时。
+   * 想先把一段可复用的流程搭出来、之后再接事件，之前没有入口——只能先建一条规则
+   * 再把它拆掉。这个入口就是补这个洞。
+   *
+   * @param input - 显示名与连接器；id 从名字转 slug，转不出来就退回时间戳。
+   * @returns 建成了（带 id），或为什么没建成。
+   */
+  async addWorkflow(input: {
+    readonly name: string
+    readonly connector?: string
+  }): Promise<TaskEdit & { readonly flowId?: string }> {
+    const name = input.name.trim()
+    if (name === '') return { ok: false, message: '工作流得有个名字' }
+    const connector = (input.connector ?? '').trim() === '' ? '*' : (input.connector ?? '').trim()
+
+    const ascii = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const flowId = this.freeFlowId('flow', ascii)
+
+    const path = join(this.workflowsDir, flowId + '.yml')
+    try {
+      mkdirSync(this.workflowsDir, { recursive: true })
+      writeFileSync(
+        path,
+        stringifyFlowDocument(
+          {
+            id: flowId,
+            name,
+            connector,
+            nodes: [
+              { id: 'start', type: 'start', out: [{ to: 'end' }] },
+              { id: 'end', type: 'end' },
+            ],
+          },
+          { header: '新建的子工作流：在「开始」和「结束」之间加它要做的事。' },
+        ),
+        'utf8',
+      )
+    } catch (error) {
+      return { ok: false, message: '写不了工作流文件：' + (error instanceof Error ? error.message : String(error)) }
+    }
+
+    await this.reloadRules()
+    return { ok: true, message: `已新建「${name}」`, flowId }
+  }
+
+  /**
+   * 给一张图补上「开始 / 结束」两个端点（只补缺的那个）。
+   *
+   * 老图是「一串节点走到哪算哪」：入口是谁靠猜（没有入边的那个），出口干脆没有。补上
+   * 之后入参出参才有地方声明，画布上也看得出图的边界。**只在人点按钮时执行**，不自动
+   * 改写已有的规则文件。
+   *
+   * 连线按图的形状来：开始接到原来的入口（没有入边的节点），结束接住原来的末尾
+   * （没有出边的节点）。已经有的那一个不重复添加。
+   * @param flowId - 哪张子工作流。
+   * @returns 成功，或为什么没补成。
+   */
+  async addFlowScaffold(flowId: string): Promise<TaskEdit> {
+    const file = this.flowFiles.get(flowId)
+    if (file === undefined) return { ok: false, message: `找不到工作流「${flowId}」` }
+    const outcome = this.patchScaffold(file)
+    if (!outcome.ok) return outcome
+    await writeTextFile(file, outcome.text)
+    await this.reloadRules()
+    return { ok: true, message: outcome.message }
+  }
+
+  /**
+   * 一次把所有缺端点的子工作流补齐（**逐张先备份再改**）。
+   *
+   * 为什么要有批量：11 张图只有事件流那种是从旧规则迁过来的，子工作流很多是「一个节点
+   * 干一件事」，点进去看不出从哪进、到哪出。一张张点「补开始/结束」太啰嗦，而且容易忘。
+   *
+   * 每张要改的文件先写成 `<文件名>.bak-scaffold-<毫秒>`，改坏了能直接拷回来。
+   * @returns 补了几张，以及哪几张没补成（有失败就整体 `ok: false`，但成功的照样落盘）。
+   */
+  async scaffoldFlows(): Promise<TaskEdit> {
+    const flows = this.flowView().flows
+    const missing = [...this.flowFiles.entries()].filter(([flowId]) => {
+      const flow = flows.find((item) => item.id === flowId)
+      if (flow === undefined) return false
+      const hasStart = flow.nodes.some((node) => node.type === 'start')
+      const hasEnd = flow.nodes.some((node) => node.type === 'end')
+      return !hasStart || !hasEnd
+    })
+    if (missing.length === 0) return { ok: true, message: '没有缺端点的子工作流' }
+
+    const done: string[] = []
+    const failed: string[] = []
+    for (const [flowId, file] of missing) {
+      const outcome = this.patchScaffold(file)
+      if (!outcome.ok) {
+        failed.push(`${flowId}：${outcome.message}`)
+        continue
+      }
+      try {
+        copyFileSync(file, `${file}.bak-scaffold-${String(Date.now())}`)
+      } catch (error) {
+        // 备份写不出来就不改：宁可不补，也不留一个改坏了还没备份的文件。
+        failed.push(`${flowId}：备份失败（${error instanceof Error ? error.message : String(error)}）`)
+        continue
+      }
+      await writeTextFile(file, outcome.text)
+      done.push(flowId)
+    }
+    if (done.length > 0) await this.reloadRules()
+    if (failed.length > 0) {
+      return { ok: false, message: `补了 ${String(done.length)} 张，${String(failed.length)} 张没补成：${failed.join('；')}` }
+    }
+    return { ok: true, message: `已补齐 ${String(done.length)} 张子工作流的开始/结束` }
+  }
+
+  /**
+   * 算出「补端点」之后该写什么，不落盘。
+   *
+   * 拆出来是为了批量补齐能先备份、再统一 reload；单张调用直接写。
+   * @param file - 工作流文件绝对路径。
+   * @returns 新的文件内容，或为什么补不成。
+   */
+  private patchScaffold(file: string): { readonly ok: true; readonly text: string; readonly message: string } | TaskEdit & { readonly ok: false } {
+    let raw = ''
+    try {
+      raw = readFileSync(file, 'utf8')
+    } catch {
+      return { ok: false, message: '读不到工作流文件：' + file }
+    }
+    const doc = parseYaml(raw)
+    if (doc.errors.length > 0) return { ok: false, message: '工作流文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? '') }
+    const flow = doc.toJS() as {
+      nodes?: ScaffoldNode[]
+      flows?: { nodes?: ScaffoldNode[] }[]
+    }
+    const flowIndex = (flow.nodes === undefined && (flow.flows?.length ?? 0) > 0) ? 0 : -1
+    const nodes = flowIndex < 0 ? (flow.nodes ?? []) : (flow.flows?.[flowIndex]?.nodes ?? [])
+    if (nodes.length === 0) return { ok: false, message: '这张图是空的，没有可补的端点' }
+
+    const hasStart = nodes.some(node => node.type === 'start')
+    const hasEnd = nodes.some(node => node.type === 'end')
+    if (hasStart && hasEnd) return { ok: false, message: '这张图已经有开始和结束了' }
+
+    const targets = new Set(nodes.flatMap(node => (node.out ?? []).map(edge => edge.to)))
+    // 入口 = 没有入边的节点；末尾 = 没有出边的节点。
+    const entries = nodes.filter(node => node.id !== undefined && !targets.has(node.id) && node.type !== 'end')
+    const tails = nodes.filter(node => (node.out ?? []).length === 0 && node.type !== 'start')
+
+    const items = (flowIndex < 0 ? (doc.getIn(['nodes']) as { items?: unknown[] }) : (doc.getIn(['flows', flowIndex, 'nodes']) as { items?: unknown[] }))
+    if (items?.items === undefined) return { ok: false, message: '读不出节点表' }
+    const list = items.items as unknown[]
+
+    const added: string[] = []
+    if (!hasStart) {
+      const id = this.freeNodeId(doc, flowIndex, 'start')
+      const above = entries[0]?.pos
+      list.push({
+        id,
+        type: 'start',
+        // 只在上游本来就有坐标时才自己写一个：整张图都没坐标的话，交给自动布局统一算，
+        // 混着写会出现「两个端点自己排在 (0,0)」这种别扭的图。
+        ...(above === undefined ? {} : { pos: { x: Number(above.x ?? 0), y: Math.max(0, Number(above.y ?? 0) - NEW_NODE_ROW_STEP) } }),
+        ...(entries.length === 0 ? {} : { out: entries.map(node => ({ to: node.id })) }),
+      })
+      added.push('开始')
+    }
+    if (!hasEnd) {
+      const id = this.freeNodeId(doc, flowIndex, 'end')
+      const below = tails[0]?.pos
+      list.push({
+        id,
+        type: 'end',
+        ...(below === undefined ? {} : { pos: { x: Number(below.x ?? 0), y: Number(below.y ?? 0) + NEW_NODE_ROW_STEP } }),
+      })
+      // 末尾指向新的结束节点：原来没有出边的那些节点都接过来。
+      for (const tail of tails) {
+        if (tail.id === undefined) continue
+        const at = flowIndex < 0 ? ['nodes'] : ['flows', flowIndex, 'nodes']
+        const index = nodes.indexOf(tail)
+        doc.setIn([...at, index, 'out'], [{ to: id }])
+      }
+      added.push('结束')
+    }
+
+    if (added.length === 0) return { ok: false, message: '这张图已经有开始和结束了' }
+    return { ok: true, text: doc.toString(), message: `已补上：${added.join('、')}` }
   }
 
   /**
@@ -1106,10 +1472,14 @@ export class TaskEngine {
   async removeFlowNode(nodeId: string): Promise<TaskEdit> {
     const loaded = this.loadFlowDoc(nodeId)
     if (!loaded.ok) return loaded
-    const { doc, flowIndex, nodes } = loaded
+    const { doc, flowIndex, nodes, path } = loaded
 
-    const plain = doc.toJS() as { flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[] }
-    const plainNodes = plain.flows?.[flowIndex]?.nodes ?? []
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[]
+    }
+    // 两种形状都要认，否则一图一文件模式下永远「找不到节点」，删都删不掉。
+    const plainNodes = flowIndex < 0 ? (plain.nodes ?? []) : (plain.flows?.[flowIndex]?.nodes ?? [])
     const items = nodes.items as unknown[]
     const index = plainNodes.findIndex(item => item.id === nodeId)
     if (index < 0) return { ok: false, message: `找不到节点「${nodeId}」` }
@@ -1125,11 +1495,15 @@ export class TaskEngine {
         if (edge['to'] !== nodeId) return [edge]
         return typeof leavingTarget === 'string' ? [{ ...edge, to: leavingTarget }] : []
       })
-      doc.setIn(['flows', flowIndex, 'nodes', other, 'out'], repaired)
+      doc.setIn(
+        flowIndex < 0 ? ['nodes', other, 'out'] : ['flows', flowIndex, 'nodes', other, 'out'],
+        repaired,
+      )
     }
     items.splice(index, 1)
 
-    await writeTextFile(this.rulesPath, doc.toString())
+    // **写回它所在的那个文件**（同 addFlowNode：不能写死 rules.yml）。
+    await writeTextFile(path, doc.toString())
     await this.reloadRules()
     return { ok: true }
   }
@@ -1265,6 +1639,68 @@ export class TaskEngine {
     return { ok: true }
   }
   /**
+   * 把一条出边往上/往下挪一位。
+   *
+   * `分支`（switch）按**文件里的顺序**从上往下判定，第一个条件成立的边赢——所以顺序
+   * 就是优先级，而以前这件事只能靠手改 YAML。兜底边（没有 `when`）永远成立，排在它
+   * 后面的边一条都走不到，挪一下就能修好。
+   * @param input - 从哪个节点、第几条出边、往哪个方向。
+   * @returns 成功，或为什么没挪成。
+   */
+  async moveFlowEdge(input: {
+    readonly from: string
+    readonly index: number
+    readonly direction: 'up' | 'down'
+    readonly flowId?: string
+  }): Promise<TaskEdit> {
+    const located = this.locateFlow(input.from, input.flowId)
+    if (located === undefined) return { ok: false, message: `找不到节点「${input.from}」所属的图` }
+    const path = located.path
+    let raw = ''
+    try { raw = readFileSync(path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: '读不到规则文件：' + path }
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: '规则文件读不出来：' + (error instanceof Error ? error.message : String(error)) }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: '规则文件有语法错误，先修好它：' + (doc.errors[0]?.message ?? '') }
+    }
+
+    const found = locateNode(doc, input.from)
+    if (found === undefined) return { ok: false, message: `文件里找不到节点「${input.from}」` }
+    const { flowIndex, nodeIndex } = found
+    const at = (key: string): (string | number)[] =>
+      flowIndex < 0 ? ['nodes', nodeIndex, key] : ['flows', flowIndex, 'nodes', nodeIndex, key]
+
+    const plain = doc.toJS() as {
+      nodes?: { id?: string; out?: Record<string, unknown>[] }[]
+      flows?: { nodes?: { id?: string; out?: Record<string, unknown>[] }[] }[]
+    }
+    const allNodes = flowIndex < 0 ? (plain.nodes ?? []) : (plain.flows?.[flowIndex]?.nodes ?? [])
+    const edges = [...(allNodes[nodeIndex]?.out ?? [])]
+    if (input.index < 0 || input.index >= edges.length) {
+      return { ok: false, message: `「${input.from}」没有第 ${String(input.index + 1)} 条出边` }
+    }
+    const target = input.direction === 'up' ? input.index - 1 : input.index + 1
+    if (target < 0 || target >= edges.length) {
+      return { ok: false, message: input.direction === 'up' ? '已经是第一条了' : '已经是最后一条了' }
+    }
+    const moved = edges[input.index]
+    const displaced = edges[target]
+    if (moved === undefined || displaced === undefined) return { ok: false, message: '这条出边读不出来' }
+    edges[target] = moved
+    edges[input.index] = displaced
+
+    doc.setIn(at('out'), edges)
+    await writeTextFile(path, doc.toString())
+    await this.reloadRules()
+    return { ok: true, message: `已挪到第 ${String(target + 1)} 条` }
+  }
+
+  /**
    * 改一条边的条件。
    *
    * 条件是「这条规则凭什么被选中」，`when: []` 表示无条件（兜底，总是成立）。
@@ -1352,7 +1788,7 @@ export class TaskEngine {
 
     /** 规则 id：中文名转不了 slug 时退回时间戳，保证文件能建出来。 */
     const ascii = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    const ruleId = ascii === '' ? 'rule-' + String(Date.now()) : ascii
+    const ruleId = this.freeFlowId('rule', ascii)
     const nodeId = 'call-' + ruleId
 
     if (this.workflows.has(ruleId)) return { ok: false, message: `已经有叫「${ruleId}」的子工作流了` }
@@ -1360,15 +1796,24 @@ export class TaskEngine {
       return { ok: false, message: `事件流里已经有「${nodeId}」这个节点了` }
     }
 
-    // 1) 先建子工作流文件：一个「结束」就够了，具体动作在它的编排页里加。
+    // 1) 先建子工作流文件：开始 → 结束。入参/出参在「开始/结束」里声明，
+    //    没有开始节点的话，谁传了什么、缺什么只能去读调用方那一侧。
     const workflowPath = join(this.workflowsDir, ruleId + '.yml')
     try {
       mkdirSync(this.workflowsDir, { recursive: true })
       writeFileSync(
         workflowPath,
         stringifyFlowDocument(
-          { id: ruleId, name, connector: located.flow.connector, nodes: [{ id: 'end', type: 'end' }] },
-          { header: '新建的规则流程：在这里加它要做的事。' },
+          {
+            id: ruleId,
+            name,
+            connector: located.flow.connector,
+            nodes: [
+              { id: 'start', type: 'start', out: [{ to: 'end' }] },
+              { id: 'end', type: 'end' },
+            ],
+          },
+          { header: '新建的规则流程：在「开始」和「结束」之间加它要做的事。' },
         ),
         'utf8',
       )
@@ -1411,8 +1856,16 @@ export class TaskEngine {
     nodes.splice(insertAt, 0, { id: nodeId, type: 'workflow', config: { workflow: ruleId }, out: [{ to: 'end' }] })
 
     const edges = [...(nodes[fromIndex]?.out ?? [])]
-    const edgeIndex = edges.length
-    edges.push({
+    /**
+     * 新规则插在**第一个无条件边之前**。
+     *
+     * 分支按顺序判、第一条命中的生效，而无条件边就是兜底：追加到它后面等于「永远不会
+     * 命中」——界面上刚建完就会弹「第 N 条是无条件兜底，它后面还有 1 条」。新建一条规则
+     * 的本意是让它生效，不是让它排在兜底后面等着。
+     */
+    const firstCatchAll = edges.findIndex(edge => (Array.isArray(edge['when']) ? edge['when'] : []).length === 0)
+    const edgeIndex = firstCatchAll < 0 ? edges.length : firstCatchAll
+    edges.splice(edgeIndex, 0, {
       to: nodeId,
       ...(input.when === undefined || input.when.length === 0 ? {} : { when: input.when }),
     })
@@ -1465,13 +1918,15 @@ export class TaskEngine {
    * - 合集文件：`flows[0].nodes`（`flowIndex = 0`）
    * @param nodeId - 这个节点属于哪张图；不给时取第一张。
    */
-  private loadFlowDoc(nodeId?: string): {
+  private loadFlowDoc(nodeId?: string, flowId?: string): {
     readonly ok: true
     readonly doc: YamlDoc
     readonly flowIndex: number
     readonly nodes: YamlSeq
+    /** 这份图的文件：**写回时必须用它**，不能写死 `rules.yml`。 */
+    readonly path: string
   } | { readonly ok: false; readonly message: string } {
-    const located = this.locateFlow(nodeId)
+    const located = this.locateFlow(nodeId, flowId)
     const path = located?.path ?? this.rulesPath
     let raw = ''
     try {
@@ -1494,7 +1949,7 @@ export class TaskEngine {
     /** 单图文件：`nodes` 在根上。 */
     const rootNodes = doc.getIn(['nodes']) as YamlSeq | undefined
     if (rootNodes !== undefined && Array.isArray(rootNodes.items)) {
-      return { ok: true, doc, flowIndex: -1, nodes: rootNodes }
+      return { ok: true, doc, flowIndex: -1, nodes: rootNodes, path }
     }
 
     const flows = doc.getIn(['flows']) as YamlSeq | undefined
@@ -1505,13 +1960,18 @@ export class TaskEngine {
     if (nodes === undefined || !Array.isArray(nodes.items)) {
       return { ok: false, message: '第一张流程图没有节点列表' }
     }
-    return { ok: true, doc, flowIndex: 0, nodes }
+    return { ok: true, doc, flowIndex: 0, nodes, path }
   }
 
   /** 造一个这张图里没被占用的节点 id。 */
   private freeNodeId(doc: YamlDoc, flowIndex: number, type: string): string {
-    const data = doc.toJS() as { flows?: { nodes?: { id?: string }[] }[] }
-    const taken = new Set((data.flows?.[flowIndex]?.nodes ?? []).map(node => node.id))
+    const data = doc.toJS() as {
+      nodes?: { id?: string }[]
+      flows?: { nodes?: { id?: string }[] }[]
+    }
+    // 一图一文件时节点在根上；只看 `flows[i]` 会让生成器以为图是空的，造出重名 id。
+    const existing = flowIndex < 0 ? (data.nodes ?? []) : (data.flows?.[flowIndex]?.nodes ?? [])
+    const taken = new Set(existing.map(node => node.id))
     const base = type.replace(/[^a-zA-Z0-9_-]/g, '-')
     for (let index = 0; index < 1000; index += 1) {
       const candidate = `${base}__${String(index)}`
