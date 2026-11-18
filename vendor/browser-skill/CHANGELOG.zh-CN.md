@@ -1,0 +1,448 @@
+# 更新日志
+
+BrowserSkill 的重要变更记录于此，格式参考 [Keep a Changelog](https://keepachangelog.com/)。
+CLI、扩展和 DSH 插件可以分别发布，能否连接由协议兼容性决定。更新日志的中英文版本须在同一 PR 中同步更新。
+
+## [0.5.0] - 2026-11-12
+
+### 新增
+
+- 新增 daemon 本地 `<3ms` 预写意图账本（`$BSK_HOME/intent_ledger.jsonl`，`0600` 权限）与
+  `bsk ledger status | resolve` 子命令：在派发层统一覆盖所有变异操作（`click`、`fill`、`press`、
+  `select`、`upload`、`drag`、`evaluate`），无论使用 `--ref`、原始 CSS `--selector` 还是视觉坐标
+  `(image_x, image_y)` 均提取脱敏目标摘要保护（绝不落盘 `fill` 明文输入或 `evaluate` 脚本内容）。
+  当调用因超时、取消、断连或 `effect_state: "unknown"` 结束（含 daemon 重启恢复残留 `DISPATCHED`
+  记录）时进入 `UNKNOWN` 冻结态，在 `<1ms` 内以 `uncertain_prior_effect` 拦截同标签页盲目变异重放，
+  100% 放行只读与诊断命令，并在执行 `bsk sync` 时零摩擦自动对账解锁。
+- 新增零仪式生命周期命令（`bsk open`、`bsk sync`、`bsk close`）与 daemon 内存级
+  `ImplicitScopeRegistry`：提供确定性 `caller_scope` 并发隔离（`--session` >
+  `--scope` / `BSK_SESSION` / `BSK_SCOPE` > `bsk mcp` 进程级连接作用域 > 宿主子代理环境变量 >
+  防静默抢占 `"default"` 槽位）、单调短证据别名（`c1..cN`、`o1..oN`）、可选 `--session` /
+  `target` 策略省略 `--context` 自动还原以及 `unchanged` 缓存 VOM 补齐，且保持扩展侧共驾安全校验不变。
+- 动作可供性增强的 VOM 渲染与 `<select>` 标签选择：无名输入控件绑定紧邻前置静态文本为 `[field: "..."]` 并消除消费标签重复输出；中文父子文本回声去重收紧为精确全等匹配；非敏感原生 `<select>` 内联展示前 10 个选项（`[options: val="Label"* | ...]`），`select` 支持按唯一无歧义可见标签选择、以 `option_ambiguous` 拒绝同名歧义标签、在 `option_not_found` 中附带前 12 个合法候选，并对自定义 ARIA 下拉（`[custom-dropdown: ...]`）给出先点击展开的恢复引导；同一表内连续 3 行及以上的纯只读数据行无损折叠为单行管道格式。
+- 基于计算样式的隐形提示注入剥离与零额外 RPC 虚拟滚动行主键守卫：静态采集与悬停探测自动剥离通过 `opacity < 0.05`、`font-size <= 1.5px`、前景背景零对比度、远屏外偏移或 `< 2px` 裁剪隐藏的非交互注入子树（完整保留交互元素、按钮内部 `.sr-only` 无障碍名称、`<label for>` 及 `aria-labelledby`/`aria-describedby` 引用目标）；位于表格行、列表项或虚拟行池内的 `@eN` 引用在发布时记录归一化业务行锚点 `rowAnchor`，并在 `checkActionTarget` 单次 `SAMPLE_TARGET` 采样中原子核验，在动作派发前阻断原地复用的虚拟列表 DOM 节点（`virtual_row_recycled`，`effect_state: none`）。
+- 新增 Qoder 和 Qoder CN 的 skill 安装目标，可使用 `bsk install-skill --harness qoder` 和
+  `--harness qoder-cn`。
+- 本机配对支持双向身份验证、持久化密钥轮换和中断恢复。已配对连接在发送业务请求前验证 daemon，激活后原链接失效。撤销与浏览器注册串行执行，撤销成功后对应连接已清理。
+- `bsk daemon pair --replace`、本机设备列表和撤销、`daemon rotate` 及 `daemon trust-local on|off`。状态和诊断命令提供配对指引。
+- 扩展增加配对设置、分阶段验证、十种语言的指引和跳过验证确认。切换到本机模式时保留远程授权。新安装和升级均可使用未配对连接，扩展显示身份提示和官方安全说明。已配对连接和待恢复凭据都需要继续验证。
+- `bsk daemon pair` 会复用或启动 daemon，再返回可用链接。用户可以显式开启 Required 模式。默认策略保护已配对的浏览器身份。
+
+- 页面内控制面板可收起为右边缘的展开箭头；同一任务内的状态刷新和页面导航会保留收起状态。
+- `bsk plan` 和 MCP 工具 `bsk_plan` 在一次调用中依次执行多个已决定的动作，并返回同步后的状态。
+  填写表单或设置筛选条件只需一个模型回合，不必每个动作一回合。每一步都保留对应命令的全部检查，
+  第一个未完成的步骤会终止计划，且不做任何重试。
+- DSH 插件通过 `bsk_interact(action=plan)` 一次执行多个已决定的动作，检查、终止规则和回执与 `bsk plan` 相同。
+- 设置 `recipes` 选项或 `BSK_RECIPES=1` 后，DSH 插件提供 `bsk_recipe`。运行使用插件自己的会话，
+  未完成的运行会保留回执，且不提供批准动作。
+- `bsk recipe` 把验证过的流程保存为本地文件并回放，直接返回输出，不必每步花一个模型回合；
+  设置 `BSK_RECIPES=1` 后 MCP 会列出 `bsk_recipe`。按角色、名称和上下文精确定位，遇到第一个偏离就停下并把页面交回。
+  此版本只回放只读和可逆步骤：降低风险的步骤要由人用 `bsk recipe approve` 批准后才会运行，
+  结果不确定的运行会锁住该配方，直到调用方确认已核实。详见 `docs/recipes.md`。
+- `bsk read`、MCP 和 DSH 的 `bsk_inspect(action=read)` 通过隔离世界中的固定同步查询读取有界 DOM 字段。Agent 可跨无关动画读取当前标题、URL、文本、属性和表单状态，再通过明确的业务条件执行操作。不接受调用方 JavaScript、回调或延迟副作用，并对敏感字段脱敏。
+- DOM 读取使用协议 1.9 能力协商，旧组件明确报不支持，不回退到脚本执行。视觉和无目标输入仍保留严格观察保护。
+- 新增 `bsk evaluate --unverified`（MCP 为 `params.unverified`，DSH 为 `unverified`）：执行脚本前不比对页面与任何观察，
+  用于持续变化的页面上依赖无法声明的脚本。控制权、主文档身份和标签页归属仍然检查；不能与 `--expect`、`--observation`、
+  `--depends-on` 同用，回执带 `verified: false`。daemon 和扩展都需要协议 1.9，低于 1.9 的组件在派发前明确报不支持。
+  更早的 1.9 开发版无法通过协议号区分，需要同时更新 CLI、重启 daemon 并重新加载匹配的扩展。
+
+### 变更
+
+- 单步交互热路径提速并削减约 85% 冗余串行 IPC/CDP 往返：`target` 共驾策略下在动作入口完成单次
+  `verifyDecision()` 预检后，对不会产生原生 `isTrusted` 输入的内部准备/脚本类 CDP 步骤采用同步零 RPC
+  内存级栅栏（完整保留推送式真实人类介入毫秒级中断与 `strict` 策略兼容），消除 `beforeinput`
+  双重跨帧广播轮询并优化未介入 Agent 窗口标签页的 `finishInput` 收尾开销；将 `handleFill`
+  压缩为 3–4 步乐观极速通道，废除页面自动格式化导致的 `fill_value_mismatch` 硬报错并为非敏感控件回传
+  `actual_value` 与 `formatted`；业务 CLI 命令升级为基于 `daemon.json` 的乐观单次 UDS 直连，仅在首次
+  `connect()` 未连接阶段按需回退自动拉起 daemon，确保零重复派发风险。
+- 将 CLI 内置 `SKILL.md` 重写为零预读闭环（`<= 2,000` UTF-8 字节）并完整保留四大安全红线，
+  移除 `cooperate sync` 回执中每回合重复的静态 `guidance` 文本，同时为 `ChromiumCdp` 增加
+  75 秒四重硬守卫空闲软卸载（保留会话归属、控制台/网络 `since` 游标、未变化页面的 `@vN` 与跨源
+  OOPIF `@eN` 引用、待处理原生弹窗，以及下载/上传/导航等待/录屏流的连接租约，支持下一命令无感重连）及
+  `bsk close` / `bsk tab return` 时的 0 秒立即卸载。
+- 协作同步与严格动作前置校验按标签页复用 10 秒滑动 TTL 的 `Accessibility` 域租约，在仅比对场景的证据校验和增量刷新中跳过无用的 VOM 文本渲染，采用流式逐节点比对替代全页证据序列化，并降低大页面语义图与 VOM 渲染的内存分配开销。
+- 扩展弹窗的连接设置不再折叠，始终展开。未配对的建议收起为标题旁的三角警示图标，点击后展开；
+  已跳过验证和阻断连接的状态仍直接显示。当前地址显示在所选模式下方，配对步骤改为点击信息图标查看，
+  “使用新的配对链接”改为按钮，保存后果的说明只在有可保存的有效修改时显示。
+- `bsk plan` 和 `bsk recipe` 作为标准 CLI 工作流提供文档与内置 skill 指引；MCP 和 DSH 中的 recipe 工具仍按需启用。
+- Recipe 的运行和修改共用互斥锁；安全状态不可读或运行标记不可写时拒绝回放，宿主进程仍存活时也保留中断运行的核实要求。DSH 完整收集取消后的 plan 和 recipe 回执。
+
+- 扩展移除过时的迁移标志和版本限制，继续采用可选配对。
+- `bsk-protocol` 统一承载方法元数据、JSON Schema、TypeScript 请求与回执编解码、daemon 与扩展的穷尽执行策略表，以及协议 1.2–1.9 对端能力兼容检查（`pnpm protocol:check`）。
+
+### 修复
+
+- 停止录制时协调录制会话清理。清理需要重试时，保留已捕获的步骤（[#720](https://github.com/Tencent/BrowserSkill/pull/720)）。
+- DSH 的 skill 和插件文档说明如何在 PTC 模式下通过 `run_code` 调用 BrowserSkill 工具（[#721](https://github.com/Tencent/BrowserSkill/pull/721)）。
+- 空闲时卸载调试器会等待对话框关闭和活跃下载结束，重新连接后仍保留元素引用（[#711](https://github.com/Tencent/BrowserSkill/pull/711)）。
+- `target` 策略下的 `cooperate sync` 在上次观察之后页面只发生可见文本原位替换时，不再重传整页 VOM。内容脚本把纯文本的 mutation 批次与结构性批次分开计数并记录；扩展返回 `kind: "delta"`，附带 `observation_patch.lines`、`changes` 中的 `kind: "text"` 条目（旧值、新值、涉及的 VOM 行号）以及 `previous_observation_id`。`--baseline` 指向精确前驱时，CLI 应用该补丁，通过 `--save-full` 保存合并后的观察，并且不在 stdout 输出整页文本；`view` 以零浏览器调用读取合并后的版本。在 6,857 个节点的 `ARENA-MEGA-VOM-DELTA` 夹具上，第三次同步由约 2.2 秒、574 KB 降到约 0.2 秒、2 KB，合并文本与新鲜抓取完全一致。结构变化、文档或 ref 被替换、人工操作、字段变化、存在焦点相关样式时的焦点移动、记录缺口、文本不在已持有观察内或有歧义、子帧以及 token 预算偏移仍返回新鲜的 `baseline`，并新增 `baseline_reason` 说明原因。`strict` 策略的行为以及目标和观察守卫保持不变（[#722](https://github.com/Tencent/BrowserSkill/pull/722)）。
+- 加固 VOM 隐形提示注入剥离器对 CSS Color 4/5、渐变裁切文字、HiDPI 微盒、内部滚动容器及混合文本容器的判定精度：将 `oklch`/`oklab`/`lab`/`lch`/`hsl`/`hwb`/`color()`/`color-mix()` 统一解析为 sRGB 以覆盖跨色域零对比度与零透明度检测（含 Tailwind v4 `oklch()` 背景栅栏及 `currentColor 0%` 混合色）；在保留真实 `background-clip: text` / `-webkit-background-clip: text` 渐变标题的同时剥离全透明、零跨度色标及与背景同色的伪渐变注入；按 HiDPI/Retina 缩放比例归一化 `1px` 微盒与屏外偏移阈值；结合 `DOMSnapshot` 内部滚动偏移（`scrollRects`）与 `#text` 字形边界保留真实已滚动行列并拦截未滚动容器内的 `left: -99999px` / `-2000px` / `text-indent: -9999px` 离屏注入；同时清理保留容器上的直属隐形文本与受污染的无障碍 `name`（[#709](https://github.com/Tencent/BrowserSkill/pull/709)）。
+- `wait-for-navigation` 不再在待等待的导航尚未开始或仍在进行时直接按旧页面返回。已加载完成的页面需在短暂宽限期内没有主框架导航开始才视为已到达；一旦导航开始或 Chrome 报告有待提交的导航，只有新文档能满足等待。同文档导航和往返缓存恢复仍会立即完成（[#700](https://github.com/Tencent/BrowserSkill/issues/700)）。
+- VOM 快照解码与语义图 DOM 文本回退解析排除 `<style>`、`<script>`、`<noscript>` 与 `<template>`
+  子树（以及 HTML 注释节点），避免缺少无障碍名称的控件将 CSS、脚本或模板内容泄漏为标签文本
+  （[#694](https://github.com/Tencent/BrowserSkill/issues/694)）。
+- 原生点击、按键和滚轮输入会校准 Chromium 的输入时钟，避免长时间运行的浏览器在休眠或校时后
+  将自身输入误判成人工介入。校准在扩展的隐藏文档中进行，保留现有输入检查，并在派发前报告时钟故障
+  （[#665](https://github.com/Tencent/BrowserSkill/issues/665)）。
+- `tool.record_start` 执行共享标签页归属、任务终止与人工持有检查，并在启动录制时使旧控制凭证失效；`tool.tab_return` 对本地会话和远程会话同样清理进行中的录制。
+- `navigate back` 和 `navigate forward` 在 Chrome 从往返缓存恢复历史记录时不再等待超时。恢复的文档已经加载完成，不会再发出新的加载生命周期事件，因此恢复提交即视为达到 `domcontentloaded` 和 `load`，并在恢复的文档上重新启用生命周期事件重放，使此前已空闲页面的 `networkidle` 等待也能正常完成（[#701](https://github.com/Tencent/BrowserSkill/issues/701)）。
+- daemon 关闭时保留 WebSocket 停止通知，避免接收循环尚未等待时丢失通知，导致 `daemon stop` 等待不结束。
+- 网站调试将 Agent 发起的上传和下载归入对应传输操作，不再把产生的文件变更和点击误记为人工输入。
+- 预写意图账本不再在动作确定未生效时冻结标签页。仅滚动后即被拒绝的点击（`effect_state: "unknown"` 且 `press_sent: false`）以及报告 `dispatched: false` 的失败现在都判为已结算。`select` 在滚动或聚焦元素之前校验所选选项，`fill` 在清空之前校验输入值；在这些位置发现的拒绝（`option_not_found`、`option_ambiguous`、`<select>` 被禁用、`fill_value_invalid`、`target_not_fillable`）报告 `effect_state: "none"` 与 `phase: "precondition"`，修正参数后重试既不需要 `bsk ledger resolve`，也不会丢失共享控制凭证。若同类原因在 `select` 移动焦点之后或 `fill` 清空字段之后才报告，仍保持效果未知。本已禁用的 `<select>` 现在报告 `invalid_params`，而不是聚焦失败的 `cdp_failed`（[#702](https://github.com/Tencent/BrowserSkill/issues/702)）。
+- upload、download、plan 和 step 的本地校验失败返回稳定的参数或文件错误码，并提供对应修复提示。上传源文件在连接 daemon 或暂存任何文件前完成检查。
+- `bsk get-html --json --out <file>` 不再把 HTML 输出到标准输出。指定 `--out` 时，JSON 结果只报告 `tab_id`、`path`、`written_bytes`、`byte_size`、`truncated` 以及可能出现的对话框，避免大页面进入调用方上下文；未指定 `--out` 时 JSON 结果仍包含 `html`（[#715](https://github.com/Tencent/BrowserSkill/issues/715)）。
+- 在没有焦点的页面（后台标签页，或其他窗口获得焦点时的 Agent 窗口）中，`fill` 会在校验和清空字段之前先送达焦点，设置默认值的焦点监听器不再把默认值留在输入内容前面，也不会在标签页激活时恢复默认值。可见页面通过移到视口之外、不会落到任何元素上的指针移动获得焦点；隐藏页面或指针悬停中的页面仍使用原来的空按键，页面可以观察到一次空键。密码、银行卡和一次性验证码字段被截断或改写时报告 `formatted: true`（人类可读的 CLI 输出同样显示），但不返回 `actual_value`；名称类似密码的文本输入框（例如“显示密码”切换后的字段）也按敏感字段处理（[#713](https://github.com/Tencent/BrowserSkill/issues/713)）。
+- `fill` 对每个最终值只通知一次。原生插入或清空步骤已经派发 `input`，完成阶段不再重复派发
+  （[#624](https://github.com/Tencent/BrowserSkill/issues/624)）。
+- 借用仍显示 `about:blank` 或浏览器空白新标签页（`chrome://newtab/`、`edge://newtab/`、`about:newtab`，含带查询串或 `#hash` 的变体）的用户标签页后，不再导致会话内标签页管理与初始导航死锁。没有采集脚本的初始空白或新标签页根文档在标签页管理准备阶段会被跳过并允许执行首次引导导航；若借用的标签页停留在浏览器受限页面或根文档加载失败页，`tab return` 也可在不销毁会话的情况下将其归还。已注入采集器的 `about:blank` 弹窗、其他无法观察的普通网页及子框架仍须先同步或按原规则拒绝（[#703](https://github.com/Tencent/BrowserSkill/issues/703)）。
+- 窗口失焦时释放已完成的文本编辑保持；任务静置间隙后的新同步在无进行中手势或近期输入时自动恢复暂停或编辑状态，避免跨任务指令时重复提示手动交回控制权。
+- `bsk sync` 与 `bsk open` 按完整页面判断 `--wait-for` 和 `--wait-not`。strict 策略下的 `delta` 帧，以及没有缓存页面的 `unchanged` 帧，会通过 `tool.snapshot` 读取一次完整页面，不再只匹配 `[change ...]` 行或空文本；被 `--max-tokens` 截断的页面会先完整读取，`--wait-not` 才认定文本已消失。经过多轮轮询才返回的等待，也会报告未返回的帧中的字段改动、活动记录和 `history_complete=false`。读取页面失败时继续轮询，不再直接结束等待（[#714](https://github.com/Tencent/BrowserSkill/issues/714)）。
+- 录制保留名称超过 48 个字符的按钮和链接的点击，例如 GOV.UK 分步指南的展开按钮和较长的新闻标题。
+- 录制保留与搜索框同在一个表单中的链接、筛选折叠项、复选框等控件的点击，例如 GOV.UK 的搜索结果和筛选条件。
+- 页面滚动或目标尺寸变化后，录制的步骤仍能关联到元素 ref：位置对不上时，使用唯一一个同标签、同角色、同名的 ref。点击 `<summary>`、标签页或选项内部的文字时，按该控件本身取位置。
+- Recipe 保存时检查输入及格式化后的文件大小，避免生成自身无法读取的修订版本。
+- `press` 为美式键盘标点补上物理 `code` 与虚拟键码，`Ctrl+/` 这类快捷键能够触发依据 `event.code` 判断的处理器。
+- 主文档 SPA 路由变化（包括切走后恢复原 URL 和 hash 路由）撤销旧控制上下文和 ref；补充读取不会更新这些凭证。
+  已加载标签页的被动读取和新建 debugger 连接同样受到保护。
+- 携带控制上下文的读取保留框架收集失败的具体原因，并以 `effect_state: none` 报告派发前错误；主文档或子框架暂时缺少根元素时返回 `read_target_stale`，不再归为通用 CDP 故障。
+- CLI、MCP、DSH 及内置 skill 引导动态页面的数据读取使用 read/extract，避免反复 sync/evaluate 拒绝。
+- 脚本声明了自己的依赖时，只校验这些依赖，不再比对整页，无关的时钟、信息流和媒体变化不会再让脚本陷入反复拒绝。
+  目标策略下，带 `--expect` 且不带 `--observation` 的 `evaluate` 可复用控制凭证，子 frame 导航也不再拦截它；
+  同时传入 `--observation` 时仍比对整页。
+  严格策略下，带 `--depends-on` 的 `evaluate` 只校验这些区域、表单值和模态层；此前还会额外要求整页一致。
+  未声明依赖的脚本校验方式不变。
+- 因观察内容变化而拒绝时，回执增加 `observed_changes`：变化、新增、移除的节点数和最多五个示例。
+  针对脚本，恢复提示和内置 skill 给出了尝试顺序：先声明依赖，无法声明时才使用 `--unverified`。
+- 控制状态采样在浏览器证实失败的子文档已退出后有界重新收集一次；仍存在但不可观测的框架继续阻止输入。
+- 框架未在时限内响应收集时，错误消息和 `data.frames` 会标明该框架（frame ID 及去除敏感部分的 origin 与路径；标签页操作另附所在标签页）。拒绝原因仍为 `cooperation_sync_required`，`--settle`、recipe 和 DSH 照常重试；恢复建议说明框架持续无响应时如何退出（[#614](https://github.com/Tencent/BrowserSkill/issues/614)）。
+- 无法收集的子框架若其元素未显示、没有面积或不可见，且未持有焦点，会以 `hidden_frame` 列入 `frame_gaps`，不再阻塞整个标签页，例如微前端的沙箱 iframe。之后的收集重新检查该元素，不再重复等待该框架；仍显示的框架继续阻止输入（[#614](https://github.com/Tencent/BrowserSkill/issues/614)）。
+- 已被 CDP 回收的移除节点与仍可检查的脱离节点统一返回 target_detached，并保留节点身份；其他 CDP 故障仍返回 target_unavailable。
+- 录制捕获 open shadow root 内原生 `<select>` 的选项变化；这类控件的 `change` 事件不会到达 document。
+- strict DOM 定向动作仅容忍自身悬停后增减的非交互提示气泡，以及自身聚焦后增减、通过 `maxlength` 或 `aria-describedby` 与聚焦文本框关联的字数计数器。目标含义、链接、普通文字、表单状态、模态正文和显式依赖继续精确比较；脚本、无目标按键和视觉点击在准备阶段也保留完整观测检查（[#540](https://github.com/Tencent/BrowserSkill/issues/540)）。
+- 未声明 `--depends-on` 的定向 strict 动作，与声明了依赖时一样，容忍页面其他位置经正向识别的媒体时间轴。无名、会提交或位于表单内的滑块，以及无目标动作，仍保持精确比较。
+- 证据拒绝返回 `observed_change`（第一处差异的节点、字段、所属检查，以及发生在决策阶段还是准备阶段），不包含输入值和敏感文本。准备步骤之后被拒绝的 strict 点击同时返回 `press_sent: false`。
+- 因同一会话上一条命令仍在结算（例如被取消的观测截图）而被拒绝的请求，现在带有 `reason: operation_settling`、`retryable` 和 `retry_after_ms`。`cooperate sync --settle` 会暂停后重新同步（最多 5 秒，旧版扩展同样适用），CLI 不再建议同样需要该次同步的 reload（[#527](https://github.com/Tencent/BrowserSkill/issues/527)）。
+- `upload` 在事务清理主动断开 debugger 或操作后框架收集失败时保留具体的处理器失败回执（如未开启扩展“允许访问文件网址”权限时的 `set_file_input_failed` 与 `file_drop_failed` `-32000 Not allowed`），不再将其掩盖为 `control_context_invalid`；`dragEnter` 立即拒绝时保持 `effect_state: none`，且不再冗余发送 `dragCancel`（[#636](https://github.com/Tencent/BrowserSkill/issues/636)）。
+- 录制保留提交、重置和图片输入按钮的点击，包括搜索框旁的按钮操作，并使用重置按钮的可见值作为名称。
+
+- 协作状态刷新保留正在使用的点击穿透，避免控制面板或收起后的箭头吞掉自动化页面点击。
+- 录制保留编辑器内 `contenteditable="false"` 区域（如附件操作）中按钮和链接的点击，不再将其当作编辑器输入而丢弃。
+
+- `extract` 对表格单元格、表头、列表字段和发现预览中的文本应用 CSS `uppercase` 与 `lowercase`，保留子元素样式覆盖和语言相关的大小写映射；转换后的文本仍受字节预算约束（[#597](https://github.com/Tencent/BrowserSkill/issues/597)）。
+- 关闭保留的 Agent 窗口或停止最后一个会话时，释放剩余的 CDP 调试连接并取消会话在途操作，避免任务窗口关闭后浏览器顶部仍残留调试横幅。
+
+## [0.4.2] - 2026-11-05
+
+### 新增
+
+- 浏览器浮层显示会话控制者的 Agent 名称、项目、会话 ID 和颜色；CLI 和 DSH 启动会话时支持传入这些显示信息。
+- 填写支持 date、time、datetime-local、month 和 week 输入框，校验格式与 min/max 范围，并保留后台输入状态。
+- `bsk mcp` 让 MCP 客户端通过标准输入和输出，借助现有守护进程与浏览器扩展控制 BrowserSkill。`bsk install-skill --mcp` 可为 Codex、Claude Code 和 Cursor 配置 MCP 服务。
+
+### 变更
+
+- 借用标签根据原相邻标签恢复归还位置，改善固定标签和分组恢复；关闭借用确认后，符合条件的请求支持自动借用。
+- 扩展恢复使用 `tabGroups` 权限，以读取和还原借用标签的原分组。
+- 共享控制在用户最后一次已完成操作后连续安静 2 秒再交回 Agent，原阈值为 650 毫秒。
+- CLI 和 daemon 更新优先使用官网国内下载源；清单或安装包下载、验证失败时回退 GitHub。安装包回退固定为已选版本并保留 SHA256 校验，两个源都失败时逐项报告 URL 和失败原因。显式指定的自定义清单仍只使用配置的源。
+
+### 修复
+
+- 元素等待在匹配节点被替换后重新查询选择器，避免替代节点仍可见却误报隐藏或移除成功。
+- 仅在请求时开启控制台采集，避免部分反调试页面反复刷新，并保留采集诊断。
+- 调试证据对精确匹配的厂商凭据请求头脱敏。
+- DSH 填写和选择以 `-` 开头的值时，将其作为选项值传递，避免被解析为 CLI 参数。
+- 共享控制工具栏在自动点击期间让出指针命中，包括被其右下角遮住的页面操作；点击结束或穿透租约到期后，工具栏控件恢复交互。
+- Enter 的 keydown 与文本事件一并派发，保留已完成的链接或表单导航回执，避免向新页面再发送独立字符事件；导航后的下一操作仍须获取新的控制上下文。
+- 页面操作超时后取消执行并等待有界清理，错误回包保留执行阶段、效果状态和操作标识；缺失回执时明确表示效果未知。CLI 和 MCP 的超时提示要求先检查应用结果再决定下一操作，避免盲目重试。
+- 同名操作优先使用自身 DOM 容器内的文本作为上下文，也支持按钮之后的标签，避免相邻记录被错误地关联到目标。
+- CLI 取消时继续推进原 RPC，并重试先于 daemon 注册到达的取消请求，减少调用方停止后后台截图仍占用会话的情况。取消确认和响应等待共用两秒预算，MCP 取消也使用同一预算；文件传输清理保留独立的有限预算。超过该期限才注册的请求仍需 daemon 侧取消追踪解决（[#419](https://github.com/Tencent/BrowserSkill/pull/419)）。
+- 保存的 HTML 调试捕获在 `autocomplete` 含首尾空白或多个令牌时（如 `section-login one-time-code` 或 `section-checkout billing cc-number`）也会对敏感输入值脱敏；`section-login email` 等非敏感令牌列表保持不变（[#566](https://github.com/Tencent/BrowserSkill/pull/566)）。
+- 处理旧版 `mousewheel` 事件的页面（如哔哩哔哩播放器的音量调节）重新能收到滚轮输入。此前扩展即使没有共享控制会话也会在每个页面监听 `wheel`，导致 Chromium 跳过这些处理函数；现在只在采集期间于 `window` 上监听。
+- 截断的页面文本把 emoji 切成两半时（例如对 `Hi 🚀 there` 执行 `bsk console --max-text-chars 4`），命令不再一直等到超时。此前截断留下的孤立代理项会让 daemon 丢弃扩展的整条回复；现在扩展会把它替换为 `U+FFFD` 再发送。
+- 共享控制在滚动和无效按键期间继续执行，真实网页点击、键盘激活和有效字段编辑时向人工让路。待确认手势在输入发送前等待，取消后保留原控制上下文；依赖坐标的操作等待滚动稳定。仅聚焦文本框不再持续保持编辑控制。
+
+- 目标策略下，轮播、嵌入视频或广告刷新 iframe 时，主文档内的目标和业务条件可继续使用现有控制凭证。涉及 iframe 引用或严格观察的操作会在框架文档变化后要求重新同步。
+- 以 `autocomplete`（`one-time-code`、`cc-*`、`current-password`、`new-password`）标记的一次性验证码、银行卡和密码字段，其值此前已在观察结果中隐藏，现在也不会出现在共享控制字段状态、`expect` 失败详情、结构化提取和录制的填写步骤中。所有检查均逐个匹配 `autocomplete` 令牌，因此 `section-login current-password` 或 `billing cc-number` 的值同样会被隐藏。被“显示密码”切换为 `type=text` 的密码框，在共享控制字段状态以及录制步骤和状态观察中也保持隐藏。
+- 在 Windows 上，配对、轮换或撤销远程浏览器时，若另一请求正在读取授权存储，不再因 `replace authorization snapshot: Access is denied` 而失败。
+- 调整窗口大小时验证实际窗口边界和目标标签页的布局视口，并报告受限边界、非活动标签页及未随窗口变化的视口。已发送的调整操作还会使下一次共享控制同步重新采集页面。
+- 共享控制同步跳过失败的子框架和非活动文档，在 `frame_gaps` 中仅报告 HTTP(S) 的来源和路径或其他 URL 的协议，并立即为当前文档修复一次缺失的交互采集器。缺少覆盖的活动框架仍以 `frame_unobservable` 阻止操作，主页面失败则报告 `page_load_failed`。
+- `cooperate sync --settle` 在等待报告覆盖不可用时继续有限重试；全部失败时返回最后一次同步错误。临时人工控制仍返回 `not_ready`，包括导航期间的显式保持。首次成功协商策略前状态和等待操作报告 `control_policy: null`。
+- 共享控制的 `observation_required` 恢复提示、目标策略同步指南及技能文档明确要求使用同步响应顶层的 `observation_id`，而非用于引用映射的 `observation.observation_id`。
+
+## [0.4.1] - 2026-11-02
+
+### 变更
+
+- **共享控制默认策略：**新的 CLI 和 DSH 同步调用默认使用 `target`。DOM 操作可在已完成操作及补充读取之间复用控制上下文，无关页面更新不再要求全页重新同步；人工干预或导航会撤销控制。使用 `--expect` / DSH `expect` 保护已观察到的业务事实。脚本、无目标按键和视觉操作仍需同步返回的 `--observation` / `observationId` 及严格观察检查。首次同步时可选择 `--policy strict` / `policy: "strict"` 保留每次操作使用一个上下文的流程；后续同步和步骤保留会话策略。
+- CLI/守护进程与扩展使用协议 1.8。目标策略要求双方均支持 1.8；应同时更新 CLI、运行中的守护进程、扩展和 DSH 插件。
+- 补充观察期间 DOM 引用保持指向原节点；已移除节点不会被静默替换，导航会使文档引用失效。DOM 操作可在超时范围内等待已有目标就绪，不会重放输入。
+
+### 修复
+
+- `crypto.randomUUID()` 不可用时，普通 HTTP 内网页面及子框架使用兼容的 UUID 回退方案初始化交互采集。
+- 共享控制同步等待已取消的观察缩略图完成清理。视口捕获读取有 10 秒期限及独立的有限清理时间；超时返回 `timeout`（退出码 4）和截图指引，浏览器/CDP 捕获失败仍返回 `cdp_failed`（退出码 3）。
+- 已完成的输入即使触发导航也保留成功回执，包括点击、回车提交、拖拽提交以及填写或选择后的表单提交。导航后应先同步再执行下一操作。
+- CLI 在发送浏览器命令前启用取消处理，立即按 Ctrl-C 也能取消操作并返回结果。
+- 指针命中测试限定在目标文档内；框架变化期间的人工输入仍会撤销控制，同时保留已完成操作。
+- Windows 守护进程启动错误区分已确认的 Job Object 限制、未确认的脱离失败、可执行文件访问失败、部分脱离及恢复失败，并提供对应恢复指引。
+- DSH 注入消息在原生持久格式 v4 中使用插件来源，同时兼容旧格式的来源结构。
+
+### 移除
+
+- 移除自动创建的原生 Agent Window 标签组及 `tabGroups` 权限，避免 Chrome 同步导致浏览器中不断累积 `BrowserSkill` 组。已有保存组不会删除；页面控制指示、后台窗口行为和用户标签路由仍可用。
+
+### 升级
+
+1. 完成当前任务，安装 CLI 0.4.1 并重启运行中的守护进程。
+2. 升级 DSH 插件到 0.4.1 前先安装扩展 0.4.1。商店审核可能导致延迟，应确认实际安装的扩展版本。
+3. 重启 DSH 配置并再次调用 `/browser-skill`，或开始新的 CLI agent 会话以加载更新后的技能。自定义工具集成需要支持目标策略操作的新观察和期望字段。
+4. 检查 `bsk --version`、`bsk status` 和 `bsk doctor`；运行中的守护进程和扩展均应报告协议 1.8。
+
+## [0.4.0] - 2026-10-30
+
+### 变更
+
+- **破坏性变更——扩展兼容性：**扩展要求守护进程协议 1.6 或更高，使用协议 1.3 的 CLI/守护进程 0.3.3 无法连接。先更新 CLI 并重启守护进程，再更新扩展和 DSH 插件。0.4.0 使用协议 1.7。
+- **破坏性变更——浏览器共享控制：**新会话及其任务标签页自动启用人机协作。初始导航后使用 `bsk cooperate sync` 同步，并为每个操作传入一次性 `--context`；DSH 使用 `bsk_session action:sync` 和 `contextId`。人工输入或页面证据变化可能撤销待执行操作，此时应重新同步并判断结果。已有会话需重新加载技能。
+- 将受控标签移出原 Agent Window 会结束整个会话，保留页面并移除控制指示；移回不会重启任务。正常停止会保留有人参与的页面，清理未触及的任务创建页面。
+- macOS CLI 发布包的两种架构均要求 Developer ID 签名和 Apple 公证，Windows 仍要求 EV 签名。`Publish CLI` 在发布完整版本前验证两个平台；压缩包名称和安装命令不变。
+- 中英文隐私政策涵盖共享控制观察、显式保存的观察文件、无痕任务和 `tabGroups`。升级和发布说明采用 CLI 优先的更新顺序。
+
+### 新增
+
+- 人机协作支持可见控制指示、手动保持与恢复、有限的活动证据、页面变化保护及显式决策区域。原生 JavaScript 对话框也参与控制和恢复。
+- 原生拖拽交互支持跨源框架目标，并新增点击—移动—点击范围选择模式，CLI 和 DSH 均可使用。
+- `bsk step` 执行指定操作、可选等待元素后同步；后续阶段失败时保留操作回执。显式保存观察、复用基线及 `bsk view` 可在本地读取和搜索历史证据。DSH 通过 `step`、`view`、`saveFull` 和基线选项提供这些能力。
+- 通过 `session start --incognito` 创建无痕 Agent Window，需明确授予浏览器无痕权限，且不会借用普通标签页。同一配置下的无痕窗口共享无痕登录状态。
+- 使用新增的 `tabGroups` 权限以橙色标签组标记受控 Agent Window 标签；任务结束时移除分组。
+
+### 修复
+
+- 浏览器交互为动态菜单保留当前元素引用，正确分发 Shadow DOM 输入事件，处理加号组合键，并拒绝聚焦时变为禁用状态的选择控件。提取遵循 `content-visibility`，观察 token 估算及证据范围更加一致。
+- 网站调试保留失败请求体元数据和原始值控制台异常。视频捕获尊重人工控制，播放回归检查等待解码帧后再检查颜色。
+- Windows DSH 子进程取消保留终止宽限期；远程授权处理存储繁忙，WebSocket 连接限制约束传入连接。前台守护进程控制台保持可见。
+- 浏览器评测框架处理 Windows 跨盘路径、相对导入 URL 和长运行 ID；子进程输出保留 UTF-8。安装依赖时准备扩展类型。
+- 扩展弹窗解释运行中的 bsk 守护进程版本过旧导致无法连接，展示版本、可复制的更新命令和重启指引。工具栏警告和通知提前提示，重复重连不会重复通知。
+- CLI 参数解析失败遵循 `--json`，在标准输出返回带 `data.reason: "cli_parse_error"` 的 `invalid_params` 错误。错误位置的 `--session` / `--tab-id` 会提示将其放在支持的子命令之后（[#387](https://github.com/Tencent/BrowserSkill/issues/387)）。
+- DSH 插件在移除 `sessions.list` 快照中 `current` 的 DSH 0.2.0+ 上恢复自动打开右侧观察标签，回退到 `uiSession` 主绑定，并在切换会话时重新触发（[#484](https://github.com/Tencent/BrowserSkill/issues/484)）。
+- 扩展在时钟、计数器等文本自行更新的页面上不再永久拒绝共享控制操作。首次变化报告前后文本并要求同步；之后仅当变化文本与目标共享容器时阻止引用或选择器操作。无目标操作、表单值、模态层和 `--depends-on` 区域仍严格检查，被拒绝的上下文不能重试（[#495](https://github.com/Tencent/BrowserSkill/issues/495)）。
+
+## [0.3.3] - 2026-10-14
+
+### 变更
+
+- **破坏性变更——DSH 插件：**将 `browser_session`、`browser_page`、`browser_inspect`、`browser_interact`、`browser_tabs` 和 `browser_assist` 替换为对应的 `bsk_*` 名称；操作、参数、结果和技能名称不变，旧名称不再注册。升级插件前先将 CLI 和扩展升级至 0.3.3，更新硬编码调用和工具策略，重启宿主并重新加载技能。参见[迁移指南](packages/dsh-plugin-browserskill/README.md#breaking-tool-api-migration-033)。
+- CLI 发布前要求验证 Windows EV 签名。构建、内部签名和最终发布分阶段进行，Windows 压缩包包含已验证的签名可执行文件，`version.json` 保存最终包的哈希。
+- 后台 Agent Window 中的外部链接和手动创建的标签路由到普通用户窗口，同时保留任务弹窗、人工协助和录制流程。待处理外部标签不作为默认工具目标。
+- 中英文隐私政策描述任务视频捕获、`offscreen` 权限、浏览器本地保留、授权导出及删除；主 README 说明视频录制和 DSH 迁移。
+
+### 新增
+
+- [任务视频录制](docs/video-recording.md)：通过 CLI、DSH 或扩展选择性地对一个授权标签录制无声 H.264 MP4，支持预览、导出、删除和恢复部分录制；限制为 10 分钟、256 MiB 和保留 24 小时。
+- [结构化提取](docs/structured-extraction.md)：将已加载的表格和列表导出为 JSON/CSV，保留列顺序、页面/框架来源、合并单元格元数据和完整性信息。DSH 限制返回模型上下文的行数。
+- CLI、扩展及 DSH `bsk_page` 的[元素条件等待](docs/wait-for-element.md)，提供明确期限和恢复指引。
+- CLI 浏览器选择器找不到匹配实例时列出已连接浏览器。
+
+### 修复
+
+- DSH 插件回滚不完整的工具注册，报告激活失败，并在技能/会话生命周期边界重试；首个 `/browser-skill` 请求包含工具 schema，失败和恢复通知与模型技能结果同步（[#444](https://github.com/Tencent/BrowserSkill/issues/444)）。
+- Chrome 未断开连接却丢失焦点覆盖时，后台 Agent Window 标签的输入不再持续报 `input_not_ready`；后台执行租约重新发送覆盖并等待渲染帧，仅在页面可见时发送输入（[#355](https://github.com/Tencent/BrowserSkill/issues/355)）。
+- agent 空闲时控制光效仅绘制一次并脉冲透明度两次，遵循减少动态效果设置；读取无障碍树后关闭 Accessibility 域，降低 GPU 和 CPU 使用（[#391](https://github.com/Tencent/BrowserSkill/issues/391)）。
+- 通过编辑宿主填写可编辑控件和编辑器段落，保留段落范围，拒绝不可编辑目标，并统一读取行模型。
+- 下载检测浏览器忽略指定目录的情况，并在导入文件前验证最终路径。
+- 元素等待遵循状态和期限约定，将不存在元素视为隐藏，并在节点过期后重试选择器。
+- 结构化提取保留 DOM 值和有限的部分结果，保持拆分网格行完整，并遵循嵌套行归属和框架可见性。
+- CLI 导航生命周期等待超时时退出码为 4；DSH 在带 URL 启动导航超时时保留已创建会话。
+- 视频录制保持启动可取消、限制捕获等待、从导航和短暂覆盖层发现失败中恢复、防止控制层闪烁，并为较大帧选择合适的 H.264 级别。
+- 避免 Yandex 中不必要的调试器取消和不完整标签清理，保留任务弹窗来源并恢复短暂焦点变化。
+
+## [0.3.2] - 2026-09-30
+
+### 变更
+
+- DSH 插件支持 DSH `0.2` 宿主，同时兼容 `0.1.5-rc.3` SDK。
+- 扩展简化浏览器配置控制，并在无法复制时解释配置说明不可用的原因。
+- 使用 `--foreground` 启动的守护进程不再安装更新或自行替换为后台进程。`bsk update` 保留其运行（JSON 中为 `"daemon": "left_to_host"`）；更新后应在所属终端或管理器中重启。
+- 无法写入可执行文件所在目录的守护进程只报告新版本。更新尝试、阶段和错误记录于 `update-state.json` 并由 `bsk doctor` 展示；Windows `bsk update --json` 返回 `"status": "updated"`。
+- 安装和技能指南说明 `BSK_AUTO_UPDATE=off`、在 WorkBuddy 和 CodeBuddy 中启动守护进程，以及并行任务的共享登录检查。
+- 中英文隐私政策明确通过 `downloads` 导出截图、人工协助通知及导出文件的保留方式。
+
+### 修复
+
+- CLI/守护进程的跨平台更新可恢复（[#336](https://github.com/Tencent/BrowserSkill/issues/336)）：自动更新验证新程序并等待其服务相同端口后旧进程才退出；接管失败或超过 20 秒时恢复旧版本和服务，6 小时后重试。Windows 无需后台更新脚本即可替换运行中的程序。
+- `bsk update` 在停止后台守护进程前验证替换文件，重启失败时恢复旧版本，并保留实际服务端口（包括 `--port 0`）。宿主无法重启时保留运行中的进程（`"daemon": "left_running"`）。
+- 跨 bsk home 串行更新同一可执行文件；Linux 回滚后保留可执行文件路径；自动更新期间守护进程停止时安全恢复。
+- 扩展连接关闭或替换时立即结束待处理调用，对输入、传输和标签借用保留结果未知错误。`bsk doctor` 和 `bsk browsers` 报告停止发送心跳的扩展及已关闭连接。
+- 协议保留显式 `null` 结果，拒绝冲突的 result/error 字段和空 error 字段。
+- 下载捕获通过 `target="_blank"` 打开的附件并归属于点击的标签；关联下载与点击派发，触发失败时保留已发生的效果，防止取消或过期触发器延迟输入或留下覆盖层。
+- DOM 多击操作发送每次按下，遵循持久后台执行租约，并将模拟覆盖限定在所属会话和调试器连接中。
+- 导航至无法承载覆盖层的 blob 或受限页面后完成录制，仅清除所属会话的过期 CLI 录制状态。
+- 限制人工协助 URL 正则表达式工作量并防止完成轮询重叠。
+- 扩展覆盖层忽略旧代次及旧 worker 实例的过期状态。
+- 网站调试在保留证据前遮盖 HTML 编码的敏感输入属性。
+- DSH 插件重连失败的观察流，在观察视图和折叠胶囊中展示中断，并允许祖先会话归档后创建新浏览器会话。
+- `bsk doctor` 将已安装技能与 CLI 内置版本比较；技能入口在 CRLF 检出时也符合大小限制。
+
+## [0.3.1] - 2026-09-23
+
+### 新增
+
+- [任务范围的网站调试](docs/website-debugging.md)：有限的请求/响应体捕获、关联操作的控制台和页面上下文、本地历史及 JSON 导出、CLI 和 DSH 入口及扩展证据工作区；保留原弹窗控制并新增当前任务卡片。
+- 调试操作卡片包含手动输入、字段变化链、延迟证据、按来源过滤噪声及明确的捕获缺口。
+- 网站调试支持任务范围的 HTTP 规则、请求重放、原生性能指标、请求聚合和重复请求分析。
+- 远程网关任务预览，以及将 agent 打开的弹窗和标签归属于对应任务。
+- 扩展弹窗支持浏览器实例命名，CLI、DSH 和技能指南支持显式[选择浏览器配置](docs/browser-profiles.md)。
+- 新增繁体中文、日语、法语、意大利语、西班牙语、德语和巴西葡萄牙语界面。
+- CLI 和 DSH 技能参考包支持资源路径验证、安全升级及现有受管理安装的迁移。
+
+### 变更
+
+- 扩展隐私政策描述网站调试数据、本地历史保留与删除、按请求分享及脱敏限制。
+- DSH 插件依赖对齐 SDK `0.1.5-rc.3`、Cordis `4.0.2` 和 Schemastery `3.18.2`。
+- 对重复操作标签复用相邻上下文，减少重复观察工作。
+- 技能指南明确安装前提、浏览器就绪状态、配置选择及将页面内容视为不可信数据的方式。
+
+### 修复
+
+- 浏览器会话启动和停止可恢复，包括待处理清理以及启动器超时后对共享守护进程的保护。
+- Windows 守护进程启动时与调用方 Job Object 隔离。
+- 后台导航和视口/全页截图无需激活受控标签；全页截图支持小数 DPI 和覆盖式滚动条。
+- 限制渲染器和框架读取时间，可选布局读取超时后保留可用观察，并防止超时后的读取重叠。
+- 页面操作保持显示在非模态侧栏旁，并遵循无障碍模态状态。
+- 防止控制覆盖层吞掉点击，并在释放观察标签时清理过期覆盖层。
+- 接受小写特殊按键，不区分大小写匹配 ARIA 加载状态，选择操作返回可见选项标签，并在录制中保留同 URL 重新加载。
+- 在传输过期前交付导航超时结果，并限制人工协助清理时间。
+- 跨待连接设备执行远程容量限制，重命名浏览器实例时保留活动会话。
+- DSH 插件在子进程退出但流未关闭时结束命令，限制取消和输出排空时间，并保留已完成结果。
+- DSH 插件在重载和恢复会话后恢复延迟工具注册，避免反复扫描流式历史。
+- DSH 插件独立于宿主附件 UI 渲染截图卡片，在宿主重新渲染时保留预览，并确保极端宽高比缩略图可用。
+- 保留受管理技能来源链接，处理 CRLF 元数据和不完整安装。
+
+## [0.3.0] - 2026-09-16
+
+### 新增
+
+- [远程浏览器连接](docs/remote-extension-connection.md)：内置服务器、一次性配对链接、设备凭据续期和撤销，以及原生 TLS 或 TLS 反向代理；不支持远程上传下载。
+- [操作审计](docs/operation-audit.md)：可选的守护进程主机任务历史，包含脱敏操作元数据、导出、删除和 30 天保留。
+- 扩展快捷操作和 CLI 的[全页截图](docs/long-screenshot.md)，支持流式 PNG 输出、取消和懒加载页面捕获。
+- Canvas 视觉引用、按需元素截图和与截图绑定的坐标点击；显式设置 token 限制时可续接观察游标。
+- CLI、扩展和 DSH 插件的[滚动到元素](docs/scroll-to.md)，支持祖先裁剪后的可见边界、iframe 和协作取消。
+- 原生[鼠标滚轮输入](docs/wheel.md)，以及显式聚焦和失焦操作。
+- 为命令沙箱会回收后台进程的 agent 提供[宿主管理的守护进程设置](docs/sandboxed-agents.md)，支持 `BSK_HOME` 和 `BSK_AUTO_START=0`。
+- 扩展弹窗支持配置本地连接端口，并新增韩语本地化。
+
+### 变更
+
+- **自动化设置：**扩展保存的借用确认和人工协助开关适用于已有及新会话。`--unattended`、`tab borrow --no-confirm` 和 `BSK_REQUEST_HELP=off` 为弃用的兼容输入，不能覆盖这些开关。升级无人值守流程时请设置浏览器偏好。
+- 受管理的 CLI 技能仅在内容与已安装基线一致时更新；保留自定义指令和本地修改，`doctor` 提供恢复指引。
+- DSH 插件优先使用原生浏览器侧栏，不可用时回退到浮动面板。
+
+### 修复
+
+- Windows 安装程序路径处理、已解析可执行文件的验证，以及使用其他目录守护进程的安装替换。
+- 分阶段升级组件时的浏览器连接偏好恢复和兼容性。
+- 观察文档和框架几何一致性、Canvas 目标身份检查，以及取消或导航期间的截图/会话清理。
+
+## [0.2.1] - 2026-09-09
+
+### 变更
+- DSH 插件：明确安装、配置、重启配置及升级说明。
+
+### 修复
+- CLI：可靠的 Windows 自更新，包括可执行文件替换和守护进程重启。
+- CLI：Windows 命名管道连接连续性及过期守护进程检测。
+- Windows 安装程序：PowerShell 5.1 兼容性、路径引用和分阶段替换可执行文件。
+- CLI / DSH 插件：父进程退出时传播取消并清理上传下载。
+- 扩展：agent 标签打开失败或借用标签归还、关闭时的标签归属和会话清理。
+- 扩展：其他扩展限制 Chrome DevTools Protocol 访问时的导航恢复。
+- 扩展：后台输入填充、自动追加，以及报告成功前验证字段值。
+- 扩展：页面变化后将观察到的表单状态匹配到正确元素。
+- 扩展：非安全来源上录制和覆盖层的 UUID 回退生成。
+- 匹配地区语言变体的浏览器语言设置。
+- DSH 插件：观察状态同步、缩略图捕获生命周期及过期预览清理。
+- DSH 插件：移除过时的客户端运行时宿主依赖。
+
+## [0.2.0] - 2026-09-02
+
+### 新增
+- CLI、扩展和 DSH 插件支持文件上传下载。
+- 文件拖放上传（`drop-to-upload`）。
+- VOM 语义图、名称丰富和悬停感知模块。
+- VOM 悬停探测（通过 `observe` 参数启用）。
+- DSH 插件的浏览器工具与 CLI 命令对齐。
+- CI 自动发布 Edge Add-ons。
+- CLI / 扩展协议版本不同时提醒升级。
+- 浏览器评测框架（`evals/browser/`）。
+- 统一发布脚本（`scripts/release.mjs`）。
+
+### 变更
+- **版本方案：**三个组件使用相同的语义化版本号。
+- 优化 VOM 渲染算法。
+- 精简 SKILL.md agent 指令。
+- DSH 插件：简化浏览器命令。
+- 借用确认体验：主动聚焦并延长超时。
+- 画中画窗口新增关闭按钮。
+
+### 修复
+- 截图媒体类型检测（此前硬编码为 `image/png`）。
+- DSH 插件会话生命周期稳定性。
+- DSH 插件 Cordis 包 ID 不匹配。
+- 观察缩略图媒体类型识别。
+- 上传下载竞态和布局绕过问题。
+- VOM 重复名称和安全策略问题。
+
+---
+
+*更早的版本各组件使用独立版本号。*
+
+## CLI 0.1.11 / Extension 0.1.7 / DSH Plugin 0.1.2 — 2026-08-26 ~ 2026-08-29
+
+### 新增
+- DSH 插件侧栏集成、会话生命周期和归档清理。
+- 录制器支持 iframe 和 OOPIF。
+
+### 变更
+- VOM 功能重构。
+
+### 修复
+- 录制器安全策略和错误修复。
+
+## CLI 0.1.10 / Extension 0.1.6 — 2026-08-08
+
+### 新增
+- VOM 观察录制和稳定状态检测。
+- 录制覆盖层计时器。
+
+### 修复
+- 浏览器保活断连处理。
+
+## CLI 0.1.9 / Extension 0.1.5 — 2026-07-29
+
+### 新增
+- CLI 自动更新机制。
+- Trace v3 协议和录制器。
+
+### 修复
+- MV3 保活断连。
+
+## CLI 0.1.8 / Extension 0.1.4 — 2026-07-22
+
+### 新增
+- 更多浏览器交互操作。
+
+### 修复
+- Windows 命名管道仅哈希路径问题。
+
+## CLI 0.1.7 / Extension 0.1.3 — 2026-07-07
+
+首次公开发布的组件版本。
+
+## CLI 0.1.6 — 2026-06-30
+
+### 修复
+- CLI 小问题修复。
+
+## CLI 0.1.5 / Extension 0.1.2 — 2026-06-22
+
+首次打标签发布。

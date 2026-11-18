@@ -1,0 +1,564 @@
+// Shared helpers used by every `tool.*` handler — target-tab
+// resolution, session lookup, RpcError detection, and the minimal
+// CDP-runner shape every handler depends on.
+//
+// Lives in its own module so M7+ navigation / interaction code reuses
+// exactly the same sandbox + visibility rules as the M6 observation
+// handlers (review parity).
+
+import type { CdpDebuggee, CdpDispatchGuard, DialogCursor } from "@/browser-driver/chromium-cdp";
+import type { CdpFrameGraph, CdpTarget } from "@/browser-driver/frame-graph";
+import type { NativeInputTimestamp } from "@/browser-driver/native-input-clock";
+import { shareScreencasts } from "@/browser-driver/screencast-coordinator";
+import {
+  isAgentControlledTab,
+  type SessionContext,
+  type SessionManager,
+} from "@/session-manager/manager";
+import { normaliseRef } from "@/session-manager/ref-store";
+import type {
+  ConsoleResult,
+  JavaScriptDialogInfo,
+  PendingJavaScriptDialog,
+  RpcError,
+} from "@/transport/types";
+import { rpcError } from "./errors";
+
+const DEFAULT_BUFFERED_READ_LIMIT = 50;
+const MAX_BUFFERED_READ_LIMIT = 200;
+const DEFAULT_MAX_TEXT_CHARS = 1000;
+const MAX_TEXT_CHARS = 4096;
+
+/**
+ * Subset of `chrome.tabs` we depend on across tool handlers. Kept on
+ * a thin interface so vitest can inject a fake without monkey-patching
+ * the global `chrome` object.
+ */
+export interface ChromeTabsApi {
+  get(tabId: number): Promise<chrome.tabs.Tab>;
+  query(query: chrome.tabs.QueryInfo): Promise<chrome.tabs.Tab[]>;
+}
+
+export const chromeTabsApi: ChromeTabsApi = {
+  get: (tabId) => chrome.tabs.get(tabId),
+  query: (q) => chrome.tabs.query(q),
+};
+
+export interface ResolvedTargetTab {
+  tabId: number;
+  windowId: number;
+  active: boolean;
+  url?: string;
+  pendingUrl?: string;
+}
+
+export type { DialogCursor };
+
+/**
+ * Minimal CDP surface every tool handler needs. Backed by
+ * `ChromiumCdp` in production; tests inject a fake.
+ *
+ * `trackSessionTab` is optional so test doubles need not implement it
+ * — production `ChromiumCdp` always supplies it for ref-aware session
+ * teardown.
+ */
+export interface CdpRunner {
+  /** Measure the browser's native epoch conversion before arming page input. */
+  prepareInputTimestamp?(): Promise<NativeInputTimestamp>;
+  /** Fence a browser API effect at invocation, after asynchronous ownership checks. */
+  runBrowserMutation?<T>(operation: () => Promise<T>): Promise<T>;
+  /** Only release resources acquired by this request; never restore page/user state. */
+  resourceCleanup?: CdpRunner;
+  /** Validate the observed decision before a tool's own scripted form mutation. */
+  beginDomMutation?(): Promise<void>;
+  /** Shared control validates the live pointer target again after hover. */
+  verifyPointerTarget?(
+    target: { tabId: number; cdpTarget: CdpTarget; backendNodeId: number; frameId?: string },
+    point: { x: number; y: number },
+    /** Intentional displacement from the observed action point, in viewport CSS pixels. */
+    offset?: { x: number; y: number },
+  ): Promise<void>;
+  send<T = unknown>(tabId: number, method: string, params?: object): Promise<T>;
+  sendToTarget?<T = unknown>(target: CdpTarget, method: string, params?: object): Promise<T>;
+  /** Production dispatch boundary; optional for lightweight test runners. */
+  sendGuarded?<T = unknown>(
+    target: CdpTarget,
+    method: string,
+    params: object | undefined,
+    guard: CdpDispatchGuard,
+  ): Promise<T>;
+  detach?(tabId: number, expectedAttachmentId?: string): Promise<void>;
+  getFrameGraph?(tabId: number, signal?: AbortSignal): Promise<CdpFrameGraph>;
+  getAttachmentId?(tabId: number): string | undefined;
+  resolveTarget?<T extends CdpDebuggee>(target: T): T;
+  retainTabAttachment?(tabId: number): () => void;
+  reattachIfSoftDetached?(tabId: number): Promise<void>;
+  reconcileSoftDetachedFrames?(tabId: number): Promise<void>;
+  ensureAttachedToUrl?(tabId: number, expectedUrl: string | undefined): Promise<void>;
+  acquireBackgroundExecution?(sessionId: string, tabId: number): Promise<void>;
+  /** Whether this session requests the persistent override, regardless of applied CDP state. */
+  ownsBackgroundExecution?(sessionId: string, tabId: number): boolean;
+  releaseBackgroundExecution?(sessionId: string, tabId: number): Promise<void>;
+  /** Resend this session's owned override, even when the applied-state cache reports it active. */
+  restoreBackgroundExecution?(sessionId: string, tabId: number): Promise<void>;
+  trackSessionTab?(sessionId: string, tabId: number): void;
+  releaseSessionTab?(sessionId: string, tabId: number): Promise<void>;
+  onEvent?(handler: (source: CdpDebuggee, method: string, params: unknown) => void): {
+    dispose(): void;
+  };
+  dialogCursor?(tabId: number): DialogCursor;
+  dialogsSince?(tabId: number, cursor: DialogCursor): JavaScriptDialogInfo[];
+  pendingDialogs?(tabId?: number): PendingJavaScriptDialog[];
+  resolveDialog?(
+    id: string,
+    accept: boolean,
+    text?: string,
+    guard?: Pick<CdpDispatchGuard, "signal" | "onDispatch">,
+  ): Promise<JavaScriptDialogInfo>;
+  onDialogChanged?(
+    handler: (
+      tabId: number,
+      dialog: PendingJavaScriptDialog | null,
+      reason?: "decision_timeout",
+    ) => void,
+  ): { dispose(): void };
+  ensureConsoleCapture?(tabId: number, signal?: AbortSignal): Promise<void>;
+  consoleEntriesSince?(
+    tabId: number,
+    since: number | undefined,
+    limit: number,
+    maxTextChars: number,
+    includeStack: boolean,
+  ): ConsoleResult;
+}
+
+export function sendToCdpTarget<T = unknown>(
+  cdp: CdpRunner,
+  target: CdpTarget,
+  method: string,
+  params?: object,
+): Promise<T> {
+  if (target.sessionId && cdp.sendToTarget) {
+    return cdp.sendToTarget<T>(target, method, params);
+  }
+  return cdp.send<T>(target.tabId, method, params);
+}
+
+export function cdpRunnerForTarget(cdp: CdpRunner, target: CdpTarget): CdpRunner {
+  return {
+    send: <T = unknown>(_tabId: number, method: string, params?: object) =>
+      sendToCdpTarget<T>(cdp, target, method, params),
+  };
+}
+
+const sessionRunners = new WeakMap<object, Map<string, CdpRunner>>();
+const TAB_SCOPED_CDP_METHODS = new Set([
+  "getFrameGraph",
+  "ensureAttached",
+  "ensureAttachedToUrl",
+  "ensureConsoleCapture",
+  "ensureNetworkCapture",
+  "setDeviceMetricsOverride",
+  "clearDeviceMetricsOverride",
+  "setUserAgentOverride",
+  "setTouchEmulationEnabled",
+]);
+
+/**
+ * Bind a CDP runner to `sessionId` so any tab-attaching command automatically
+ * records session ownership before touching the tab's debugger connection.
+ */
+export function sessionCdpRunner<T extends CdpRunner>(
+  cdp: T,
+  sessionId: string,
+  isLive?: () => boolean,
+): T {
+  let bySession = sessionRunners.get(cdp);
+  const existing = bySession?.get(sessionId);
+  if (existing) return existing as T;
+
+  const track = (tabId: number) => {
+    if (typeof tabId === "number" && (!isLive || isLive())) {
+      cdp.trackSessionTab?.(sessionId, tabId);
+    }
+  };
+  const wrapper = new Proxy(cdp, {
+    get(target, key, receiver) {
+      if (key === "send") {
+        return (tabId: number, ...rest: [string, object?]) => {
+          track(tabId);
+          return (target.send as (tabId: number, ...args: unknown[]) => Promise<unknown>).call(
+            target,
+            tabId,
+            ...rest,
+          );
+        };
+      }
+      if (key === "sendToTarget" && typeof target.sendToTarget === "function") {
+        return (cdpTarget: CdpTarget, ...rest: [string, object?]) => {
+          track(cdpTarget.tabId);
+          return (
+            target.sendToTarget as (target: CdpTarget, ...args: unknown[]) => Promise<unknown>
+          ).call(target, cdpTarget, ...rest);
+        };
+      }
+      if (key === "sendGuarded" && typeof target.sendGuarded === "function") {
+        return (
+          cdpTarget: CdpTarget,
+          method: string,
+          params: object | undefined,
+          guard: CdpDispatchGuard,
+        ) => {
+          if (guard?.attachmentId === undefined) track(cdpTarget.tabId);
+          return target.sendGuarded!(cdpTarget, method, params, guard);
+        };
+      }
+      if (typeof key === "string" && TAB_SCOPED_CDP_METHODS.has(key)) {
+        const fn = Reflect.get(target, key, receiver);
+        if (typeof fn === "function") {
+          return function (this: unknown, tabId: number, ...rest: unknown[]) {
+            track(tabId);
+            return (fn as (tabId: number, ...args: unknown[]) => unknown).call(
+              this === wrapper ? target : this,
+              tabId,
+              ...rest,
+            );
+          };
+        }
+      }
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  shareScreencasts(cdp, wrapper);
+  if (!bySession) {
+    bySession = new Map();
+    sessionRunners.set(cdp, bySession);
+  }
+  bySession.set(sessionId, wrapper);
+  sessionRunners.set(wrapper, new Map([[sessionId, wrapper]]));
+  return wrapper;
+}
+
+export interface BufferedReadBounds {
+  since: number | undefined;
+  limit: number;
+  maxTextChars: number;
+}
+
+/** Parse the common cursor and output bounds used by buffered read tools. */
+export function parseBufferedReadBounds(params: {
+  since?: number;
+  limit?: number;
+  max_text_chars?: number;
+}): BufferedReadBounds | RpcError {
+  const since = params.since;
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
+    return { code: "invalid_params", message: "since must be a non-negative integer" };
+  }
+  const limit = boundedOptionalInteger(
+    params.limit,
+    DEFAULT_BUFFERED_READ_LIMIT,
+    MAX_BUFFERED_READ_LIMIT,
+    "limit",
+  );
+  if (isRpcError(limit)) return limit;
+  const maxTextChars = boundedOptionalInteger(
+    params.max_text_chars,
+    DEFAULT_MAX_TEXT_CHARS,
+    MAX_TEXT_CHARS,
+    "max_text_chars",
+  );
+  if (isRpcError(maxTextChars)) return maxTextChars;
+  return { since, limit, maxTextChars };
+}
+
+function boundedOptionalInteger(
+  value: number | undefined,
+  defaultValue: number,
+  maxValue: number,
+  field: string,
+): number | RpcError {
+  if (value === undefined) return defaultValue;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    return { code: "invalid_params", message: `${field} must be a positive integer` };
+  }
+  return Math.min(value, maxValue);
+}
+
+/**
+ * Look up an active session by its `session_id` param, returning the
+ * matching `SessionContext` or a structured `RpcError`. Tool handlers
+ * call this first so every code path emits identical error messages.
+ */
+export function lookupSession(
+  manager: SessionManager,
+  params: { session_id?: string },
+  toolName: string,
+): SessionContext | RpcError {
+  if (!params?.session_id || typeof params.session_id !== "string") {
+    return {
+      code: "invalid_params",
+      message: `${toolName} requires session_id`,
+    };
+  }
+  const ctx = manager.get(params.session_id);
+  if (!ctx) {
+    return {
+      code: "not_found",
+      message: `session ${params.session_id} unknown`,
+    };
+  }
+  return ctx;
+}
+
+/**
+ * Resolve the target tab for a tool call. Explicit `tabId` values are
+ * checked against the session visibility rules: user tabs and the
+ * current session's Agent Window are visible, other sessions' Agent
+ * Windows are not.
+ *
+ * Returns the resolved `{tabId, windowId, active}` triple, or an
+ * `RpcError` the caller propagates verbatim.
+ */
+export async function resolveTargetTab(
+  manager: SessionManager,
+  ctx: SessionContext,
+  tabId: number | undefined,
+  api: ChromeTabsApi,
+): Promise<ResolvedTargetTab | RpcError> {
+  const target = await resolveVisibleTargetTab(manager, ctx, tabId, api);
+  if (!isRpcError(target) && ctx.remote && !isAgentControlledTab(ctx, target.tabId)) {
+    return {
+      code: "permission_denied",
+      message: "Authorize this tab with tab_borrow before reading or operating it",
+    };
+  }
+  return target;
+}
+
+function isPendingTabRouting(ctx: SessionContext, tabId: number): boolean {
+  return (ctx.pendingRoutingTabs?.has(tabId) ?? false) && !isAgentControlledTab(ctx, tabId);
+}
+
+async function resolveVisibleTargetTab(
+  manager: SessionManager,
+  ctx: SessionContext,
+  tabId: number | undefined,
+  api: ChromeTabsApi,
+): Promise<ResolvedTargetTab | RpcError> {
+  if (tabId !== undefined) {
+    if (!Number.isSafeInteger(tabId) || tabId <= 0) {
+      return {
+        code: "invalid_params",
+        message: "tab_id must be a positive integer",
+      };
+    }
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await api.get(tabId);
+    } catch (err) {
+      return {
+        code: "not_found",
+        message: err instanceof Error ? err.message : `tab ${tabId} not found`,
+      };
+    }
+    if (typeof tab.id !== "number" || typeof tab.windowId !== "number") {
+      return {
+        code: "not_found",
+        message: `tab ${tabId} not found`,
+      };
+    }
+    const owner = manager.findByWindowId(tab.windowId);
+    if (owner && owner.sessionId !== ctx.sessionId) {
+      return {
+        code: "not_found",
+        message: `tab ${tabId} not found in session scope`,
+      };
+    }
+    return {
+      tabId: tab.id,
+      windowId: tab.windowId,
+      active: tab.active === true,
+      url: tab.url,
+      pendingUrl: tab.pendingUrl,
+    };
+  }
+  const tabs = await api.query({ active: true, windowId: ctx.agentWindowId });
+  let first = tabs.find((t) => typeof t.id === "number");
+  if (first?.id !== undefined && isPendingTabRouting(ctx, first.id)) {
+    // External arrivals can become active before Chrome lets us move them.
+    // Prefer the most recently accessed controlled page without activating tabs.
+    const available = await api.query({ windowId: ctx.agentWindowId });
+    first = available
+      .filter(
+        (tab) =>
+          tab.id !== undefined &&
+          tab.windowId === ctx.agentWindowId &&
+          isAgentControlledTab(ctx, tab.id),
+      )
+      .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
+    if (!first) {
+      return {
+        code: "not_found",
+        message: `no controlled tab available in Agent Window ${ctx.agentWindowId}; create or borrow a task tab`,
+      };
+    }
+  }
+  if (!first || typeof first.id !== "number") {
+    return {
+      code: "not_found",
+      message: `no active tab in Agent Window ${ctx.agentWindowId}`,
+    };
+  }
+  return {
+    tabId: first.id,
+    windowId: ctx.agentWindowId,
+    active: first.active === true,
+    url: first.url,
+    pendingUrl: first.pendingUrl,
+  };
+}
+
+export function isRpcError(v: unknown): v is RpcError {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "code" in v &&
+    "message" in v &&
+    typeof (v as RpcError).code === "string"
+  );
+}
+
+/** Re-export so M6/M7 tools keep a stable import path. */
+export { normaliseRef };
+
+export type ToolEffect = "passive_read" | "transient_input" | "browser_mutation";
+
+const CDP_BLOCKED_PROTOCOLS = new Set([
+  "chrome:",
+  "chrome-extension:",
+  "devtools:",
+  "edge:",
+  "brave:",
+  "vivaldi:",
+  "opera:",
+]);
+
+export function cdpBlockedUrlReason(url: string | undefined): string | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (CDP_BLOCKED_PROTOCOLS.has(parsed.protocol)) return parsed.protocol;
+  if (parsed.protocol === "about:" && parsed.pathname !== "blank") return "about:";
+  return null;
+}
+
+/**
+ * Page CDP tools cannot inspect browser/extension internal pages. Check this
+ * at the tool boundary so Chrome's low-level "Cannot access..." errors do not
+ * leak as ambiguous page-read failures.
+ */
+export function enforceCdpAccessibleTarget(
+  target: ResolvedTargetTab,
+  toolName: string,
+): RpcError | null {
+  const reason = cdpBlockedUrlReason(target.url);
+  if (!reason) return null;
+  return rpcError(
+    "permission_denied",
+    "restricted_tab_url",
+    `${toolName} cannot access tab ${target.tabId} because its URL is ${target.url}; navigate the Agent Window to a web page first`,
+  );
+}
+
+function resolvedTargetFromChromeTab(
+  tab: chrome.tabs.Tab,
+  fallbackWindowId: number,
+): ResolvedTargetTab | null {
+  if (typeof tab.id !== "number") return null;
+  return {
+    tabId: tab.id,
+    windowId: typeof tab.windowId === "number" ? tab.windowId : fallbackWindowId,
+    active: tab.active === true,
+    url: tab.url,
+  };
+}
+
+/**
+ * Resolve a target for page CDP reads. Explicit tab_ids stay exact and are
+ * rejected when browser security blocks the URL. For default targeting, skip a
+ * restricted Agent Window active tab if another CDP-accessible tab exists in
+ * the same Agent Window.
+ */
+export async function resolveCdpAccessibleTargetTab(
+  manager: SessionManager,
+  ctx: SessionContext,
+  tabId: number | undefined,
+  api: ChromeTabsApi,
+  toolName: string,
+): Promise<ResolvedTargetTab | RpcError> {
+  const target = await resolveTargetTab(manager, ctx, tabId, api);
+  if (isRpcError(target)) return target;
+
+  const restricted = enforceCdpAccessibleTarget(target, toolName);
+  if (!restricted) return target;
+  if (tabId !== undefined) return restricted;
+
+  const tabs = await api.query({ windowId: ctx.agentWindowId });
+  for (const tab of tabs) {
+    if (ctx.remote && (tab.id === undefined || !isAgentControlledTab(ctx, tab.id))) continue;
+    if (tab.id !== undefined && isPendingTabRouting(ctx, tab.id)) continue;
+    const candidate = resolvedTargetFromChromeTab(tab, ctx.agentWindowId);
+    if (!candidate) continue;
+    if (!enforceCdpAccessibleTarget(candidate, toolName)) return candidate;
+  }
+  return restricted;
+}
+
+/**
+ * Sandbox guard: M7 write tools (click / fill / press / navigate*)
+ * MUST refuse to touch a tab outside the session's Agent Window
+ * (§6 — borrowing brings the tab into the Agent Window first).
+ *
+ * Returns an `RpcError` when the resolved target sits in a user window;
+ * `null` on success.
+ */
+export function enforceAgentWindow(
+  ctx: SessionContext,
+  target: { tabId: number; windowId: number },
+  toolName: string,
+): RpcError | null {
+  if (ctx.remote && !isAgentControlledTab(ctx, target.tabId)) {
+    return {
+      code: "permission_denied",
+      message: "This tab has not been authorized for the remote task",
+    };
+  }
+  if (target.windowId !== ctx.agentWindowId) {
+    return rpcError(
+      "permission_denied",
+      "agent_window_scope",
+      `${toolName} can only act on tabs inside the Agent Window (tab ${target.tabId} is in window ${target.windowId}; borrow it first)`,
+    );
+  }
+  return null;
+}
+
+/**
+ * Unified target-scope policy by tool effect. Passive reads may inspect user
+ * tabs; any tool that dispatches page input must stay inside the Agent Window.
+ */
+export function enforceToolTargetScope(
+  ctx: SessionContext,
+  target: { tabId: number; windowId: number },
+  effect: ToolEffect,
+  toolName: string,
+): RpcError | null {
+  if (effect === "passive_read" && !ctx.remote) return null;
+  return enforceAgentWindow(ctx, target, toolName);
+}

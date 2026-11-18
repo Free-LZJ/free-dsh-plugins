@@ -1,0 +1,475 @@
+import { type ControllerInfo, controllerColor } from "@/lib/controller-info";
+import { AGENT_WINDOW_HOME, type AgentWindowApi, chromeAgentWindowApi } from "./agent-window";
+import { RefStore } from "./ref-store";
+
+export interface SessionContext {
+  controller?: ControllerInfo;
+  /** Incognito sessions cannot borrow user tabs. Absent means a normal window. */
+  incognito?: boolean;
+  /** Remote connections retain dedicated windows, with explicit page ownership. */
+  remote?: boolean;
+  sessionId: string;
+  agentWindowId: number;
+  /**
+   * False once the session adopted the person's own window instead of the one
+   * created at start. Stop must never close a window this session does not own,
+   * and a tab reordered inside that window is not a lost task page.
+   */
+  ownsWindow?: boolean;
+  /**
+   * The window created at start, kept after an in-place adopt so stop can still
+   * close it. It stays minimized and holds nothing while the session works in
+   * the person's own window.
+   */
+  orphanWindowId?: number;
+  refStore: RefStore;
+  /** Negotiated once per session; omitted clients retain strict observations. */
+  controlPolicy?: "strict" | "target";
+  borrowedTabs: Map<number, BorrowedTab>;
+  /**
+   * Tabs explicitly claimed by the agent because it created them. This
+   * includes the Agent Window's home tab and tabs created by `tool.tab_create`.
+   * Tabs opened through Chrome UI never enter this set.
+   */
+  agentCreatedTabs: Set<number>;
+  /** Observed same-window popups: controllable, but preserved by session stop. */
+  observedTabs?: Set<number>;
+  /** Unclassified arrivals and failed external moves must not become implicit tool targets. */
+  pendingRoutingTabs?: Set<number>;
+  createdAtMs: number;
+}
+
+/** Whether this session has explicitly claimed control of `tabId`. */
+export function isAgentControlledTab(ctx: SessionContext, tabId: number): boolean {
+  return (
+    ctx.agentCreatedTabs.has(tabId) ||
+    ctx.borrowedTabs.has(tabId) ||
+    (ctx.observedTabs?.has(tabId) ?? false)
+  );
+}
+
+export interface BorrowedTabGroupMetadata {
+  title?: string;
+  color?: chrome.tabGroups.ColorEnum;
+  collapsed?: boolean;
+}
+
+export interface BorrowedTab {
+  tabId: number;
+  originalWindowId: number;
+  originalIndex: number;
+  /** Left-hand neighbor tab ID in the original window at borrow time. */
+  leftNeighborTabId?: number;
+  /** Right-hand neighbor tab ID in the original window at borrow time. */
+  rightNeighborTabId?: number;
+  /** Ordered left-hand neighbor tab IDs (closest to farthest) in the original window. */
+  leftNeighborTabIds?: number[];
+  /** Ordered right-hand neighbor tab IDs (closest to farthest) in the original window. */
+  rightNeighborTabIds?: number[];
+  /** Original Chrome Tab Group ID (>= 0 when grouped). */
+  originalGroupId?: number;
+  /** Snapshot of the original Tab Group's properties for recreating single-tab groups. */
+  originalGroup?: BorrowedTabGroupMetadata;
+  /** Whether the tab was pinned in the original window before borrowing. */
+  originalPinned?: boolean;
+}
+
+export interface BorrowReservation {
+  release(): void;
+  commit(entry: BorrowedTab): void;
+}
+
+export interface SessionManagerOptions {
+  remote?: () => boolean;
+  agentWindow?: AgentWindowApi;
+  now?: () => number;
+}
+
+/** Options for starting a session's Agent Window. */
+export interface SessionStartOptions {
+  controller?: ControllerInfo;
+  /** Use Chrome's shared incognito browsing session. */
+  incognito?: boolean;
+  /** Optional Agent Window outer size in CSS pixels. */
+  size?: { width: number; height: number };
+  /** Background by default; true explicitly opens the window in front. */
+  focused?: boolean;
+  /** Cancellation for the transactional Agent Window startup sequence. */
+  signal?: AbortSignal;
+}
+
+export class SessionStartCleanupError extends Error {
+  readonly windowId: number;
+  readonly startupError: unknown;
+  readonly cleanupError: unknown;
+
+  constructor(windowId: number, startupError: unknown, cleanupError: unknown) {
+    const startupMessage =
+      startupError instanceof Error ? startupError.message : String(startupError);
+    const cleanupMessage =
+      cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    super(
+      `session_start failed (${startupMessage}) and cleanup of Agent Window ${windowId} failed: ${cleanupMessage}`,
+    );
+    this.name = "SessionStartCleanupError";
+    this.windowId = windowId;
+    this.startupError = startupError;
+    this.cleanupError = cleanupError;
+  }
+}
+
+function sessionStartAbortError(): Error {
+  const error = new Error("session_start aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfSessionStartAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw sessionStartAbortError();
+}
+
+/**
+ * Owner of all live agent sessions inside the extension.
+ *
+ * The daemon side has its own `SessionRegistry`; this class is the
+ * extension-side mirror that holds the per-session Agent Window id,
+ * ref-store, and borrowed-tab table. Tool implementations (M6+) read
+ * from here to map a `session_id` back to "which Chrome window /
+ * which ref / which borrowed tab".
+ *
+ * Designed to be unit-testable: chrome.* is injected via `AgentWindowApi`
+ * so vitest never touches a real `chrome.windows` object.
+ */
+export class SessionManager {
+  private readonly remote: () => boolean;
+  private readonly sessions = new Map<string, SessionContext>();
+  private readonly windowIndex = new Map<number, string>();
+  private readonly borrowReservations = new Map<number, string>();
+  private readonly expectedWindowClosures = new WeakSet<SessionContext>();
+  private readonly agentWindow: AgentWindowApi;
+  private readonly now: () => number;
+
+  constructor(options: SessionManagerOptions = {}) {
+    this.remote = options.remote ?? (() => false);
+    this.agentWindow = options.agentWindow ?? chromeAgentWindowApi;
+    this.now = options.now ?? Date.now;
+  }
+
+  has(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
+  get(sessionId: string): SessionContext | null {
+    return this.sessions.get(sessionId) ?? null;
+  }
+
+  isWindowCloseExpected(ctx: SessionContext): boolean {
+    return this.expectedWindowClosures.has(ctx);
+  }
+
+  /** Mark only the committed window/tab removal stage of session.stop. */
+  async withExpectedWindowClose<T>(ctx: SessionContext, close: () => Promise<T>): Promise<T> {
+    this.expectedWindowClosures.add(ctx);
+    try {
+      return await close();
+    } finally {
+      // Failed teardown must not hide a later user-initiated close.
+      this.expectedWindowClosures.delete(ctx);
+    }
+  }
+
+  findByWindowId(windowId: number): SessionContext | null {
+    const id = this.windowIndex.get(windowId);
+    return id ? (this.sessions.get(id) ?? null) : null;
+  }
+
+  list(): SessionContext[] {
+    return Array.from(this.sessions.values());
+  }
+
+  invalidateTabRefs(tabId: number): void {
+    for (const ctx of this.sessions.values()) ctx.refStore.invalidateTab(tabId);
+  }
+
+  remapTabChildFrames(tabId: number, remapped: ReadonlyMap<string, string>): void {
+    for (const ctx of this.sessions.values()) {
+      ctx.refStore.remapChildFrameSessions(tabId, remapped);
+    }
+  }
+
+  invalidateTabChildFrames(
+    tabId: number,
+    stale: { sessionIds: ReadonlySet<string>; frameIds: ReadonlySet<string> },
+  ): void {
+    for (const ctx of this.sessions.values()) {
+      const ownsTab = isAgentControlledTab(ctx, tabId) || Boolean(ctx.observedTabs?.has(tabId));
+      ctx.refStore.invalidateChildFrames(tabId, stale, ownsTab);
+    }
+  }
+
+  /**
+   * Forget a tab Chrome has removed, including any uncommitted borrow.
+   * Whole-window closures keep committed borrows until the window-removed
+   * handler reports which user tabs could not be returned.
+   */
+  forgetClosedTab(tabId: number, { isWindowClosing = false } = {}): void {
+    this.borrowReservations.delete(tabId);
+    this.invalidateTabRefs(tabId);
+    for (const ctx of this.sessions.values()) {
+      ctx.agentCreatedTabs.delete(tabId);
+      ctx.observedTabs?.delete(tabId);
+      if (!isWindowClosing) ctx.borrowedTabs.delete(tabId);
+    }
+  }
+
+  /** All kinds of committed control, not just borrowed tabs. */
+  findControllingSession(tabId: number): string | null {
+    return this.list().find((ctx) => isAgentControlledTab(ctx, tabId))?.sessionId ?? null;
+  }
+
+  /** Observation does not follow a page moved out by the browser user. */
+  releaseObservedTab(tabId: number): string[] {
+    const released: string[] = [];
+    for (const ctx of this.sessions.values()) {
+      if (ctx.observedTabs?.delete(tabId)) {
+        ctx.refStore.invalidateTab(tabId);
+        released.push(ctx.sessionId);
+      }
+    }
+    return released;
+  }
+
+  /**
+   * Look up whether `tabId` is currently borrowed by some *other*
+   * session than the one calling. Used by M8 `tab_borrow` to refuse
+   * a second borrow on the same Chrome tab, and by `tab_close` to
+   * tell apart "user tab" from "another session's borrowed tab"
+   * (which we must not allow direct access to).
+   *
+   * Returns the borrowing session id when applicable, otherwise null.
+   */
+  findBorrowingSession(tabId: number, currentSessionId: string | null): string | null {
+    for (const ctx of this.sessions.values()) {
+      if (ctx.sessionId === currentSessionId) continue;
+      if (ctx.borrowedTabs.has(tabId)) return ctx.sessionId;
+    }
+    const reservedBy = this.borrowReservations.get(tabId);
+    if (reservedBy && reservedBy !== currentSessionId) return reservedBy;
+    return null;
+  }
+
+  /**
+   * Reserve a tab for `tool.tab_borrow` before the handler performs any
+   * awaited Chrome work. This closes the cross-session race between the
+   * "is anyone borrowing this tab?" check and the eventual borrowedTabs
+   * write after `chrome.tabs.move`.
+   */
+  tryReserveBorrow(tabId: number, sessionId: string): BorrowReservation | { borrowedBy: string } {
+    const borrowedBy =
+      this.borrowReservations.get(tabId) ??
+      this.findControllingSession(tabId) ??
+      this.findBorrowingSession(tabId, sessionId);
+    if (borrowedBy) return { borrowedBy };
+    this.borrowReservations.set(tabId, sessionId);
+    let closed = false;
+    const release = () => {
+      if (closed) return;
+      closed = true;
+      if (this.borrowReservations.get(tabId) === sessionId) {
+        this.borrowReservations.delete(tabId);
+      }
+    };
+    return {
+      release,
+      commit: (entry) => {
+        if (closed) return;
+        const ctx = this.sessions.get(sessionId);
+        if (!ctx) {
+          release();
+          throw new Error(`session ${sessionId} disappeared during tab_borrow`);
+        }
+        if (this.borrowReservations.get(tabId) !== sessionId) {
+          throw new Error(`tab ${tabId} borrow reservation disappeared before commit`);
+        }
+        ctx.borrowedTabs.set(tabId, entry);
+        release();
+      },
+    };
+  }
+
+  /**
+   * Spin up a fresh session: open a new Agent Window with an
+   * `about:blank` tab and register the context.
+   *
+   * Returns the created window id so callers can echo it back to the
+   * daemon in the `tool.session_start` reply.
+   */
+  async start(sessionId: string, opts: SessionStartOptions = {}): Promise<SessionContext> {
+    if (this.sessions.has(sessionId)) {
+      throw new Error(`[bh] session ${sessionId} already exists`);
+    }
+    throwIfSessionStartAborted(opts.signal);
+
+    let windowId: number | null = null;
+    const agentCreatedTabs = new Set<number>();
+    try {
+      const { signal: _signal, controller: _controller, ...createOptions } = opts;
+      const created = await this.agentWindow.create(AGENT_WINDOW_HOME, createOptions);
+      windowId = created.windowId;
+      for (const tabId of created.initialTabIds) agentCreatedTabs.add(tabId);
+      if (opts.incognito && !created.incognito) {
+        throw new Error(
+          "The browser did not create an incognito Agent Window; session start refused.",
+        );
+      }
+      throwIfSessionStartAborted(opts.signal);
+      const homeTabId = await this.agentWindow.ensureActiveTab(
+        windowId,
+        AGENT_WINDOW_HOME,
+        agentCreatedTabs,
+      );
+      agentCreatedTabs.add(homeTabId);
+      throwIfSessionStartAborted(opts.signal);
+      // Never make the person watch: the window exists to hold task pages, and
+      // once a page is adopted in place it has nothing to hold at all.
+      try {
+        await this.agentWindow.minimize?.(windowId);
+      } catch (error) {
+        console.debug("[bsk] could not minimize the Agent Window", error);
+      }
+
+      const ctx: SessionContext = {
+        controller: this.controllerFor(sessionId, opts.controller),
+        incognito: created.incognito ?? false,
+        ...(this.remote() ? { remote: true } : {}),
+        sessionId,
+        agentWindowId: windowId,
+        ownsWindow: true,
+        refStore: new RefStore(),
+        borrowedTabs: new Map(),
+        // Capture ownership at creation, before initialization can fail.
+        // Later tabs remain free until `tab_create` or `tab_borrow` identifies
+        // them by their concrete Chrome tab id.
+        agentCreatedTabs,
+        createdAtMs: this.now(),
+      };
+      this.sessions.set(sessionId, ctx);
+      this.windowIndex.set(windowId, sessionId);
+      return ctx;
+    } catch (startupError) {
+      if (windowId !== null) {
+        try {
+          await this.agentWindow.remove(windowId);
+        } catch (cleanupError) {
+          // The daemon may retry stop after a failed startup rollback. Retain
+          // the exact window handle until closure is confirmed.
+          const pending: SessionContext = {
+            controller: this.controllerFor(sessionId, opts.controller),
+            incognito: opts.incognito ?? false,
+            ...(this.remote() ? { remote: true } : {}),
+            sessionId,
+            agentWindowId: windowId,
+            refStore: new RefStore(),
+            borrowedTabs: new Map(),
+            agentCreatedTabs,
+            createdAtMs: this.now(),
+          };
+          this.sessions.set(sessionId, pending);
+          this.windowIndex.set(windowId, sessionId);
+          throw new SessionStartCleanupError(windowId, startupError, cleanupError);
+        }
+      }
+      throw startupError;
+    }
+  }
+
+  private controllerFor(
+    sessionId: string,
+    controller?: ControllerInfo,
+  ): ControllerInfo | undefined {
+    if (!controller) return undefined;
+    return {
+      ...controller,
+      color: controllerColor(
+        sessionId,
+        controller,
+        Array.from(this.sessions.values(), (ctx) => ctx.controller?.color),
+      ),
+    };
+  }
+
+  /**
+   * Anchor this session on the person's own window and retire the Agent Window.
+   *
+   * The fork borrows a tab in place: the page stays where the person already has
+   * it, so the window created at start has nothing left to hold. Closing it keeps
+   * the screen free of an extra window while every tool keeps resolving the
+   * session's window through `agentWindowId`.
+   * @param sessionId - the live session adopting the window.
+   * @param windowId - the user window that holds the adopted tab.
+   */
+  async adoptUserWindow(sessionId: string, windowId: number): Promise<void> {
+    const ctx = this.sessions.get(sessionId);
+    if (!ctx || ctx.agentWindowId === windowId) return;
+    const previous = ctx.agentWindowId;
+    // Keep the window instead of closing it: removing the task window mid-task
+    // invalidates the cooperation controller's control context. It is already
+    // minimized, so it stays out of the way until stop closes it.
+    this.windowIndex.delete(previous);
+    ctx.orphanWindowId = previous;
+    ctx.agentWindowId = windowId;
+    ctx.ownsWindow = false;
+    this.windowIndex.set(windowId, sessionId);
+  }
+
+  /**
+   * Tear down a session: close its Agent Window and drop the context.
+   *
+   * `dropOnly = true` skips closing the window — used when the user
+   * already closed it manually (M5.4 path) so we don't accidentally
+   * close a window that has been re-purposed.
+   */
+  async stop(
+    sessionId: string,
+    options: { dropOnly?: boolean } = {},
+  ): Promise<SessionContext | null> {
+    const ctx = this.sessions.get(sessionId);
+    if (!ctx) return null;
+    if (!options.dropOnly) {
+      const closing = ctx.ownsWindow !== false ? ctx.agentWindowId : ctx.orphanWindowId;
+      if (closing !== undefined) {
+        try {
+          await this.agentWindow.remove(closing);
+        } catch (error) {
+          console.debug("[bsk] could not close the session window", error);
+        }
+      }
+    }
+    if (this.sessions.get(sessionId) === ctx) this.release(sessionId);
+    return ctx;
+  }
+
+  /** End ownership synchronously, without moving or closing any browser page. */
+  release(sessionId: string): SessionContext | null {
+    const ctx = this.sessions.get(sessionId);
+    if (!ctx) return null;
+    this.sessions.delete(sessionId);
+    this.windowIndex.delete(ctx.agentWindowId);
+    for (const [tabId, owner] of this.borrowReservations) {
+      if (owner === sessionId) this.borrowReservations.delete(tabId);
+    }
+    return ctx;
+  }
+
+  /**
+   * Best-effort cleanup of every live session (emergency brake / SW
+   * shutdown). Returns the set of `session_id`s that were removed.
+   */
+  async stopAll(options: { dropOnly?: boolean } = {}): Promise<string[]> {
+    const ids = Array.from(this.sessions.keys());
+    for (const id of ids) {
+      await this.stop(id, options);
+    }
+    return ids;
+  }
+}

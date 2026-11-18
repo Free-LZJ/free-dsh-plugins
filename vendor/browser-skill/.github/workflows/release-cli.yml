@@ -1,0 +1,127 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - cli-v*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve CLI version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" != "Tencent/BrowserSkill" || "$GITHUB_REF" != refs/tags/cli-v* ]]; then
+            echo "Run this workflow on an existing cli-v<version> tag."
+            exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#cli-v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=cli-v${VERSION}" >> "$GITHUB_OUTPUT"
+
+  guard:
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify tag matches Cargo.toml workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_VERSION="$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')"
+          RELEASE_VERSION="${{ needs.resolve.outputs.version }}"
+          if [ "$CARGO_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "Cargo.toml version (${CARGO_VERSION}) does not match release version (${RELEASE_VERSION})"
+            exit 1
+          fi
+          echo "Version guard passed: ${RELEASE_VERSION}"
+
+  build-cli:
+    needs: [resolve, guard]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build bsk
+        shell: bash
+        run: cargo build --release --locked -p bsk --target "${{ matrix.target }}"
+
+      - name: Package Unix build input (Mac signing happens internally)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve.outputs.version }}"
+          ARCHIVE="bsk-v${VERSION}-${{ matrix.target }}.tar.gz"
+          tar -czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" bsk
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Prepare Windows signing request
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path unsigned | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/bsk.exe" unsigned/bsk.exe
+          python scripts/windows-release.py request
+
+      - name: Upload unsigned Windows artifact for internal signing
+        if: matrix.archive == 'zip'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bsk-windows-unsigned-${{ github.run_id }}-${{ github.run_attempt }}
+          path: unsigned/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Unix artifact
+        if: matrix.archive == 'tar.gz'
+        uses: actions/upload-artifact@v7
+        with:
+          name: bsk-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error

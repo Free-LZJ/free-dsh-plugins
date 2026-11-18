@@ -27,6 +27,8 @@ packages/
   browser-use/         # @free-lzj/dsh-browser-use     @ 提及已打开的浏览器标签页 + 内嵌 BrowserSkill 全套 MCP 工具与技能
     src/index.ts       #   Host 半边：git worktree 创建 + 一条 HTTP 路由
     src/client/        #   浏览器半边：首屏「新建工作树会话」控件
+vendor/
+  browser-skill/       # BrowserSkill 的 fork（v0.5.0）：扩展侧改成就地接管用户标签页，给 browser-use 用
 examples/              # dsh web --patch 用的 overlay 示例
 docs/                  # 项目级文档（不是约束）
 rules/                 # 开发规则（约束的唯一权威位置）
@@ -62,5 +64,6 @@ rules/                 # 开发规则（约束的唯一权威位置）
 | [`docs/architecture.md`](docs/architecture.md) | 双面包为何这样切、Loader 行与 `dsh.bundle`、构建两段流水线的原理 |
 | [`docs/development.md`](docs/development.md) | 本地上手、改完如何看效果、常见弯路 |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | 插件不出现、`duplicate loader entry id`、面板不出现等的排查路径 |
+| [`docs/browser-skill-fork.md`](docs/browser-skill-fork.md) | `vendor/browser-skill` 为什么 fork、改了哪些文件、怎么构建加载、已知问题 |
 
 其他文档的归属：根 `README.md` / `README.en.md` 是对外门面（是什么、怎么装、怎么发版）；`packages/*/README.md` 是单包的安装、配置与已知限制；dsh 插件机制细节归 `docs/`，不塞进 README。

@@ -1,0 +1,348 @@
+//! Top-level CLI definition (clap derive).
+
+use std::time::Duration;
+
+mod atomic_output;
+pub mod browser_wait;
+pub mod browsers;
+pub mod business_rpc;
+pub(crate) mod compatibility;
+pub mod console;
+pub mod cooperate;
+pub mod daemon;
+pub mod debug;
+pub mod dialog_control;
+pub mod dialogs;
+pub mod doctor;
+pub mod download;
+pub mod drag;
+pub mod emulate;
+pub mod ensure_daemon;
+pub mod error;
+pub mod evaluate;
+pub mod extract;
+pub mod get_html;
+pub mod human_loop;
+pub mod install_skill;
+pub mod interaction;
+pub(crate) mod interaction_policy;
+pub mod ledger;
+pub mod lifecycle;
+pub mod logs;
+pub mod mcp;
+pub mod navigate;
+pub mod network;
+pub mod observation_view;
+pub mod observe;
+pub mod plan;
+pub(crate) mod protocol;
+pub mod read;
+pub mod recipe;
+pub mod record;
+pub mod record_recovery;
+pub mod record_state;
+pub mod render_error;
+pub mod screenshot;
+pub mod scroll;
+pub mod session;
+pub mod snapshot;
+pub mod status;
+pub mod step;
+pub mod tab;
+pub mod update;
+pub mod upload;
+pub mod video;
+pub mod waits;
+pub mod wheel;
+pub mod window;
+
+use clap::{Args, Parser, Subcommand};
+
+use crate::cli::console::ConsoleArgs;
+use crate::cli::daemon::DaemonCmd;
+use crate::cli::download::DownloadArgs;
+use crate::cli::emulate::EmulateArgs;
+use crate::cli::evaluate::EvaluateArgs;
+use crate::cli::get_html::GetHtmlArgs;
+use crate::cli::human_loop::RequestHelpArgs;
+use crate::cli::install_skill::InstallSkillArgs;
+use crate::cli::interaction::{
+    BlurArgs, ClickArgs, FillArgs, FocusArgs, HoverArgs, PressArgs, SelectArgs,
+};
+use crate::cli::navigate::{NavigateCommand, NavigateHistoryArgs, ReloadArgs};
+use crate::cli::network::NetworkArgs;
+use crate::cli::observe::ObserveArgs;
+use crate::cli::record::RecordCmd;
+use crate::cli::screenshot::ScreenshotArgs;
+use crate::cli::scroll::ScrollToArgs;
+use crate::cli::session::SessionCmd;
+use crate::cli::snapshot::SnapshotArgs;
+use crate::cli::tab::TabCmd;
+use crate::cli::update::UpdateArgs;
+use crate::cli::upload::UploadArgs;
+use crate::cli::waits::{WaitForElementArgs, WaitForNavigationArgs, WaitMsArgs};
+use crate::cli::wheel::WheelArgs;
+use crate::cli::window::WindowCmd;
+
+/// Tool calls wait slightly longer than the daemon's 30s tool timeout so
+/// callers receive the structured daemon timeout instead of dropping the
+/// IPC connection first.
+pub const TOOL_IPC_TIMEOUT: Duration = Duration::from_secs(35);
+
+/// Global flags shared by every subcommand.
+#[derive(Debug, Clone, Args, Default)]
+pub struct GlobalFlags {
+    /// Explicit caller scope name for multi-agent session isolation.
+    #[arg(long)]
+    pub scope: Option<String>,
+    /// Control context returned by cooperate sync. Required for shared-tab actions.
+    #[arg(long, global = true)]
+    pub context: Option<String>,
+    /// Legacy strict-policy decision regions. Target policy uses --expect instead.
+    #[arg(long, global = true)]
+    pub depends_on: Vec<String>,
+    /// Explicit observation ID for visual or untargeted actions; never inferred from cached state.
+    #[arg(long, global = true)]
+    pub observation: Option<String>,
+    /// JSON array of target facts to check before input: [{"target":"@e1","field":"text","equals":"Save"}].
+    #[arg(long, global = true, value_parser = parse_expectations_json)]
+    pub expect: Option<serde_json::Value>,
+    /// Emit machine-readable JSON output (when meaningful).
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Suppress informational output.
+    #[arg(long, global = true)]
+    pub quiet: bool,
+
+    /// Increase log verbosity (`-v` debug, `-vv` trace).
+    #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+}
+
+fn parse_expectations_json(value: &str) -> Result<serde_json::Value, String> {
+    let conditions = bsk_protocol::tools::parse_expectations(value)?;
+    serde_json::to_value(conditions).map_err(|error| error.to_string())
+}
+
+/// Top-level `bsk` CLI.
+#[derive(Debug, Parser)]
+#[command(
+    name = "bsk",
+    version,
+    about = "browser-skill — drive your browser from AI agents"
+)]
+pub struct Cli {
+    #[command(flatten)]
+    pub flags: GlobalFlags,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Start or reuse a scoped session, navigate to a URL, and return a settled VOM snapshot.
+    Open(lifecycle::OpenArgs),
+    /// Synchronize the active tab's VOM snapshot and refresh its short context alias.
+    Sync(lifecycle::SyncArgs),
+    /// Stop the active session, return borrowed tabs, and detach the debugger immediately.
+    Close(lifecycle::CloseArgs),
+    /// Inspect or manually reconcile pending `UNKNOWN` actions in the Intent WAL.
+    Ledger(ledger::LedgerCmd),
+    /// Decide native JavaScript dialogs (alert, confirm, prompt, beforeunload).
+    Dialog(dialog_control::DialogCmd),
+    /// Retrieve or cancel the original operation suspended by a native dialog.
+    Operation(dialog_control::OperationCmd),
+    /// Cooperate with a person on the same browser tab.
+    Cooperate(cooperate::CooperateArgs),
+    /// Execute one action, await a known condition, and return synchronized state.
+    Step(step::StepArgs),
+    /// Run several decided actions in order, stop at the first failure, and return synchronized state.
+    Plan(plan::PlanArgs),
+    /// Replay a saved, reviewed flow without a model turn per step.
+    Recipe(recipe::RecipeCmd),
+    /// Read a saved observation locally, without refreshing refs or contacting the browser.
+    View(observation_view::ViewArgs),
+    /// Manage the local `bsk` daemon process.
+    #[command(subcommand)]
+    Daemon(DaemonCmd),
+
+    /// Show daemon status.
+    Status,
+
+    /// Run diagnostics + repair hints.
+    Doctor,
+
+    /// Install the browser-skill agent skill into local agent harnesses.
+    #[command(name = "install-skill")]
+    InstallSkill(InstallSkillArgs),
+
+    /// Check for and install bsk CLI updates.
+    Update(UpdateArgs),
+
+    /// Print (and optionally follow) the daemon log file.
+    Logs(LogsCmd),
+
+    /// Serve BrowserSkill tools to MCP clients over stdio.
+    Mcp(mcp::McpArgs),
+
+    /// Session lifecycle.
+    Session(SessionCmd),
+
+    /// List connected browsers.
+    Browsers,
+
+    /// Tab management commands.
+    Tab(TabCmd),
+
+    /// Agent Window management commands.
+    Window(WindowCmd),
+
+    /// Emulate a mobile device environment (viewport, UA, touch) on a tab.
+    Emulate(EmulateArgs),
+
+    /// Capture a PNG of the viewport, full page, DOM element or Canvas region.
+    Screenshot(ScreenshotArgs),
+
+    /// Produce an indented aria-snapshot with @eN refs.
+    Snapshot(SnapshotArgs),
+
+    /// Produce a semantic VOM observation with perception probes.
+    Observe(ObserveArgs),
+
+    /// Read buffered console/log/exception messages.
+    Console(ConsoleArgs),
+
+    /// Read buffered network responses / failures.
+    Network(NetworkArgs),
+
+    /// Opt-in website debugging: requests, page context, and recording export.
+    Debug(Box<debug::DebugArgs>),
+
+    /// Dump raw HTML for a tab or a snapshot ref.
+    #[command(name = "get-html")]
+    GetHtml(GetHtmlArgs),
+    /// Read current DOM fields safely across unrelated animation. No JavaScript.
+    Read(read::ReadArgs),
+    /// Extract loaded tables/lists with column definitions and source metadata.
+    Extract(extract::ExtractArgs),
+
+    /// Navigate the Agent Window's tab to a URL.
+    Navigate(NavigateCommand),
+
+    /// Step back in history one entry.
+    #[command(name = "navigate-back")]
+    NavigateBack(NavigateHistoryArgs),
+
+    /// Step forward in history one entry.
+    #[command(name = "navigate-forward")]
+    NavigateForward(NavigateHistoryArgs),
+
+    /// Reload the current tab.
+    Reload(ReloadArgs),
+
+    /// Click a snapshot ref or CSS selector.
+    Click(ClickArgs),
+
+    /// Hover a snapshot ref or CSS selector.
+    Hover(HoverArgs),
+
+    /// Dispatch a native mouse-wheel event at the viewport centre or an element.
+    Wheel(WheelArgs),
+
+    /// Drag an element to another element or by a relative offset.
+    Drag(drag::DragArgs),
+
+    /// Scroll a snapshot ref or CSS selector into the visible viewport.
+    #[command(name = "scroll-to")]
+    ScrollTo(ScrollToArgs),
+
+    /// Focus a snapshot ref or CSS selector.
+    Focus(FocusArgs),
+
+    /// Remove focus from a snapshot ref or CSS selector.
+    Blur(BlurArgs),
+
+    /// Fill a text input, textarea, or contenteditable editor root.
+    Fill(FillArgs),
+
+    /// Dispatch a keyboard key combo.
+    Press(PressArgs),
+
+    /// Set `<select>` option values by `value` attribute.
+    Select(SelectArgs),
+
+    /// Upload files through a page file input or explicit drop target.
+    Upload(UploadArgs),
+
+    /// Capture one browser download and write it to a local path.
+    Download(DownloadArgs),
+
+    /// Execute arbitrary JavaScript (strict observation required). For passive DOM data use read/extract.
+    Evaluate(EvaluateArgs),
+
+    /// Wait for a page-lifecycle event.
+    #[command(name = "wait-for-navigation")]
+    WaitForNavigation(WaitForNavigationArgs),
+
+    /// Wait until an element becomes visible / hidden / attached / detached.
+    #[command(name = "wait-for-element")]
+    WaitForElement(WaitForElementArgs),
+
+    /// Sleep for a duration on the daemon side.
+    #[command(name = "wait-ms")]
+    WaitMs(WaitMsArgs),
+
+    /// Ask the human to complete an in-page step (captcha / login / confirm).
+    #[command(name = "request-help")]
+    RequestHelp(RequestHelpArgs),
+
+    /// Record user actions into a semantic `trace.json` textbook for LLMs.
+    Record(RecordCmd),
+    /// Record a task tab to MP4 and save it to an explicit destination.
+    Video(video::VideoCmd),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct LogsCmd {
+    /// Follow new log lines as they are written (`tail -f`).
+    #[arg(short = 'f', long)]
+    pub follow: bool,
+
+    /// Number of trailing lines to print before following (default 200).
+    #[arg(short = 'n', long, default_value_t = 200)]
+    pub lines: usize,
+}
+
+#[cfg(test)]
+mod action_condition_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn explicit_action_evidence_parses_without_rewriting_literals() {
+        let expected = json!([{"target":"#price","field":"text","equals":"  $12 [sale]  "}]);
+        let command = Cli::try_parse_from([
+            "bsk",
+            "click",
+            "@e1",
+            "--session",
+            "s",
+            "--context",
+            "c",
+            "--observation",
+            "o",
+            "--expect",
+            &expected.to_string(),
+        ])
+        .unwrap();
+        assert_eq!(command.flags.context.as_deref(), Some("c"));
+        assert_eq!(command.flags.observation.as_deref(), Some("o"));
+        assert_eq!(command.flags.expect, Some(expected));
+        assert!(
+            Cli::try_parse_from(["bsk", "click", "@e1", "--session", "s", "--expect", "{}"])
+                .is_err()
+        );
+    }
+}

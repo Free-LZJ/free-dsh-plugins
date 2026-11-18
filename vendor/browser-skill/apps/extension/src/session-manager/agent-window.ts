@@ -1,0 +1,106 @@
+/**
+ * Wrapper around `chrome.windows.*` for creating / closing the
+ * dedicated Agent Window each session owns.
+ *
+ * Kept behind an interface so the SessionManager can be unit-tested
+ * with a fake chrome.windows implementation (see
+ * `__tests__/manager.test.ts`).
+ */
+
+export interface AgentWindowApi {
+  create(url: string, opts?: AgentWindowCreateOptions): Promise<AgentWindowCreation>;
+  remove(windowId: number): Promise<void>;
+  /**
+   * Keep a freshly created window out of the person's way. The fork never asks
+   * them to watch the agent work, and an adopted session closes the window soon
+   * after it stops holding a page.
+   */
+  minimize?(windowId: number): Promise<void>;
+  /**
+   * Guarantee the Agent Window has an active, CDP-navigable tab.
+   * `chrome://` pages (including the New Tab page) reject `Page.navigate`,
+   * so sessions bootstrap with `about:blank` instead.
+   *
+   * Resolves with the id of the activated (or newly created) tab, so callers
+   * can track the session's home tab without re-querying Chrome.
+   */
+  ensureActiveTab(windowId: number, url: string, ownedTabIds: ReadonlySet<number>): Promise<number>;
+}
+
+/** Resource identities captured from the creation result, before initialization. */
+export interface AgentWindowCreation {
+  windowId: number;
+  initialTabIds: number[];
+  incognito?: boolean;
+}
+
+/** Creation hints for a new Agent Window. */
+export interface AgentWindowCreateOptions {
+  /** Optional outer size in CSS pixels. */
+  size?: { width: number; height: number };
+  /** Background by default; explicit viewing and human help may take focus. */
+  focused?: boolean;
+  /** Use Chrome's shared incognito browsing session. */
+  incognito?: boolean;
+}
+
+/** Initial tab URL for every new session's Agent Window. */
+export const AGENT_WINDOW_HOME = "about:blank";
+
+export const chromeAgentWindowApi: AgentWindowApi = {
+  async create(url: string, opts: AgentWindowCreateOptions = {}): Promise<AgentWindowCreation> {
+    if (opts.incognito && !(await chrome.extension.isAllowedIncognitoAccess())) {
+      throw new Error(
+        "Incognito access is disabled. Open chrome://extensions → BrowserSkill → Details → Allow in incognito, then retry.",
+      );
+    }
+    const win = await chrome.windows.create({
+      type: "normal",
+      focused: opts.focused ?? false,
+      incognito: opts.incognito ?? false,
+      url,
+      ...(opts.size ? { width: opts.size.width, height: opts.size.height } : {}),
+    });
+    if (typeof win?.id !== "number") {
+      throw new Error("[bh] chrome.windows.create returned no window id");
+    }
+    return {
+      windowId: win.id,
+      incognito: win.incognito,
+      initialTabIds: (win.tabs ?? []).flatMap((tab) =>
+        typeof tab.id === "number" ? [tab.id] : [],
+      ),
+    };
+  },
+  async minimize(windowId: number): Promise<void> {
+    await chrome.windows.update(windowId, { state: "minimized" });
+  },
+  async remove(windowId: number): Promise<void> {
+    // Callers decide whether a missing/failed removal is benign. In
+    // particular, transactional session-start cleanup must be able to
+    // surface a window it could not remove instead of reporting a false
+    // cancellation success while the Agent Window remains open.
+    await chrome.windows.remove(windowId);
+  },
+  async ensureActiveTab(
+    windowId: number,
+    url: string,
+    ownedTabIds: ReadonlySet<number>,
+  ): Promise<number> {
+    const tabs = await chrome.tabs.query({ windowId });
+    // A user may have opened a tab while window initialization was pending.
+    // Reuse only a tab whose identity came from our creation result.
+    const first = tabs.find((t) => t.id !== undefined && ownedTabIds.has(t.id));
+    if (first?.id !== undefined) {
+      if (!first.active) {
+        await chrome.tabs.update(first.id, { active: true });
+      }
+      return first.id;
+    }
+    const created = await chrome.tabs.create({ windowId, url, active: true });
+    if (typeof created?.id !== "number") {
+      throw new Error("[bh] chrome.tabs.create returned no tab id");
+    }
+    return created.id;
+  },
+};
