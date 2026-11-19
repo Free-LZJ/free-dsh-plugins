@@ -20,7 +20,7 @@
 <type>(<scope>): <简述>
 ```
 
-- `type` 取 `feat` / `fix` / `docs` / `chore` / `refactor` / `test`；`scope` 用包名（`agent-import`、`mail`、`web-search-account`）或 `repo`、`docs`、`rules`。
+- `type` 取 `feat` / `fix` / `docs` / `chore` / `refactor` / `test`；`scope` 用包名（`agent-import`、`console`、`mail`）或 `repo`、`docs`、`rules`。
 - 影响单个包且值得用户感知的改动，正文用 `- ` 列表补充关键变更；纯规则、纯格式类改动写单行即可。
 - 发版提交用 `chore(release): <包名> <版本> — <说明>`，一个包一次提交。
 

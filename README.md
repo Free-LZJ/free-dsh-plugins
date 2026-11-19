@@ -24,7 +24,6 @@
 | [`@free-lzj/dsh-console`](packages/console/README.md) | `0.2.0` | **工作台**：dsh 的首页。第一块是**注意力队列**——「现在需要我决定什么」，每条都带按钮与状态（执行 / 忽略 / 稍后），下面才是**接入它面板契约**的插件列表；再下面是**正在跑的会话**（它现在在替你干什么）。同时是**通知与条目出口**：`ctx.console.notify()` 是纯通知，`ctx.console.raise()` 是**能被处理的条目**（插件按 `kind` 注册动作处理器，点击被路由回去）。送达渠道**可替换、可多选**（桌面通知 / 应用内 / 提示音）。它还是**规则引擎的宿主**：规则文件、命中记录与撤销归它持有，连接器只把事件喂进来、把认识的条件与动作注册进来。界面完全用 DSH 的设计系统（`ui-primitives` 控件 + `--dsw-*` token），不另起一套。另给会话里的 agent 两个工具：`console_notify` 主动通知你、`open_session` 在指定目录建工作区并开会话 |
 | [`@free-lzj/dsh-decision`](packages/decision/README.md) | `0.1.0` | **库，不是插件**（不能 `dsh plugin add`）：来源无关的决策内核——`DecisionEngine` 持有规则文件、条件/动作注册表、命中记录与撤销窗口；连接器依赖它，工作台持有它的实例。
 | [`@free-lzj/dsh-mail`](packages/mail/README.md) | `0.3.0` | 邮箱面板：读 / 搜 / 标已读 / 星标 / 移动 / 删除（**不发信**）；同时是**邮件 I/O 提供方**（`ctx.mail`）。再带一套**规则分诊**：把新邮件按邮件头 / 正则 / 附件 / 模型判断分流到已读、移动、开会话、脚本、MCP、HTTP，带**命中记录与撤销**——规则状态与界面在工作台，它作为连接器注册自己的条件与动作。装了工作台时它列在工作台里，不再单独占侧边栏 |
-| [`@free-lzj/dsh-web-search-account`](packages/web-search-account/README.md) | `0.1.0` | 联网搜索用你**已登录的 DeepSeek 账号**，与对话所跑模型无关：聊天挂在网关或第三方模型上时搜索照常可用，不需要另配搜索 key |
 | [`@free-lzj/dsh-worktree`](packages/worktree/README.md) | `0.5.0` | **工作树管理页**：按**仓库**分组列出全部工作树，可配置检出目录（默认 `<仓库>/.agents/worktrees`）、可开关「创建前拉取上游更新」；会话标题栏与空会话首屏各有一个入口，直接在新检出里开会话，也能进入 / 删除已有检出（**任何** Git 已注册的检出都能删，不只是本插件建的那几个）。原检出不动；布局与官方实验 bundle「Git 工作树」一致 |
 | [`@free-lzj/dsh-browser-use`](packages/browser-use/README.md) | `0.1.2` | 用 `@` 提一个**你自己浏览器里已经开着的标签页**，然后让 agent 读它、点它、填它、上传下载、看控制台与网络——不是新开干净窗口，BrowserSkill 的扩展带着你已有的登录态。插件里嵌了整套 BrowserSkill 工具（`bsk_session` / `bsk_page` / `bsk_inspect` / `bsk_interact` / `bsk_tabs` / `bsk_assist`，以 `mcp__browser-skill__*` 暴露）和一个 `browser-use` 技能，装它就不必再装 `browser-skill` 技能；「加一类可 @ 的东西」在 Host 侧只是再写一个 provider
 
@@ -43,25 +42,6 @@
 契约是**打包时内联**的普通模块，所以接入包对 `console` 没有运行时依赖：没装工作台也能装上 mail 并用起来。接管与否是**运行时**判断（Loader 行顺序由用户的 profile 决定，不由本仓库决定），所以契约用 `ctx.inject` 跟随服务出现/消失——工作台可能晚于插件挂载，被禁用时也要把侧边栏图标还回去。
 
 这种「先定义接口、再提供多个实现、最后配置多选」的写法已固化为仓库约束：[`rules/design-patterns.md`](rules/design-patterns.md)——契约、实现、注册表、配置四层分开，并给出了可机械判断的检查项。
-
-## 搜索走账号，聊天不动
-
-dsh 自带的搜索只在**会话本身跑在 `deepseek-account` 路由**时才借用账号凭据，一旦把聊天钉到别的 provider，搜索就退回去要一个独立 API key。`web-search-account` 把对话从这条依赖里摘出去：它直接向账号服务要一个搜索端点的令牌，用该路由认的头发出去。
-
-`web-search-account` 自带 `dsh.bundle`，所以 `dsh plugin add` 已经插入了 `web-search-account` 那一行，profile 补丁里**不要再写**同 id 的 `- insert:`（规则见下节）；要覆盖它的配置就写一行同 id 的 override：
-
-```yaml
-- id: web
-  config:
-    searchProvider: deepseek-account   # 指向本插件注册的 id
-- id: web-search-deepseek
-  disabled: true                        # 关掉自带那个，避免两个都自称可用
-- id: web-search-account                 # 无 insert：覆盖 bundle 插入的那一行
-  config:
-    model: deepseek-v4-flash
-```
-
-它不注册任何模型 provider、不改 `agent-default-model`，所以**只换搜索怎么被回答**，不影响谁来回复。
 
 ## 每个包都是双面包
 
@@ -116,7 +96,6 @@ pnpm run build
 dsh plugin --profile web add "<本仓库绝对路径>/packages/console"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/agent-import"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/mail"
-dsh plugin --profile web add "<本仓库绝对路径>/packages/web-search-account"
 dsh plugin --profile web add "<本仓库绝对路径>/packages/worktree"
 # 或者先 pnpm pack，再装生成的 .tgz
 ```
@@ -151,7 +130,6 @@ pnpm monorepo，`packages/*` 一个目录就是一个包：
 | [`packages/agent-import`](packages/agent-import) | `@free-lzj/dsh-agent-import`（MCP 服务器 + 技能导入） |
 | [`packages/console`](packages/console) | `@free-lzj/dsh-console`（工作台首页 + 通知出口） |
 | [`packages/mail`](packages/mail) | `@free-lzj/dsh-mail`（邮箱面板 + 邮件 I/O 服务 + 规则分诊） |
-| [`packages/web-search-account`](packages/web-search-account) | `@free-lzj/dsh-web-search-account`（搜索走已登录账号，仅 Host 半边） |
 | [`packages/browser-use`](packages/browser-use) | `@free-lzj/dsh-browser-use`（`@` 提及已打开的标签页 + 内嵌 BrowserSkill 全套 MCP 工具与技能） |
 | [`packages/worktree`](packages/worktree) | `@free-lzj/dsh-worktree`（工作树管理：设置 / 按仓库分组 / 新建 / 进入 / 删除） |
 
