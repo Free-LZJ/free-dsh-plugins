@@ -19,7 +19,7 @@
  */
 
 import { fillTemplate, runSession } from '@free-lzj/dsh-decision'
-import type { ActionNode, ActionOutcome, ActionSpecLike, TaskContext } from '@free-lzj/dsh-decision'
+import type { ActionNode, ActionOutcome, ActionSpecLike, SuspendSpec, TaskContext } from '@free-lzj/dsh-decision'
 import { defineAction } from '@free-lzj/dsh-decision'
 import { describe, failure, portsOf } from '../ports.ts'
 
@@ -42,6 +42,17 @@ export interface SessionSpec extends ActionSpecLike {
   readonly instructions?: string
   readonly agentPreset?: string
   readonly permissionPreset?: string
+  /**
+   * 建出来的会话要不要等它干完再往下走。
+   *
+   * - `none`：发完即走。会话在自己那边跑，流程立刻继续。
+   * - `idle`（默认）：会话跑完（宿主报 idle）才继续——「派单会话读完单再推通知」这类
+   *   必须等结果。等的时候这一格是**挂起**，看板显示「等回信」，超时（`timeoutMinutes`）
+   *   判失败并留下原因。
+   */
+  readonly awaitSession?: 'none' | 'idle'
+  /** 等会话的超时（分钟）；默认 120。 */
+  readonly timeoutMinutes?: number
 }
 
 /** 投递到已有会话的配置。 */
@@ -51,6 +62,13 @@ export interface FollowupSpec extends ActionSpecLike {
   /** 投递内容；缺省用事件投影里的 `prompt`。 */
   readonly prompt?: string
 }
+
+/**
+ * 「等会话干完」这类挂起的令牌前缀。
+ *
+ * 唤醒探针（连接器的 `probeWait`）只认这个前缀，别的前缀说明不是它管的等待。
+ */
+export const SESSION_WAIT_PREFIX = 'session:'
 
 /** 标题上限（字节）；宿主也会截，但先在本地截好，行为可预期。 */
 const TITLE_MAX_BYTES = 80
@@ -92,6 +110,17 @@ export const sessionAction: ActionNode<SessionSpec, TaskContext> = defineAction(
   kind: 'session',
   sideEffect: true,
   async run(spec, context): Promise<ActionOutcome> {
+    // 续跑：这一格是「等这个会话跑完」醒过来的，会话早就建好了。再建一遍等于同一条
+    // 派单开两个会话——所以只认令牌对得上的那次唤醒，直接报完成。
+    const resumed = resumedSession(context.signal)
+    if (resumed !== undefined) {
+      return {
+        ok: true,
+        detail: `会话 ${resumed.slice(0, 8)} 已经跑完`,
+        sessionId: resumed,
+        data: { scope: 'workspace', mode: 'create', resumed: true },
+      }
+    }
     const ports = portsOf(context)
     const workspace = resolveWorkspace(spec, context.vars)
     if (!workspace.ok) return workspace.outcome
@@ -128,9 +157,45 @@ export const sessionAction: ActionNode<SessionSpec, TaskContext> = defineAction(
       detail: outcome.detail,
       sessionId: outcome.sessionId,
       data: { scope: 'workspace', mode: 'create', workspace: workspace.path },
+      ...(spec.awaitSession === 'none'
+        ? {}
+        : { wait: waitForSession(outcome.sessionId, spec.timeoutMinutes, context.now) }),
     }
   },
 })
+
+/**
+ * 这次唤醒是不是「我建的那个会话跑完了」。
+ *
+ * 只认自己发的令牌：别的信号（人工放行、别的等待）不该让这一格跳过建会话。
+ * @param signal - 上下文里的唤醒信号。
+ * @returns 会话 id；不是本动作的唤醒时 undefined。
+ */
+function resumedSession(signal: Readonly<Record<string, unknown>> | undefined): string | undefined {
+  const sessionId = signal?.['sessionId']
+  if (typeof sessionId !== 'string' || sessionId === '') return undefined
+  return signal?.['token'] === `${SESSION_WAIT_PREFIX}${sessionId}` ? sessionId : undefined
+}
+
+/**
+ * 造一个「等这个会话干完」的挂起说明。
+ *
+ * 令牌写成 `session:<id>`：唤醒探针（`probeWait`）只认这个前缀，别的等待不会撞上。
+ * @param sessionId - 刚建出来的会话。
+ * @param minutes - 超时分钟数；没写或写歪用 120。
+ * @param now - 现在；跟着任务的时钟走，测试能钉死。
+ * @returns 挂起说明。
+ */
+function waitForSession(sessionId: string, minutes: number | undefined, now: Date): SuspendSpec {
+  const timeout = typeof minutes === 'number' && Number.isInteger(minutes) && minutes > 0 ? minutes : 120
+  return {
+    on: 'event',
+    token: `${SESSION_WAIT_PREFIX}${sessionId}`,
+    dueAt: new Date(now.getTime() + timeout * 60_000).toISOString(),
+    resume: { sessionId },
+    detail: `等会话 ${sessionId.slice(0, 8)} 干完`,
+  }
+}
 
 /** 投递到一个已有会话。 */
 export const followupAction: ActionNode<FollowupSpec, TaskContext> = defineAction({

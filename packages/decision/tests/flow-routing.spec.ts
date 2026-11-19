@@ -51,7 +51,7 @@ function markNode(): FlowNode {
 }
 
 /** 假连接器：一个触发器、`from` 条件、以及会计数的分类节点。 */
-function connector(counter: { classify: number; label: string }): TaskConnector {
+function connector(counter: { classify: number; label: string; seen?: string[][] }): TaskConnector {
   return {
     id: 'fake',
     label: '假连接器',
@@ -114,8 +114,9 @@ function connector(counter: { classify: number; label: string }): TaskConnector 
     classify: {
       node: {
         kind: 'classify',
-        async run() {
+        async run(spec: { labels?: readonly string[] }) {
           counter.classify += 1
+          counter.seen?.push([...(spec.labels ?? [])])
           return { status: 'continue', ok: true, detail: '分类完毕', label: counter.label, confidence: 0.9 }
         },
       } as never,
@@ -229,5 +230,62 @@ describe('事件 → 路由 → 子工作流', () => {
     const details = await run(counter, 'other@x.y')
     expect(details.some(text => text.includes('走了 C'))).toBe(true)
     expect(counter.classify).toBe(1)
+  })
+
+  it('两条分类边标签集不同：各问一次，且每条边问的是自己那套标签', async () => {
+    // 回归：分类结果曾整个任务共用一份缓存、标签集只取第一条分类边的，
+    // 于是后面的边被问错题，模型答出的标签永远不在自己那套里，整张图恒落兜底。
+    const counter = { classify: 0, label: 'y', seen: [] as string[][] }
+    const home = mkdtempSync(join(tmpdir(), 'dsh-routing-labels-'))
+    mkdirSync(join(home, 'events'), { recursive: true })
+    mkdirSync(join(home, 'workflows'), { recursive: true })
+    writeFileSync(join(home, 'events', 'fake-new.yml'), [
+      'id: fake-new',
+      'trigger: fake:new',
+      'connector: fake',
+      'nodes:',
+      '  - id: trigger',
+      '    type: trigger',
+      '    config: { event: fake.new }',
+      '    out: [{ to: route }]',
+      '  - id: route',
+      '    type: switch',
+      '    out:',
+      '      - to: call-A',
+      '        when: [{ kind: classifier, labels: [x] }]',
+      '      - to: call-B',
+      '        when: [{ kind: classifier, labels: [y] }]',
+      '      - to: call-C',
+      '  - id: call-A',
+      '    type: workflow',
+      '    config: { workflow: wf-A }',
+      '    out: [{ to: end }]',
+      '  - id: call-B',
+      '    type: workflow',
+      '    config: { workflow: wf-B }',
+      '    out: [{ to: end }]',
+      '  - id: call-C',
+      '    type: workflow',
+      '    config: { workflow: wf-C }',
+      '    out: [{ to: end }]',
+      '  - id: end',
+      '    type: end',
+      '',
+    ].join('\n'), 'utf8')
+    writeFileSync(join(home, 'workflows', 'wf-A.yml'), workflow('wf-A', '走了 A'), 'utf8')
+    writeFileSync(join(home, 'workflows', 'wf-B.yml'), workflow('wf-B', '走了 B'), 'utf8')
+    writeFileSync(join(home, 'workflows', 'wf-C.yml'), workflow('wf-C', '走了 C'), 'utf8')
+
+    const engine = new TaskEngine({ home })
+    engine.register(connector(counter))
+    await engine.start()
+    await engine.emit({ type: 'fake.new', source: 'fake', payload: { id: 'labels', from: 'other@x.y' } } as never)
+    await engine.flush()
+    const task = engine.view().tasks[0]
+    const details = (task?.nodes ?? []).map(node => node.kind + ':' + (node.detail ?? ''))
+    engine.stop()
+
+    expect(details.some(text => text.includes('走了 B'))).toBe(true)
+    expect(counter.seen).toEqual([['x'], ['y']])
   })
 })

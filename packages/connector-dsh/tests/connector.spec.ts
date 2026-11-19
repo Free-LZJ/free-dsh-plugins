@@ -72,6 +72,7 @@ function registry(calls: string[], existing: boolean): Map<string, unknown> {
 function taskContext(input: {
   readonly ports: Readonly<Record<string, unknown>>
   readonly vars?: Readonly<Record<string, string>>
+  readonly signal?: Readonly<Record<string, unknown>>
 }): TaskContext {
   return {
     task: {
@@ -91,6 +92,7 @@ function taskContext(input: {
     vars: input.vars ?? {},
     node: { id: 'node-1', kind: 'session' },
     ports: input.ports,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
     now: new Date('2026-11-10T00:00:00.000Z'),
     log: () => undefined,
   }
@@ -168,6 +170,66 @@ describe('session 动作', () => {
     expect(calls).toEqual([])
   })
 
+  it('默认等会话跑完：挂起说明带令牌、恢复载荷与到期时间', async () => {
+    const calls: string[] = []
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
+    const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
+    const outcome = await sessionAction.run(
+      { kind: 'session', workspace: cwd },
+      taskContext({ ports: { sessions: port } }),
+    )
+    expect(outcome.wait).toMatchObject({
+      on: 'event',
+      token: 'session:session-1',
+      resume: { sessionId: 'session-1' },
+    })
+    // 上下文里的 now 是 2026-11-10T00:00:00Z，默认等 120 分钟。
+    expect(outcome.wait?.dueAt).toBe('2026-11-10T02:00:00.000Z')
+  })
+
+  it('写了 awaitSession: none 就发完即走', async () => {
+    const calls: string[] = []
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
+    const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
+    const outcome = await sessionAction.run(
+      { kind: 'session', workspace: cwd, awaitSession: 'none' },
+      taskContext({ ports: { sessions: port } }),
+    )
+    expect(outcome).toMatchObject({ ok: true, sessionId: 'session-1' })
+    expect(outcome.wait).toBeUndefined()
+  })
+
+  it('续跑时认出自己的令牌：不再建第二个会话', async () => {
+    const calls: string[] = []
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
+    const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
+    const outcome = await sessionAction.run(
+      { kind: 'session', workspace: cwd },
+      taskContext({
+        ports: { sessions: port },
+        signal: { sessionId: 'session-1', token: 'session:session-1' },
+      }),
+    )
+    expect(outcome).toMatchObject({ ok: true, sessionId: 'session-1' })
+    expect(outcome.wait).toBeUndefined()
+    expect(calls).toEqual([])
+  })
+
+  it('别的信号不让它跳过建会话', async () => {
+    const calls: string[] = []
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
+    const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
+    const outcome = await sessionAction.run(
+      { kind: 'session', workspace: cwd },
+      taskContext({
+        ports: { sessions: port },
+        signal: { ticket: 'T1', token: '票:T1:1' },
+      }),
+    )
+    expect(outcome).toMatchObject({ ok: true, sessionId: 'session-1' })
+    expect(calls).toContain(`create:${cwd}`)
+  })
+
   it('模板里有没配的变量就失败，不去建一个错的目录', async () => {
     const calls: string[] = []
     const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
@@ -177,6 +239,77 @@ describe('session 动作', () => {
     )
     expect(outcome).toMatchObject({ ok: false, failure: 'config' })
     expect(calls).toEqual([])
+  })
+})
+
+describe('会话端口：探视完成状态', () => {
+  /** 一个能报状态的会话服务；`status` 传 undefined 就是「宿主不报」。 */
+  function states(status: 'idle' | 'running' | undefined, calls: string[] = []): Map<string, unknown> {
+    return new Map([['sessionController', {
+      async create() {
+        calls.push('create')
+        return { sessionId: 'session-1' }
+      },
+      async resolveAgent(sessionId: string) {
+        return {
+          agent: {
+            session: { id: sessionId },
+            ...(status === undefined ? {} : { status }),
+            followup() {},
+          },
+        }
+      },
+    }]])
+  }
+
+  it('还在跑就继续等', async () => {
+    const port = createDshSessionPort(contextOf(states('running')), () => undefined)
+    await expect(port.probe('session-9')).resolves.toMatchObject({ ready: false, status: 'running' })
+  })
+
+  it('见过它跑之后再看到 idle 才算干完', async () => {
+    // 宿主给的是同一个 agent 对象，状态在它身上变——端口缓存的是这个对象，不是快照。
+    const agent: { session: { id: string }; status: 'idle' | 'running'; followup(): void } = {
+      session: { id: 'session-9' },
+      status: 'running',
+      followup() {},
+    }
+    const services = new Map([['sessionController', {
+      async resolveAgent() {
+        return { agent }
+      },
+    }]])
+    const port = createDshSessionPort(contextOf(services), () => undefined)
+    await expect(port.probe('session-9')).resolves.toMatchObject({ ready: false })
+    agent.status = 'idle'
+    await expect(port.probe('session-9')).resolves.toMatchObject({ ready: true, status: 'idle' })
+  })
+
+  it('刚建好也是 idle，不能当成已经干完', async () => {
+    const calls: string[] = []
+    const services = states('idle', calls)
+    const port = createDshSessionPort(contextOf(services), () => undefined)
+    await port.createSession({ cwd: mkdtempSync(join(tmpdir(), 'dsh-probe-')) })
+    await expect(port.probe('session-1')).resolves.toMatchObject({ ready: false })
+  })
+
+  it('宿主不报状态时按时间宽限，刚建的不放行', async () => {
+    const services = states(undefined)
+    const port = createDshSessionPort(contextOf(services), () => undefined)
+    await port.createSession({ cwd: mkdtempSync(join(tmpdir(), 'dsh-probe-')) })
+    const verdict = await port.probe('session-1')
+    expect(verdict.ready).toBe(false)
+    expect(verdict.detail).toContain('宽限')
+  })
+
+  it('会话没了就是没了，别把链挂到超时', async () => {
+    const services = new Map([['sessionController', {
+      async resolveAgent() {
+        return { error: 'gone' }
+      },
+    }]])
+    const port = createDshSessionPort(contextOf(services), () => undefined)
+    await expect(port.probe('session-gone')).resolves.toMatchObject({ ready: false, detail: '会话已经不在了' })
   })
 })
 
@@ -217,6 +350,17 @@ describe('console:tool 触发器与词表', () => {
     expect(normalizeDshAction({ kind: 'markRead' })).toBeUndefined()
     expect(normalizeDshAction({ kind: 'llm', model: 'deepseek/deepseek-chat', maxTokens: 256 }))
       .toMatchObject({ kind: 'llm', model: 'deepseek/deepseek-chat', maxTokens: 256 })
+  })
+
+  it('session 的等待开关只收认识的写法，歪值当没写', () => {
+    expect(normalizeDshAction({ kind: 'session', awaitSession: 'idle', timeoutMinutes: 180 }))
+      .toMatchObject({ awaitSession: 'idle', timeoutMinutes: 180 })
+    expect(normalizeDshAction({ kind: 'session', awaitSession: 'none' }))
+      .toMatchObject({ awaitSession: 'none' })
+    // 写歪了就不带这两个键：默认值（等、120 分钟）由动作自己兜。
+    const sloppy = normalizeDshAction({ kind: 'session', awaitSession: '什么时候好', timeoutMinutes: -5 })
+    expect(sloppy).not.toHaveProperty('awaitSession')
+    expect(sloppy).not.toHaveProperty('timeoutMinutes')
   })
 
   it('装配出来的连接器带着七个动作与一个触发器', () => {

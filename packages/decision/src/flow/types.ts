@@ -201,7 +201,14 @@ export interface FlowContext {
     kind: string,
     spec: FlowNodeSpec,
     context: FlowContext,
-  ) => Promise<{ readonly ok: boolean; readonly detail: string; readonly failure?: FailureKind; readonly sessionId?: string }>
+  ) => Promise<{
+    readonly ok: boolean
+    readonly detail: string
+    readonly failure?: FailureKind
+    readonly sessionId?: string
+    /** 动作要等外部回信：交回执行器挂起，而不是当作做完。 */
+    readonly wait?: SuspendSpec
+  }>
   readonly runSubflow?: (nodes: readonly FlowNodeSpec[], context: FlowContext) => Promise<{
     readonly ok: boolean
     readonly detail: string
@@ -222,6 +229,8 @@ export interface FlowContext {
     readonly ok: boolean
     readonly detail: string
     readonly failure?: FailureKind
+    /** 子工作流挂起了：把它「在等什么」连同进度一起交给父图。 */
+    readonly wait?: SuspendSpec & { readonly nested?: { readonly flowId: string; readonly progress: FlowProgress } }
   }>
   /**
    * 恢复时交给挂起节点的载荷。
@@ -266,6 +275,34 @@ export interface SuspendSpec {
   readonly resume?: Readonly<Record<string, unknown>>
   /** 给人看的一句话：在等什么。 */
   readonly detail: string
+  /**
+   * 唤醒令牌：恢复入口按它找到「在等哪一次」。
+   *
+   * 节点知道等的是什么（某个会话、某张工单），所以令牌由节点给；不给时执行器按
+   * `任务:节点:第几次挂起` 造一个，保证同一条链上的多次挂起不会互相唤醒。
+   */
+  readonly token?: string
+}
+
+/**
+ * 落盘的「在等什么」。
+ *
+ * 只有 {@link SuspendSpec} 不够：恢复时要按令牌找回这条任务，还要知道等的是谁、
+ * 什么时候算超时、子工作流停在哪一格。这些都得跟着进度一起存，否则进程重启后
+ * 挂起就变成一条永远不动的记录。
+ */
+export interface PendingWait {
+  readonly nodeId: string
+  readonly on: 'event' | 'human' | 'timer'
+  /** 唤醒令牌；由节点的 `suspend.token` 给，缺省由执行器生成。 */
+  readonly token: string
+  /** 超时时间（ISO）；到点由到期扫描判超时。 */
+  readonly dueAt?: string
+  /** 唤醒时交给节点的载荷。 */
+  readonly resume?: Readonly<Record<string, unknown>>
+  readonly detail: string
+  /** 子工作流停在里面：恢复时先让它续跑，跑完再回到这一格。 */
+  readonly nested?: { readonly flowId: string; readonly progress: FlowProgress }
 }
 
 /** 节点跑完的回答。 */
@@ -285,7 +322,10 @@ export type NodeResult =
   | {
       readonly ok: true
       /** 挂起：这一轮停在这里，等信号再继续。说明在 `suspend.detail` 里。 */
-      readonly suspend: SuspendSpec
+      readonly suspend: SuspendSpec & {
+        /** 子工作流停在里面：它的进度要跟着一起存，恢复时先续跑它。 */
+        readonly nested?: { readonly flowId: string; readonly progress: FlowProgress }
+      }
     }
   | {
       readonly ok: false
@@ -333,6 +373,8 @@ export interface FlowProgress {
   readonly ready: readonly string[]
   /** 停在哪里；没有挂起时为 undefined。 */
   readonly suspendedAt?: string
+  /** 在等什么；与 `suspendedAt` 同生同灭。 */
+  readonly pending?: PendingWait
   /** 这一轮挂起过几次；用于挡住死循环。 */
   readonly suspends: number
 }

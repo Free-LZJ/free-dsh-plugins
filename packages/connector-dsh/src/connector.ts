@@ -15,7 +15,8 @@ import { clamped, stringList } from '@free-lzj/dsh-decision'
 import type { ActionNode, ActionSpecLike, TaskConnector, TaskContext, TaskTrigger } from '@free-lzj/dsh-decision'
 import { capabilityActions } from './actions/capabilities.ts'
 import { followupAction, sessionAction } from './actions/session.ts'
-import { createDshPorts, type ServiceLookup } from './ports.ts'
+import { SESSION_WAIT_PREFIX } from './actions/session.ts'
+import { createDshPorts, type DshSessionPort, type ServiceLookup } from './ports.ts'
 
 /** 本连接器提供的动作 kind。 */
 export const DSH_ACTIONS = ['session', 'followup', 'notify', 'script', 'mcp', 'http', 'llm'] as const
@@ -62,6 +63,14 @@ export function normalizeDshAction(input: unknown): ActionSpecLike | undefined {
         ...optional('instructions', field(record, 'instructions', 8000)),
         ...optional('agentPreset', field(record, 'agentPreset', 120)),
         ...optional('permissionPreset', field(record, 'permissionPreset', 120)),
+        ...(record['awaitSession'] === 'none' || record['awaitSession'] === 'idle'
+          ? { awaitSession: record['awaitSession'] }
+          : {}),
+        ...(typeof record['timeoutMinutes'] === 'number'
+          && Number.isInteger(record['timeoutMinutes'])
+          && record['timeoutMinutes'] > 0
+          ? { timeoutMinutes: record['timeoutMinutes'] }
+          : {}),
       }
     case 'followup':
       return {
@@ -124,8 +133,11 @@ function optional<K extends string>(key: K, value: string | undefined): Record<K
  * 工作台工具触发的那个事件。
  *
  * `open_session` 工具在调用之前就把会话建好了（它要立刻返回 id），所以它把
- * `sessionId` 一起发过来；核心据此在任务链上补一个会话节点。这条路径让"工具建的会话"
- * 与"规则动作建的会话"在看板上一模一样。
+ * `sessionId` 一起发过来，核心据此在任务链上补一格会话节点。
+ *
+ * **它不负责再造一条任务**：会话属于调它的那个任务，没有归属任务时就不挂。
+ * 事件流里要开会话，应该写 `session` 动作（见 `actions/session.ts`），让流程自己
+ * 拥有这个节点、自己决定等不等它跑完。
  */
 export const toolTrigger: TaskTrigger = {
   kind: 'trigger',
@@ -188,6 +200,23 @@ export function createDshConnector(ctx: ServiceLookup, options: DshConnectorOpti
     triggers: [toolTrigger],
     actions,
     ports,
+    async probeWait(wait) {
+      // 只认自己那类等待：别的令牌（工单回信、邮件回信）让提供方回答。
+      if (!wait.token.startsWith(SESSION_WAIT_PREFIX)) return undefined
+      const sessions = ports.sessions as DshSessionPort
+      const verdict = await sessions.probe(wait.token.slice(SESSION_WAIT_PREFIX.length))
+      return {
+        ready: verdict.ready,
+        ...(verdict.ready
+          ? {
+              payload: {
+                sessionId: wait.token.slice(SESSION_WAIT_PREFIX.length),
+                ...(verdict.status === undefined ? {} : { status: verdict.status }),
+              },
+            }
+          : {}),
+      }
+    },
     vocabulary: {
       // 本连接器不提供条件：它的规则只能靠空 when 匹配，动作才是它的事。
       normalizeCondition: () => undefined,

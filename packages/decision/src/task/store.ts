@@ -50,7 +50,7 @@ export interface TaskStore {
   count(): number
 }
 
-const STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'done', 'partial', 'skipped', 'failed', 'undone'])
+const STATUSES: ReadonlySet<TaskStatus> = new Set(['running', 'suspended', 'done', 'partial', 'skipped', 'failed', 'undone'])
 
 /**
  * 认回一条任务；缺关键字段就返回 undefined。

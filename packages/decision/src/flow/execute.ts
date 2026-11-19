@@ -19,6 +19,7 @@ import type { FlowNodeRegistry } from './registry.ts'
 import type { Task } from '../task/record.ts'
 import type {
   ConditionEvaluator, FailureKind, Flow, FlowContext, FlowNodeSpec, FlowProgress, FlowResult, NodeRecordInput, NodeResult,
+  PendingWait,
 } from './types.ts'
 
 /** 一轮执行需要的端口。 */
@@ -97,11 +98,19 @@ export async function executeFlow(
     }
   }
 
-  const state: { done: string[]; satisfied: string[]; ready: string[]; suspendedAt?: string; suspends: number } = {
+  const state: {
+    done: string[]
+    satisfied: string[]
+    ready: string[]
+    suspendedAt?: string
+    pending?: PendingWait
+    suspends: number
+  } = {
     done: [...(options.progress?.done ?? [])],
     satisfied: [...(options.progress?.satisfied ?? [])],
     ready: [...(options.progress?.ready ?? [])],
     ...(options.progress?.suspendedAt === undefined ? {} : { suspendedAt: options.progress.suspendedAt }),
+    ...(options.progress?.pending === undefined ? {} : { pending: options.progress.pending }),
     suspends: options.progress?.suspends ?? 0,
   }
   if (options.progress === undefined) {
@@ -166,6 +175,7 @@ export async function executeFlow(
     satisfied: [...state.satisfied],
     ready: [...state.ready],
     ...(state.suspendedAt === undefined ? {} : { suspendedAt: state.suspendedAt }),
+    ...(state.pending === undefined ? {} : { pending: state.pending }),
     suspends: state.suspends,
   })
 
@@ -278,6 +288,18 @@ export async function executeFlow(
           continue
         }
         state.suspendedAt = id
+        // 令牌必须落盘：恢复入口只能靠它认出「在等哪一次」。节点没给就按任务 + 节点
+        // + 第几次挂起造一个——同一条链上挂起多次时，前一次的令牌不会唤错后一次。
+        const token = ran.suspend.token ?? `${options.taskId}:${id}:${String(state.suspends)}`
+        state.pending = {
+          nodeId: id,
+          on: ran.suspend.on,
+          token,
+          ...(ran.suspend.dueAt === undefined ? {} : { dueAt: ran.suspend.dueAt }),
+          ...(ran.suspend.resume === undefined ? {} : { resume: ran.suspend.resume }),
+          detail: ran.suspend.detail,
+          ...(ran.suspend.nested === undefined ? {} : { nested: ran.suspend.nested }),
+        }
         // 把节点放回就绪队列：恢复时直接重跑它，而它的入边仍然满足。
         state.ready = [id]
         await context.record({
@@ -285,7 +307,11 @@ export async function executeFlow(
           type: spec?.type ?? '?',
           ok: true,
           detail: ran.suspend.detail,
-          data: { suspendOn: ran.suspend.on, ...(ran.suspend.dueAt === undefined ? {} : { dueAt: ran.suspend.dueAt }) },
+          data: {
+            suspendOn: ran.suspend.on,
+            token,
+            ...(ran.suspend.dueAt === undefined ? {} : { dueAt: ran.suspend.dueAt }),
+          },
         })
         await persist()
         return {
@@ -322,6 +348,11 @@ export async function executeFlow(
         ...(kind === undefined ? {} : { failure: kind }),
         ...(plain.sessionId === undefined ? {} : { sessionId: plain.sessionId }),
       })
+      // 挂起的节点跑完了：它已经等到东西，标记与令牌一起清掉，别让下一次挂起继承旧的。
+      if (state.suspendedAt === id) {
+        delete state.suspendedAt
+        delete state.pending
+      }
       state.done.push(id)
 
       if (spec?.type === 'switch' || spec?.type === 'if') matched ??= `${id}: ${plain.detail}`

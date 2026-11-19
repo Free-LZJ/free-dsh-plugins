@@ -169,4 +169,19 @@ describe('事件流与子工作流的加载', () => {
     expect(engine.eventFlowOf('fake:a')?.id).toBe('a-first')
     engine.stop()
   })
+
+  it('触发器没配事件流时记跳过，不记失败', async () => {
+    // 这张图只接 fake:a；fake:b 进来时没人接。这不是错误——内置连接器发的某些事件
+    // 本来就可能没人要（`console:tool` 就是），记成 failed 会让看板的红色失去意义。
+    const { engine } = await boot({ events: { 'fake-a.yml': eventFlow('fake-a', 'fake:a', 'A') } })
+    await engine.emit({ type: 'fake.b', source: 'fake', payload: {} } as never)
+    await engine.flush()
+    const task = engine.view().tasks[0]
+    expect(task?.status).toBe('skipped')
+    expect(task?.nodes.every(node => node.ok)).toBe(true)
+    expect(task?.nodes.some(node => node.detail.includes('没有接「fake:b」'))).toBe(true)
+    // 没有图时也不该冒出「失败」这种话。
+    expect(task?.nodes.some(node => node.detail.includes('失败'))).toBe(false)
+    engine.stop()
+  })
 })

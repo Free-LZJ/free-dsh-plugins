@@ -28,5 +28,12 @@ export interface TaskContext {
   readonly ports: Readonly<Record<string, unknown>>
   /** 现在；测试可以钉死。 */
   readonly now: Date
+  /**
+   * 唤醒这条链的信号；只有「刚从挂起处续跑」的那一次才有。
+   *
+   * 动作该拿它判断「这一格我是不是已经做过了」：会话动作就是靠它认出「会话我建过了，
+   * 这次只是回来问一句它跑完没有」，否则续跑会把会话再建一遍。
+   */
+  readonly signal?: Readonly<Record<string, unknown>>
   log(line: string): void
 }

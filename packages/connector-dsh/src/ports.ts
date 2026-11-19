@@ -26,6 +26,14 @@ export interface AgentLike {
     readonly id?: string
     append?(type: string, data: unknown): unknown
   }
+  /**
+   * 宿主报的活状态：`running` 是正在跑一轮，`idle` 是没人在驱动它。
+   *
+   * 旧宿主没有这个字段，所以是可选的——没有它就只能按时间宽限判断（见 `probe`）。
+   */
+  readonly status?: 'idle' | 'running'
+  /** 等这个 agent 彻底静下来；宿主有就给，探针不阻塞地用它。 */
+  whenIdle?(): Promise<void>
   followup(message: unknown): unknown
 }
 
@@ -103,10 +111,24 @@ export function portsOf(context: TaskContext): DshPorts {
   return context.ports as unknown as DshPorts
 }
 
-/** 会话端口额外的两个动词（不在内核 `SessionPort` 里，但这个插件要用）。 */
+/** 一次「会话干完了吗」的探视结果。 */
+export interface SessionProbe {
+  readonly ready: boolean
+  readonly status?: 'idle' | 'running'
+  /** 一句给看板/记录看的说明。 */
+  readonly detail: string
+}
+
+/** 会话端口额外的动词（不在内核 `SessionPort` 里，但这个插件要用）。 */
 export interface DshSessionPort extends SessionPort {
   /** 会话是不是这个端口建的；投递到别人的常驻会话时不该去改它的归属。 */
   knows(sessionId: string): boolean
+  /**
+   * 看一眼这个会话干完没有。**不阻塞**：到期扫描每隔几秒就问一遍所有在等的任务。
+   * @param sessionId - 宿主会话 id。
+   * @returns 探视结果。
+   */
+  probe(sessionId: string): Promise<SessionProbe>
 }
 
 /**
@@ -130,6 +152,10 @@ export function createDshSessionPort(ctx: ServiceLookup, log: (line: string) => 
   const agents = new Map<string, AgentLike>()
   /** 本端口建过的会话集合。 */
   const created = new Set<string>()
+  /** 建出来的时刻：刚建好的会话也是 idle，得靠它区分「还没开跑」与「已经干完」。 */
+  const bornAt = new Map<string, number>()
+  /** 见过它 running 的会话：之后再看到 idle 才算真的干完了。 */
+  const sawRunning = new Set<string>()
 
   /** 把一个会话挂到它 cwd 对应的工作区；失败只说一句。 */
   const attach = async (cwd: string, sessionId: string): Promise<void> => {
@@ -156,6 +182,7 @@ export function createDshSessionPort(ctx: ServiceLookup, log: (line: string) => 
       }
       const created_ = await service.create(request)
       created.add(created_.sessionId)
+      bornAt.set(created_.sessionId, Date.now())
       return { sessionId: created_.sessionId }
     },
 
@@ -195,6 +222,35 @@ export function createDshSessionPort(ctx: ServiceLookup, log: (line: string) => 
     },
 
     knows: sessionId => created.has(sessionId),
+
+    async probe(sessionId) {
+      const service = controller()
+      if (service === undefined) return { ready: false, detail: '这个部署没有会话服务，判不了会话状态' }
+      let agent = agents.get(sessionId)
+      if (agent === undefined) {
+        const resolved = await service.resolveAgent(sessionId)
+        if ('error' in resolved) return { ready: false, detail: '会话已经不在了' }
+        agent = resolved.agent
+        agents.set(sessionId, agent)
+      }
+      const status = agent.status
+      // 不是本进程建的会话（重启后接着等的那种）：从第一次看见它开始算宽限，
+      // 否则 `age` 永远是 0，这条链会一直等到超时。
+      const born = bornAt.get(sessionId) ?? Date.now()
+      bornAt.set(sessionId, born)
+      const age = (Date.now() - born) / 1000
+      if (status === 'running') {
+        sawRunning.add(sessionId)
+        return { ready: false, status, detail: '会话还在跑' }
+      }
+      if (status === 'idle') {
+        // 刚建出来的会话也是 idle：没见过它跑就先宽限一分钟，别把「还没开跑」当成「干完了」。
+        if (sawRunning.has(sessionId) || age >= 60) return { ready: true, status, detail: '会话跑完了' }
+        return { ready: false, status, detail: '会话还没开跑' }
+      }
+      // 旧宿主不报状态：按时间放行，别让整条链永远挂着（超时那条会给出更准确的原因）。
+      return { ready: age >= 120, detail: '宿主没报会话状态，按 2 分钟宽限放行' }
+    },
   }
 }
 

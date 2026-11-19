@@ -23,7 +23,7 @@ import type { TaskContext } from './context.ts'
 import type { MatchState } from '../match.ts'
 import type { TaskEvent, TaskTrigger } from './event.ts'
 import type { ActionNode, FailureKind, NodeOutcome, TaskNode } from './node.ts'
-import type { FlowNode } from '../flow/types.ts'
+import type { FlowNode, PendingWait } from '../flow/types.ts'
 import type { Task } from './record.ts'
 import type { OwnedRegistry } from './registry.ts'
 
@@ -179,6 +179,19 @@ export interface TaskConnector {
   readonly classify?: ClassifyPlan
   /** 它挂到上下文里的端口。 */
   readonly ports?: Readonly<Record<string, unknown>>
+  /**
+   * 挂起的任务在等的东西到了没有。
+   *
+   * 核心不认识「会话」「工单」「邮件回信」，所以由提供等待的那一侧回答。探针必须是
+   * **只读、快速**的：到期扫描每隔几秒问一遍，阻塞一次就拖住所有在等的任务。
+   * @param wait - 这条任务在等什么（含令牌与超时）。
+   * @param task - 整条任务的只读视图，按需取上下文。
+   * @returns 到了没有；`ready: true` 时把 `payload` 交给节点。不认识的令牌返回 undefined。
+   */
+  readonly probeWait?: (
+    wait: PendingWait,
+    task: Task,
+  ) => Promise<{ readonly ready: boolean; readonly payload?: Readonly<Record<string, unknown>> } | undefined>
   /** 规则文件的语法与发货默认规则。 */
   readonly vocabulary: RuleVocabulary<ConditionSpecLike, ActionSpecLike>
   readonly defaultRules: string

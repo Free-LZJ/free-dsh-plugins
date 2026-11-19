@@ -12,6 +12,8 @@
  * @module @free-lzj/dsh-decision/task/node
  */
 
+import type { SuspendSpec } from '../flow/types.ts'
+
 /** 一次失败的性质——它决定人**还能做什么**（去改配置 / 再试一次 / 只能放弃）。 */
 export type FailureKind = 'config' | 'transient' | 'fatal'
 
@@ -34,6 +36,14 @@ export interface NodeOutcome {
   readonly sessionId?: string
   /** 结构化证据（会话模式、模型名、答案摘要…），写进节点记录的 `data`。 */
   readonly data?: Readonly<Record<string, unknown>>
+  /**
+   * 这一格要等外部回信（会话干完、人工确认、定时到点）。
+   *
+   * 与 `status` 不冲突：`wait` 表示「派发成功、但还没做完」，链停在这里等信号；
+   * 没有它才按 `status` 继续。动作分三档就靠这个字段落地：同步的等出结果再返回，
+   * 异步的发完即走（不给 `wait`），要等的给 `wait`。
+   */
+  readonly wait?: SuspendSpec
 }
 
 /** 一种节点。 */
@@ -68,6 +78,8 @@ export type ActionOutcome =
       readonly undo?: () => Promise<void>
       readonly status?: 'continue' | 'stop'
       readonly data?: Readonly<Record<string, unknown>>
+      /** 派发成功但要等回信：这一格挂起，直到 {@link SuspendSpec} 说明的信号到达。 */
+      readonly wait?: SuspendSpec
     }
   | {
       readonly ok: false
@@ -111,6 +123,7 @@ export function defineAction<TSpec, TContext>(
           ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
           ...(outcome.undo === undefined ? {} : { undo: outcome.undo }),
           ...(outcome.data === undefined ? {} : { data: outcome.data }),
+          ...(outcome.wait === undefined ? {} : { wait: outcome.wait }),
         }
       }
       return {

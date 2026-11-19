@@ -429,6 +429,55 @@ describe('executeFlow：挂起与续跑', () => {
     expect(resumed.progress.done).toEqual(['a', 'w', 'z'])
   })
 
+  it('挂起时把等待说明落进 pending：令牌、到期时间与恢复载荷都在', async () => {
+    const token: FlowNode = {
+      type: 'wait-token',
+      label: '等会话',
+      group: 'action',
+      run: async () => ({
+        ok: true,
+        suspend: {
+          on: 'event',
+          token: 'session:abc',
+          dueAt: '2026-01-01T00:00:00.000Z',
+          resume: { sessionId: 'abc' },
+          detail: '等会话 abc 干完',
+        },
+      }),
+    }
+    const { deps } = harness([token])
+    const flow: Flow = { id: 'f', name: 'f', connector: 'test', nodes: [{ id: 'w', type: 'wait-token' }] }
+    const paused = await executeFlow(flow, { taskId: 't', runId: 'r', event: {} }, deps)
+    expect(paused.status).toBe('suspended')
+    expect(paused.progress.pending).toMatchObject({
+      nodeId: 'w',
+      on: 'event',
+      token: 'session:abc',
+      dueAt: '2026-01-01T00:00:00.000Z',
+      resume: { sessionId: 'abc' },
+      detail: '等会话 abc 干完',
+    })
+  })
+
+  it('没写令牌时按「任务:节点:第几次」生成，两次挂起不撞号', async () => {
+    const always: FlowNode = {
+      type: 'always-wait',
+      label: '永远等',
+      group: 'action',
+      run: async () => ({ ok: true, suspend: { on: 'event', detail: '等' } }),
+    }
+    const { deps } = harness([always])
+    const flow: Flow = { id: 'f', name: 'f', connector: 'test', nodes: [{ id: 'w', type: 'always-wait' }] }
+    const first = await executeFlow(flow, { taskId: 't', runId: 'r', event: {} }, deps)
+    const second = await executeFlow(
+      flow,
+      { taskId: 't', runId: 'r', event: {}, progress: first.progress, signal: { x: 1 } },
+      deps,
+    )
+    expect(first.progress.pending?.token).toBe('t:w:1')
+    expect(second.progress.pending?.token).toBe('t:w:2')
+  })
+
   it('挂起次数超上限判为死循环', async () => {
     const always: FlowNode = {
       type: 'always-suspend',

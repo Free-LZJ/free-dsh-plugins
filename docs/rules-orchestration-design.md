@@ -522,6 +522,21 @@ async function executeFlow(flow, deps, progress?: FlowProgress): Promise<FlowRes
 | 崩溃续跑 | 模拟进程重启，从 `tasks.db` 读进度继续 |
 | 超时终止 | `await-timer` 到期后 `suspended → done` |
 
+#### 落地实现的差异（2026-11 实现）
+
+上面是设计稿。真正落地的形态比它更收敛——**没有引入 Run 对象**，一条任务只有一份 `Task.progress`，重跑由 `task.status === 'suspended' && task.progress` 判定：
+
+| 设计稿 | 落地 |
+|---|---|
+| `Run` / `RunStatus` / `runs: Run[]` | 保留 `TaskNodeRecord.runId`；进度就是 `task.progress`（`FlowProgress`），同一任务不并发两轮 |
+| `SuspendSpec` 只有 on/dueAt/resume | 加 `token`：由节点给，缺省按 `任务:节点:第几次挂起` 生成；`FlowProgress.pending: PendingWait` 把「在等什么、等到什么时候、令牌是什么」整条落盘，恢复时才知道「等到了什么」 |
+| 只有节点能 `suspend` | 动作也能：`ActionOutcome.wait?: SuspendSpec`（`NodeOutcome.wait` 同名），经 `executeAction`/`runWorkflow` 一路抬到图上；子工作流挂起会提升成整条链挂起（`pending.nested = { flowId, progress }`），唤醒后先用嵌套进度续子图 |
+| 「谁来恢复」没写 | 两个来源：①`TaskEngine.resume({ taskId 或 token, payload, actor })` 手动/外部唤醒，令牌不匹配直接拒；②`runner.wakeWaits` 每轮 `runDue` 扫一遍挂起任务，问**提供等待的连接器** `probeWait(wait, task)` 是否就绪（核心不认识会话，也不该认识）。`dueAt` 到点无人唤醒 → 记 `failed`，节点写明「等超时：<在等什么>」 |
+| 恢复像重跑 | 不行：已派发的副作用会做第二遍。恢复时 `TaskContext.signal` 带着 `{ ...resume, ...payload, token }` 交给**同一个节点**，动作据令牌认出「这格我做过了」（`delaySeconds > 0` 不再入队、`session` 不再建第二个会话） |
+| `STATUSES` 白名单 | `store.ts` 与 `sqlite-store.ts` 都补了 `'suspended'`——漏了会被读回成 `done`（等于任务被悄悄标完成） |
+
+`session` 动作的三档：`awaitSession: idle`（默认，等宿主报 idle）/ `none`（发完就走）/ `timeoutMinutes`（默认 120）到期判失败。
+
 ### 8. 错误处理
 
 | `failure` | 行为 |

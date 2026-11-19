@@ -185,7 +185,11 @@ const workflowNode: FlowNode = {
     const vars = passWorkflowVars(context, pass)
 
     const outcome = await run(id, vars, context)
-    if (outcome.ok) return { ok: true, detail: `工作流 ${id}：${outcome.detail}` }
+    if (outcome.ok) {
+      // 子工作流自己挂起了：把「在等什么」连同它停在哪一格一起交上去，父图照原样停住。
+      if (outcome.wait !== undefined) return { ok: true, suspend: outcome.wait }
+      return { ok: true, detail: `工作流 ${id}：${outcome.detail}` }
+    }
     return {
       ok: false,
       detail: `工作流 ${id}：${outcome.detail}`,

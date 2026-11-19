@@ -28,7 +28,7 @@ import type { DecisionConfigBase } from '../config.ts'
 import { ruleMatches } from '../match.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../registry.ts'
 import type { Rule } from '../types.ts'
-import type { Flow, FlowContext, FlowNodeSpec } from '../flow/types.ts'
+import type { Flow, FlowContext, FlowNodeSpec, SuspendSpec } from '../flow/types.ts'
 import type { FlowNodeRegistry } from '../flow/registry.ts'
 import type { TaskConnector } from './connector.ts'
 import type { TaskContext } from './context.ts'
@@ -72,6 +72,26 @@ export interface UndoResult {
   readonly message: string
 }
 
+/** 一次动作执行的结果；`wait` 表示派发成功但还没做完。 */
+export interface ActionRun {
+  readonly ok: boolean
+  readonly detail: string
+  readonly sessionId?: string
+  readonly wait?: SuspendSpec
+}
+
+/** 唤醒一条挂起的任务。 */
+export interface ResumeInput {
+  /** 按任务唤醒；与 `token` 二选一。 */
+  readonly taskId?: string
+  /** 按唤醒令牌找人；不知道任务 id 的调用方用它（例如等待的探针）。 */
+  readonly token?: string
+  /** 唤醒载荷：合进挂起时留的 `resume`，一起交给节点。 */
+  readonly payload?: Readonly<Record<string, unknown>>
+  /** 谁唤醒的（`probe` / `human` / 工具名），只用于记录。 */
+  readonly actor?: string
+}
+
 /** 执行器。 */
 export class TaskRunner {
   /** 同一 `dedupeKey` 正在扇出时，第二次 emit 等它，别建两个任务。 */
@@ -80,7 +100,14 @@ export class TaskRunner {
   private readonly running = new Set<Promise<void>>()
 
   /** @param deps - 存储、注册表、规则与配置。 */
-  /** 分类结果按任务缓存：一封邮件只问一次模型。 */
+  /**
+   * 分类结果缓存：同一任务、同一个问法只问一次模型。
+   *
+   * 键里必须带上标签集与提示词。一张 `switch` 上的每条 `classifier` 出边问的是
+   * **不同的问题**（`labels` 不同，模型给的答案也就不同），只按 `task.id` 缓存会让
+   * 第一条边的问题套住后面每一条：命中的答案不在后几条边的标签集里，整张图就恒落到
+   * 兜底那条边——这正是「GitHub 通知被判成兜底」的成因。
+   */
   private readonly classifications = new Map<string, Promise<{ readonly label: string; readonly confidence: number }>>()
 
   constructor(private readonly deps: RunnerDeps) {}
@@ -209,7 +236,7 @@ export class TaskRunner {
    * 公共方法：延迟动作到期、建议被批准、重启后恢复都会重入这里。
    * @param taskId - 任务 id。
    */
-  async runChain(taskId: string): Promise<void> {
+  async runChain(taskId: string, signal?: Readonly<Record<string, unknown>>): Promise<void> {
     const task = this.deps.store.get(taskId)
     if (task === undefined) return
     const connector = this.deps.connectors.get(task.connector)
@@ -228,15 +255,18 @@ export class TaskRunner {
     // 先看有没有节点图：有就走图，没有走旧的规则列表。二者互斥，不是两套同时生效。
       const graph = this.pickFlow(connector.id, task.triggerId)
     if (graph !== undefined) {
-      await this.runFlow(task, connector, graph, ports, config)
+      await this.runFlow(task, connector, graph, ports, config, signal)
       return
     }
 
     // 规则文件里没有能用的流程图。
-    // **没有回退**：v1 的规则列表路径已经删了，`rules.yml` 只有一种形状。读到别的形状
-    // 说明那份文件没迁移（或者迁移失败），此时如实说，而不是装作「一条规则都没命中」。
-    await this.appendNode(task, 'rule', false, '规则文件里没有适用的流程图')
-    await this.finish(taskId, 'failed', '规则文件里没有适用的流程图——它可能还是旧格式，需要迁移到 version: 2')
+    // **这不是失败，是「没配」**：内置连接器发的某些事件本来就可能没人接——`open_session`
+    // 建完会话后发的 `console.tool.invoked` 就是这种。把「没配图」记成 failed，等于每开一次
+    // 会话就往看板上挂一条红点，红色随即失去意义：真错和没配置混在一起，人就不再看它了。
+    // 所以记一格「跳过」、任务标成 skipped：红色只留给真的执行出错。
+    const detail = `没有接「${task.triggerId}」的事件流，这条事件跳过`
+    await this.appendNode(task, 'rule', true, detail)
+    await this.finish(taskId, 'skipped', detail)
   }
 
   /**
@@ -289,18 +319,19 @@ export class TaskRunner {
     when: readonly ConditionSpecLike[],
     ports: Readonly<Record<string, unknown>>,
   ): Promise<{ readonly label: string; readonly confidence: number }> {
-    const cacheKey = task.id
+    /** 从条件里找第一个 `classifier`，它带着这一条边的标签集与提示词。 */
+    const spec = when.find(condition => condition.kind === 'classifier') as
+      | { readonly labels?: readonly string[]; readonly prompt?: string }
+      | undefined
+    if (spec === undefined) return { label: 'uncertain', confidence: 0 }
+
+    const cacheKey = classificationKey(task.id, spec.labels, spec.prompt)
     const cached = this.classifications.get(cacheKey)
     if (cached !== undefined) return await cached
 
     const pending = (async () => {
       const classify = connector.classify
       if (classify === undefined) return { label: 'uncertain', confidence: 0 }
-      /** 从条件里找第一个 `classifier`，它带着标签集与提示词。 */
-      const spec = when.find(condition => condition.kind === 'classifier') as
-        | { readonly labels?: readonly string[]; readonly prompt?: string }
-        | undefined
-      if (spec === undefined) return { label: 'uncertain', confidence: 0 }
 
       try {
         const outcome = await classify.node.run(
@@ -332,12 +363,27 @@ export class TaskRunner {
     return await pending
   }
 
+  /**
+   * 丢掉某个任务的分类缓存。
+   *
+   * 一轮跑完就该丢：同一个任务不会重入同一轮，留着只是让长跑的工作台一路上涨。
+   * 任务重新跑（延迟动作到期、建议被批准）时标签可能已经变了，旧答案也不该复用。
+   * @param taskId - 任务 id。
+   */
+  private forgetClassifications(taskId: string): void {
+    const prefix = `${taskId}\u0000`
+    for (const key of this.classifications.keys()) {
+      if (key.startsWith(prefix)) this.classifications.delete(key)
+    }
+  }
+
   private async runFlow(
     task: Task,
     connector: TaskConnector,
     flow: Flow,
     ports: Readonly<Record<string, unknown>>,
     config: DecisionConfigBase,
+    signal?: Readonly<Record<string, unknown>>,
   ): Promise<void> {
     const resuming = task.progress !== undefined && task.status === 'suspended'
     const runId = resuming ? (task.runId ?? `run-${randomUUID()}`) : `run-${randomUUID()}`
@@ -356,6 +402,15 @@ export class TaskRunner {
      * 谁先要谁付一次代价。
      */
     let bodyOnce: Promise<string> | undefined
+
+    /**
+     * 子工作流停在半路的那半张进度。
+     *
+     * 唤醒时父图会把 `pending.nested` 一起带回来，但 `runWorkflow` 闭包认不出「现在是
+     * 不是当初那个节点在续跑」——所以这里只手递一次：第一个被调起来的子工作流拿走它，
+     * 拿完就清掉，后面的调用（loop 里再调同一个工作流）不会误用别人的进度。
+     */
+    let nestedProgress = resuming ? task.progress?.pending?.nested : undefined
 
     const evaluate = async (
       when: readonly ConditionSpecLike[],
@@ -400,16 +455,19 @@ export class TaskRunner {
         // 旧式动作交给 runner 跑：于是撤销窗口、延迟排队、试运行在图上也照旧生效。
         executeAction: async (kind: string, spec: FlowNodeSpec, context: FlowContext) => {
           const index = context.vars['__actionIndex']
-          const ok = await this.runAction(
+          const outcome = await this.runAction(
             task.id,
             connector,
             { kind, ...(spec.config ?? {}) } as ActionSpecLike,
             typeof index === 'number' ? index : 0,
             ports,
+            context.signal,
           )
-          return ok
-            ? { ok: true, detail: kind }
-            : { ok: false, detail: `${kind} 失败`, failure: 'transient' as const }
+          // `wait` 必须原样上去：它是「派发成功但要等回信」，丢在这一层就变成假完成了。
+          const sessionId = outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }
+          return outcome.ok
+            ? { ok: true, detail: outcome.detail, ...sessionId, ...(outcome.wait === undefined ? {} : { wait: outcome.wait }) }
+            : { ok: false, detail: outcome.detail, failure: 'transient' as const, ...sessionId }
         },
         // 子工作流：从 `workflows/` 找图，用同一个执行器跑，进度独立。
         runWorkflow: async (workflowId, vars, outer) => {
@@ -417,6 +475,9 @@ export class TaskRunner {
           if (sub === undefined) {
             return { ok: false, detail: '没有工作流「' + workflowId + '」', failure: 'config' as const }
           }
+          // 唤醒后第一次调子工作流：把它上次停在哪一格接过来。接完就清，别传给下一次。
+          const carry = nestedProgress !== undefined && nestedProgress.flowId === workflowId ? nestedProgress : undefined
+          nestedProgress = undefined
           const nested = await executeFlow(sub, {
             taskId: outer.taskId,
             runId: outer.runId,
@@ -428,6 +489,7 @@ export class TaskRunner {
             ...(outer.evaluate === undefined ? {} : { evaluate: outer.evaluate }),
             ...(outer.signal === undefined ? {} : { signal: outer.signal }),
             ...(outer.runWorkflow === undefined ? {} : { runWorkflow: outer.runWorkflow }),
+            ...(carry === undefined ? {} : { progress: carry.progress }),
           }, {
             registry: this.deps.nodes,
             dryRun: config.dryRun,
@@ -447,11 +509,28 @@ export class TaskRunner {
               this.deps.changed()
             },
           })
+          // 子图挂起不是失败：把它「在等什么」连同进度交给父图，父图照原样停在 workflow 这一格。
+          if (nested.status === 'suspended') {
+            const wait = nested.progress.pending
+            return {
+              ok: true,
+              detail: `工作流 ${workflowId}：${wait?.detail ?? '在等信号'}`,
+              wait: {
+                on: wait?.on ?? 'event',
+                ...(wait?.token === undefined ? {} : { token: wait.token }),
+                ...(wait?.dueAt === undefined ? {} : { dueAt: wait.dueAt }),
+                ...(wait?.resume === undefined ? {} : { resume: wait.resume }),
+                detail: wait?.detail ?? `工作流 ${workflowId} 在等信号`,
+                nested: { flowId: workflowId, progress: nested.progress },
+              },
+            }
+          }
           return nested.status === 'done' || nested.status === 'skipped'
             ? { ok: true, detail: sub.name }
             : { ok: false, detail: nested.error ?? nested.matched ?? nested.status, failure: 'transient' as const }
         },
         ...(resuming && task.progress !== undefined ? { progress: task.progress } : {}),
+        ...(signal === undefined ? {} : { signal }),
       },
       {
         registry: this.deps.nodes,
@@ -488,6 +567,7 @@ export class TaskRunner {
       updatedAt: this.deps.now().toISOString(),
     })
     if (result.error !== undefined) this.deps.warn(`流程图执行出错：${result.error}`)
+    this.forgetClassifications(task.id)
     this.deps.changed()
   }
 
@@ -524,9 +604,10 @@ export class TaskRunner {
     spec: ActionSpecLike,
     actionIndex: number,
     ports: Readonly<Record<string, unknown>>,
-  ): Promise<boolean> {
+    signal?: Readonly<Record<string, unknown>>,
+  ): Promise<ActionRun> {
     const task = this.deps.store.get(taskId)
-    if (task === undefined) return true
+    if (task === undefined) return { ok: true, detail: '任务已经不在了' }
     const config = this.deps.config()
     const nodeId = `node-${randomUUID()}`
     const at = this.deps.now().toISOString()
@@ -547,32 +628,36 @@ export class TaskRunner {
 
     if (config.dryRun) {
       await write(true, '试运行：只记录，未执行')
-      return true
+      return { ok: true, detail: '试运行：只记录，未执行' }
     }
 
     const action = this.deps.actions.get(spec.kind)
     if (action === undefined) {
-      await write(false, `本部署没有实现动作 ${spec.kind}`, { failure: 'config' })
-      return false
+      const detail = `本部署没有实现动作 ${spec.kind}`
+      await write(false, detail, { failure: 'config' })
+      return { ok: false, detail }
     }
 
     const delay = spec.delaySeconds ?? (action.sideEffect === true ? config.undoWindowSeconds : 0)
-    if (delay > 0) {
+    // 醒来续跑这一格时动作早就派发过了：再排一次队等于同一件事做两遍。
+    if (delay > 0 && signal === undefined) {
       const dueAt = new Date(this.deps.now().getTime() + delay * 1000).toISOString()
+      const detail = `已排队，${String(delay)} 秒后执行（此前可撤销）`
       await this.deps.deferred.add({ taskId, nodeId, connector: connector.id, kind: 'delay', spec, dueAt })
-      await write(true, `已排队，${String(delay)} 秒后执行（此前可撤销）`)
+      await write(true, detail)
       await this.deps.store.patch(taskId, { undoableUntil: dueAt })
-      return true
+      return { ok: true, detail }
     }
 
-    const outcome = await action.run(spec, this.contextOf(task, ports, nodeId, spec.kind))
+    const outcome = await action.run(spec, this.contextOf(task, ports, nodeId, spec.kind, signal))
     if (outcome.undo !== undefined) this.registerUndo(taskId, outcome.undo)
     await write(outcome.ok, outcome.detail, {
       ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
       ...(outcome.failure === undefined ? {} : { failure: outcome.failure }),
       ...(outcome.data === undefined ? {} : { data: outcome.data }),
     })
-    if (outcome.sessionId !== undefined) {
+    // 续跑时会话节点第一遍就挂上了：再挂一格会让看板出现两个同名会话。
+    if (outcome.sessionId !== undefined && signal === undefined) {
       // 会话是链上的一格：它有自己的 id、状态、可点开，而不是动作身上一个字段。
       await this.deps.store.appendNode(taskId, {
         id: `node-${randomUUID()}`,
@@ -585,7 +670,13 @@ export class TaskRunner {
       })
       this.deps.changed()
     }
-    return outcome.ok
+    // `wait` 一路往回传：图上会因此挂起，而不是把「派发成功」当成「做完了」。
+    return {
+      ok: outcome.ok,
+      detail: outcome.detail,
+      ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
+      ...(outcome.wait === undefined ? {} : { wait: outcome.wait }),
+    }
   }
 
 
@@ -623,7 +714,86 @@ export class TaskRunner {
   async runDue(now: Date = this.deps.now()): Promise<number> {
     const due = await this.deps.deferred.takeDue(now)
     for (const record of due) await this.executeDeferred(record)
-    return due.length
+    const woken = await this.wakeWaits(now)
+    return due.length + woken
+  }
+
+  /**
+   * 看一遍所有挂起的任务：超时的判失败，等到东西的唤醒。
+   *
+   * 谁来判「等到了」由连接器回答（`probeWait`）：核心不认识会话，也不该认识。
+   * @param now - 现在。
+   * @returns 被唤醒的任务数。
+   */
+  private async wakeWaits(now: Date): Promise<number> {
+    const nowIso = now.toISOString()
+    let woken = 0
+    for (const task of this.deps.store.list()) {
+      if (task.status !== 'suspended') continue
+      const wait = task.progress?.pending
+      if (wait === undefined) continue
+      if (wait.dueAt !== undefined && wait.dueAt <= nowIso) {
+        await this.appendNode(task, 'wait', false, `等超时：${wait.detail}`)
+        await this.deps.store.patch(task.id, { status: 'failed', updatedAt: nowIso })
+        this.deps.changed()
+        continue
+      }
+      const probe = this.deps.connectors.get(task.connector)?.probeWait
+      if (probe === undefined) continue
+      let verdict: { readonly ready: boolean; readonly payload?: Readonly<Record<string, unknown>> } | undefined
+      try {
+        verdict = await probe(wait, task)
+      } catch (error: unknown) {
+        this.deps.warn(`探「${wait.detail}」时出错：${describe(error)}`)
+        continue
+      }
+      if (verdict?.ready !== true) continue
+      const result = await this.resume({
+        taskId: task.id,
+        token: wait.token,
+        ...(verdict.payload === undefined ? {} : { payload: verdict.payload }),
+        actor: 'probe',
+      })
+      if (result.ok) woken += 1
+    }
+    return woken
+  }
+
+  /**
+   * 唤醒一条挂起的任务。
+   *
+   * 挂起是「这条链停在这一格，等一个信号」；唤醒就是把当初留的载荷交给它、让它从那一格
+   * 接着跑。令牌对不上就拒绝——否则两条都在等的任务会互相唤醒。
+   * @param input - 按任务或令牌找人，可带唤醒载荷。
+   * @returns 结果与一句说明。
+   */
+  async resume(input: ResumeInput): Promise<UndoResult> {
+    const task = input.taskId !== undefined ? this.deps.store.get(input.taskId) : this.findWait(input.token)
+    if (task === undefined) {
+      return { ok: false, message: input.token === undefined ? '没有这条任务' : '没有在等这个信号的任务' }
+    }
+    if (task.status !== 'suspended') return { ok: false, message: `任务 ${task.id} 不在等待状态（${task.status}）` }
+    const wait = task.progress?.pending
+    if (wait === undefined) return { ok: false, message: '这条任务没记下在等什么，没法唤醒' }
+    if (input.token !== undefined && input.token !== wait.token) {
+      return { ok: false, message: '信号对不上这条任务在等的东西' }
+    }
+    const signal: Record<string, unknown> = {
+      ...(wait.resume ?? {}),
+      ...(input.payload ?? {}),
+      ...(input.actor === undefined ? {} : { actor: input.actor }),
+      token: wait.token,
+    }
+    await this.appendNode(task, 'signal', true, `收到信号：${wait.detail}`)
+    await this.runChain(task.id, signal)
+    const after = this.deps.store.get(task.id)
+    return { ok: true, message: `已唤醒，现在是 ${after?.status ?? 'done'}` }
+  }
+
+  /** 按令牌找在等它的那条任务。 */
+  private findWait(token: string | undefined): Task | undefined {
+    if (token === undefined) return undefined
+    return this.deps.store.list().find(task => task.status === 'suspended' && task.progress?.pending?.token === token)
   }
 
   /**
@@ -728,6 +898,7 @@ export class TaskRunner {
     ports: Readonly<Record<string, unknown>>,
     nodeId: string,
     kind: string,
+    signal?: Readonly<Record<string, unknown>>,
   ): TaskContext {
     return {
       task,
@@ -735,6 +906,7 @@ export class TaskRunner {
       vars: this.varsOf(task),
       node: { id: nodeId, kind },
       ports,
+      ...(signal === undefined ? {} : { signal }),
       now: this.deps.now(),
       log: line => this.deps.warn(line),
     }
@@ -772,6 +944,24 @@ export class TaskRunner {
 /** 一个抛出物作为一句话。 */
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 分类缓存的键。
+ *
+ * 同一任务 + 同一问法（标签集与提示词都一样）才算同一件事：模型被问的是「从这些标签里
+ * 选一个」，标签集变了答案就可能变，不能复用。标签顺序不影响问题本身，排序后再拼。
+ * @param taskId - 任务 id。
+ * @param labels - 这一条边声明的标签集。
+ * @param prompt - 这一条边的提示词。
+ * @returns 缓存键。
+ */
+function classificationKey(
+  taskId: string,
+  labels: readonly string[] | undefined,
+  prompt: string | undefined,
+): string {
+  return `${taskId}\u0000${[...(labels ?? [])].sort().join('\u0000')}\u0000${prompt ?? ''}`
 }
 
 export type { NodeOutcome }

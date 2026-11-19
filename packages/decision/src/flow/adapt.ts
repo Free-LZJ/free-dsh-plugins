@@ -76,6 +76,8 @@ export function actionToFlowNode(
       if (context.executeAction !== undefined) {
         const outcome = await context.executeAction(action.kind, spec, context)
         if (outcome.ok) {
+          // 动作派发成功但要等回信：转成挂起，链停在这一格。
+          if (outcome.wait !== undefined) return { ok: true, suspend: outcome.wait }
           return {
             ok: true,
             detail: outcome.detail,
@@ -113,6 +115,8 @@ export function actionToFlowNode(
       }
 
       if (outcome.ok) {
+        // 直连路径同样要认「等回信」：否则挂起会在这一层被当成做完了。
+        if (outcome.wait !== undefined) return { ok: true, suspend: outcome.wait }
         return {
           ok: true,
           detail: outcome.detail,

@@ -21,7 +21,7 @@ import { join } from 'node:path'
 import type { NodePatch, Task, TaskNodeRecord, TaskPatch } from './record.ts'
 import type { TaskStore } from './store.ts'
 
-const STATUSES: ReadonlySet<string> = new Set(['running', 'done', 'partial', 'skipped', 'failed', 'undone'])
+const STATUSES: ReadonlySet<string> = new Set(['running', 'suspended', 'done', 'partial', 'skipped', 'failed', 'undone'])
 
 /**
  * 造一个 SQLite 任务仓。

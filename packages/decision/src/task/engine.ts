@@ -14,6 +14,7 @@
  * @module @free-lzj/dsh-decision/task/engine
  */
 
+import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs'
 import { parseDocument as parseYaml } from 'yaml'
@@ -32,7 +33,7 @@ import type { EmitAck, TaskEvent } from './event.ts'
 import type { ActionNode } from './node.ts'
 import type { NodePatch, Task, TaskConnectorInfo, TaskState } from './record.ts'
 import { OwnedRegistry, RegistrationConflict, TriggerRegistry } from './registry.ts'
-import { TaskRunner, type UndoResult } from './runner.ts'
+import { TaskRunner, type ResumeInput, type UndoResult } from './runner.ts'
 import { createTaskStore, forwardingStore, openTaskStore, type TaskStore } from './store.ts'
 import { createDeferredStore, type DeferredStore } from './deferred.ts'
 import { actionsToFlowNodes } from '../flow/adapt.ts'
@@ -533,9 +534,55 @@ export class TaskEngine {
     return await this.runner.applyDeferred(deferredId)
   }
 
-  /** 执行到期的延迟动作。 */
+  /** 执行到期的延迟动作，并看一遍挂起的任务有没有等到东西。 */
   async runDue(now: Date = this.options.now?.() ?? new Date()): Promise<number> {
     return await this.runner.runDue(now)
+  }
+
+  /**
+   * 唤醒一条挂起的任务。
+   *
+   * 挂起 = 这条链停在一格等信号（会话干完、人工确认、定时到点）。谁来唤醒不重要，
+   * 重要的是令牌对得上：`ResumeInput.token` 与任务记下的那个不一致就拒绝。
+   * @param input - 按任务或令牌找人，可带唤醒载荷。
+   * @returns 结果与一句说明。
+   */
+  async resume(input: ResumeInput): Promise<UndoResult> {
+    const result = await this.runner.resume(input)
+    if (result.ok) this.bump()
+    return result
+  }
+
+  /**
+   * 往一条任务上补一格。
+   *
+   * 给「会话是工具直接建出来的」那条路径用：会话仍然是某条流程里的一格，只是这一格
+   * 不是规则动作建的。**没有归属任务时不该调它**——那说明这次会话不属于任何流程，
+   * 给它凭空造一条任务就会长出看板上那些莫名其妙红点。
+   * @param taskId - 归属任务。
+   * @param node - 这一格的内容。
+   * @returns 写进去了没有。
+   */
+  async appendNode(taskId: string, node: {
+    readonly kind: string
+    readonly detail: string
+    readonly sessionId?: string
+    readonly ok?: boolean
+    readonly data?: Readonly<Record<string, unknown>>
+  }): Promise<boolean> {
+    const task = this.store.get(taskId)
+    if (task === undefined) return false
+    await this.store.appendNode(taskId, {
+      id: `node-${randomUUID()}`,
+      kind: node.kind,
+      at: (this.options.now?.() ?? new Date()).toISOString(),
+      ok: node.ok ?? true,
+      detail: node.detail,
+      ...(node.sessionId === undefined ? {} : { sessionId: node.sessionId }),
+      ...(node.data === undefined ? {} : { data: node.data }),
+    })
+    this.bump()
+    return true
   }
 
   /** 等所有在跑的链结束；测试用。 */
