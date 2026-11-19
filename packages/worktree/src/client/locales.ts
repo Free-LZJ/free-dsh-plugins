@@ -45,6 +45,13 @@ export const zh = {
   forceRemoveHint: '强制删除会丢弃上面这些未提交改动，且无法撤销。',
   dirtyCount: '{count} 处改动',
 
+  unresolvedTitle: '未归属的工作区',
+  unresolvedHint: '这些目录还挂在工作区列表里，但已经找不到对应的检出——通常是检出在外面被删掉了。移除注册只删这一行，不动磁盘上的任何文件。',
+  unresolvedCount: '{count} 个',
+  unresolvedMissing: '目录已不存在',
+  unresolvedNotRepo: '不是仓库',
+  unresolvedForget: '移除注册',
+
   settingsTitle: '设置',
   settingsParent: '工作树目录',
   settingsParentPlaceholder: '留空 = <仓库>/.agents/worktrees',
@@ -94,6 +101,13 @@ export const en: Record<WorktreeKey, string> = {
   forceRemove: 'Remove anyway',
   forceRemoveHint: 'Removing anyway discards the uncommitted changes above and cannot be undone.',
   dirtyCount: '{count} changes',
+
+  unresolvedTitle: 'Unattached workspaces',
+  unresolvedHint: 'These directories are still registered as workspaces, but no checkout answers for them — usually because the checkout was deleted elsewhere. Removing the registration only drops this row; nothing on disk is touched.',
+  unresolvedCount: '{count}',
+  unresolvedMissing: 'Directory missing',
+  unresolvedNotRepo: 'Not a repository',
+  unresolvedForget: 'Remove registration',
 
   settingsTitle: 'Settings',
   settingsParent: 'Worktree directory',

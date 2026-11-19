@@ -13,7 +13,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { OverviewResult, WorktreeSummary } from '../src/protocol.ts'
+import type { OverviewResult, UnresolvedWorkspace, WorktreeSummary } from '../src/protocol.ts'
 import { WorktreesPanel } from '../src/client/WorktreesPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 
@@ -51,6 +51,7 @@ async function overview(): Promise<OverviewResult> {
   return {
     settings: { parent: '', fetchBeforeCreate: true },
     repos: [{ repo: 'D:\\repo', worktrees: [MAIN, LINKED] }],
+    unresolved: [],
   }
 }
 
@@ -66,19 +67,25 @@ interface Asked {
  * @param answer - what the Host does for one removal request.
  * @returns every request the page made.
  */
-function page(answer: (dir: string, path: string, force?: boolean) => Promise<{ removed: string; branch?: string }>): Asked[] {
+function page(
+  answer: (dir: string, path: string, force?: boolean) => Promise<{ removed: string; branch?: string }>,
+  options: {
+    overview?: () => Promise<OverviewResult>
+    forget?: (path: string) => Promise<void>
+  } = {},
+): Asked[] {
   const asked: Asked[] = []
   const removeWorktree = vi.fn(async (dir: string, path: string, force?: boolean) => {
     asked.push({ dir, path, force })
     return answer(dir, path, force)
   })
   const props = {
-    overview,
+    overview: options.overview ?? overview,
     saveSettings: async () => ({ parent: '', fetchBeforeCreate: true }),
     createWorktree: async () => ({ path: '', branch: '', base: 'HEAD' }),
     removeWorktree,
     registerWorkspace: async () => 'ws',
-    forgetWorkspace: async () => {},
+    forgetWorkspace: options.forget ?? (async () => {}),
     openWorkspace: async () => {},
     t: translate,
   } as unknown as Parameters<typeof WorktreesPanel>[0]
@@ -162,5 +169,42 @@ describe('removing a worktree', () => {
     await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull() })
     // The regression: this sentence used to be cleared by the refresh behind it.
     expect(screen.getByRole('alert').textContent).toContain('contains modified')
+  })
+})
+
+describe('registrations that lead nowhere', () => {
+  const GONE = 'D:\\repo\\.agents\\worktrees\\gone'
+
+  it('lists a registration whose checkout no longer exists', async () => {
+    page(async (_dir, path) => ({ removed: path }), {
+      overview: async () => ({
+        settings: { parent: '', fetchBeforeCreate: true },
+        repos: [{ repo: 'D:\\repo', worktrees: [MAIN] }],
+        unresolved: [{ path: GONE, reason: 'missing' as const }],
+      }),
+    })
+
+    expect(await screen.findByText(translate('unresolvedTitle'))).toBeTruthy()
+    expect(screen.getByText(translate('unresolvedMissing'))).toBeTruthy()
+    expect(screen.getByText(GONE)).toBeTruthy()
+  })
+
+  it('drops the registration when asked, and the card goes with it', async () => {
+    let unresolved: UnresolvedWorkspace[] = [{ path: GONE, reason: 'missing' }]
+    const forgotten: string[] = []
+    page(async (_dir, path) => ({ removed: path }), {
+      overview: async () => ({
+        settings: { parent: '', fetchBeforeCreate: true },
+        repos: [{ repo: 'D:\\repo', worktrees: [MAIN] }],
+        unresolved,
+      }),
+      // The Host drops the registration, so the refresh no longer sees it.
+      forget: async (path) => { forgotten.push(path); unresolved = [] },
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: translate('unresolvedForget') }))
+
+    await waitFor(() => { expect(forgotten).toEqual([GONE]) })
+    await waitFor(() => { expect(screen.queryByText(translate('unresolvedTitle'))).toBeNull() })
   })
 })

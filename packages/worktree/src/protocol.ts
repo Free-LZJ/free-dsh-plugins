@@ -97,12 +97,33 @@ export interface RepoOverview {
   readonly worktrees: readonly WorktreeSummary[]
 }
 
+/** One registered Workspace the page could not place in any repository. */
+export interface UnresolvedWorkspace {
+  /** The registered directory. */
+  readonly path: string
+  /**
+   * Why it has no section: the directory is gone, or it exists but is not a
+   * checkout of any repository.
+   */
+  readonly reason: 'missing' | 'not-repository'
+}
+
 /** What the management page reads in one request. */
 export interface OverviewResult {
   /** Settings the page edits. */
   readonly settings: WorktreeSettings
   /** One entry per distinct repository among the registered Workspaces. */
   readonly repos: readonly RepoOverview[]
+  /**
+   * Registrations that landed in no section above.
+   *
+   * A checkout deleted from outside leaves its registration behind as a sidebar
+   * row pointing at nothing, and the section that used to hold it disappears
+   * with the repository — so the page cannot offer the removal row for it any
+   * more. Reporting them here is what lets the page offer to drop the
+   * registration instead of leaving the user no way to find it.
+   */
+  readonly unresolved: readonly UnresolvedWorkspace[]
 }
 
 /** One removal request from the browser. */

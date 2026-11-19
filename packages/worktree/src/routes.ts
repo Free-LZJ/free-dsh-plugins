@@ -10,6 +10,7 @@
  * @module @free-lzj/dsh-worktree/routes
  */
 
+import { stat } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
@@ -20,7 +21,7 @@ import { createWorktree, listWorktrees, primaryRoot, removeWorktree } from './gi
 import {
   CREATE_PATH, MAX_BODY_BYTES, MUTATION_HEADER, OVERVIEW_PATH, REMOVE_PATH, SETTINGS_PATH,
   type CreateWorktreeRequest, type OverviewResult, type RemoveWorktreeRequest, type RepoOverview,
-  type SettingsRequest,
+  type SettingsRequest, type UnresolvedWorkspace,
 } from './protocol.ts'
 import { readSettings, writeSettings } from './store.ts'
 
@@ -115,6 +116,7 @@ async function handleOverview(ctx: Context, req: IncomingMessage, res: ServerRes
     // cannot afford to lose.
     const registry = ctx.get('workspaceRegistry')
     const repos = new Map<string, RepoOverview>()
+    const unresolved = new Map<string, UnresolvedWorkspace>()
     for (const workspace of registry?.list() ?? []) {
       try {
         // One section per repository, even when several registered Workspaces are
@@ -125,12 +127,21 @@ async function handleOverview(ctx: Context, req: IncomingMessage, res: ServerRes
         const { worktrees } = await listWorktrees(repo)
         repos.set(key, { repo, worktrees })
       } catch {
-        // A Workspace whose directory is gone, or is not a repository, simply
-        // contributes no section. Its registration is the page's to remove, not
-        // this read's to report as an error.
+        // A Workspace whose directory is gone, or is not a repository, has no
+        // section. It is not an error either: the registration outlived its
+        // checkout, and the page is the only place that can drop it.
+        const path = workspace.path
+        const key = path.toLowerCase()
+        if (unresolved.has(key)) continue
+        const exists = await stat(path).then(() => true).catch(() => false)
+        unresolved.set(key, { path, reason: exists ? 'not-repository' : 'missing' })
       }
     }
-    const result: OverviewResult = { settings, repos: [...repos.values()] }
+    const result: OverviewResult = {
+      settings,
+      repos: [...repos.values()],
+      unresolved: [...unresolved.values()],
+    }
     respond(res, 200, result)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)

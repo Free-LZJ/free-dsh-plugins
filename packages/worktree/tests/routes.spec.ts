@@ -168,14 +168,30 @@ describe('overview', () => {
     expect(result.repos).toHaveLength(1)
     expect(result.repos[0]?.repo).toBe(repo)
     expect(result.repos[0]?.worktrees.map(entry => entry.branch)).toContain('listed')
+    expect(result.unresolved).toEqual([])
     expect(result.settings).toMatchObject({ parent: '', fetchBeforeCreate: true })
   })
 
-  it('skips a Workspace that is not a repository instead of failing the read', async () => {
-    const routes = await mount([scratch()])
+  it('reports a Workspace that is not a repository instead of failing the read', async () => {
+    const directory = scratch()
+    const routes = await mount([directory])
     const answer = await call(route(routes, OVERVIEW_PATH), { method: 'GET', headers: {} })
     expect(answer.status).toBe(200)
-    expect((JSON.parse(answer.body) as OverviewResult).repos).toEqual([])
+    const result = JSON.parse(answer.body) as OverviewResult
+    expect(result.repos).toEqual([])
+    expect(result.unresolved).toEqual([{ path: directory, reason: 'not-repository' }])
+  })
+
+  it('reports a registration whose directory is gone as missing, once', async () => {
+    // The regression behind the report: a checkout deleted outside the page left
+    // its registration behind, and nothing in the panel could point at it.
+    const gone = join(scratch(), 'deleted-checkout')
+    const routes = await mount([gone, gone])
+    const answer = await call(route(routes, OVERVIEW_PATH), { method: 'GET', headers: {} })
+    expect(answer.status).toBe(200)
+    const result = JSON.parse(answer.body) as OverviewResult
+    expect(result.repos).toEqual([])
+    expect(result.unresolved).toEqual([{ path: gone, reason: 'missing' }])
   })
 
   it('answers an empty overview when no Workspace registry is mounted', async () => {

@@ -122,7 +122,7 @@ export function WorktreesPanel({
         setFetchUpstream(result.settings.fetchBeforeCreate)
       })
       .catch((reason: unknown) => {
-        setData({ settings: { parent: '', fetchBeforeCreate: true }, repos: [] })
+        setData({ settings: { parent: '', fetchBeforeCreate: true }, repos: [], unresolved: [] })
         setError(sentence(reason))
       })
   }, [overview])
@@ -168,6 +168,23 @@ export function WorktreesPanel({
     setError(undefined)
     void registerWorkspace(path)
       .then(workspaceId => openWorkspace(workspaceId))
+      .catch((reason: unknown) => { setError(sentence(reason)) })
+      .finally(() => { setBusy(false) })
+  }
+
+  /**
+   * Drop one registration that no longer answers for a checkout.
+   *
+   * Only the sidebar row goes: the checkout is already gone, and a directory that
+   * still exists but is not a repository is the user's to keep.
+   * @param path - the registered directory.
+   */
+  const forget = (path: string): void => {
+    if (busy) return
+    setBusy(true)
+    setError(undefined)
+    void forgetWorkspace(path)
+      .then(() => { load() })
       .catch((reason: unknown) => { setError(sentence(reason)) })
       .finally(() => { setBusy(false) })
   }
@@ -281,6 +298,49 @@ export function WorktreesPanel({
     </section>
   )
 
+  /**
+   * The card for registrations no repository answers for.
+   *
+   * Without it these rows are unreachable: the section that offered their removal
+   * belonged to a checkout that no longer exists, so the only way to drop them was
+   * editing the workspace store by hand.
+   */
+  const unresolvedCard = data === undefined
+    ? null
+    : (
+      <section className={CLS.card}>
+        <div className={CLS.cardHead}>
+          <div>
+            <h2 className={CLS.cardTitle}>{t('unresolvedTitle')}</h2>
+            <p className={CLS.cardPath}>{t('unresolvedHint')}</p>
+          </div>
+          <div className={CLS.cardTools}>
+            <span className={CLS.hint}>{t('unresolvedCount', { count: data.unresolved.length })}</span>
+          </div>
+        </div>
+        <ul className={CLS.rows}>
+          {data.unresolved.map(item => (
+            <li key={item.path} className={CLS.row}>
+              <span className={CLS.rowText}>
+                <span className={CLS.rowTitle} title={item.path}>
+                  {tail(item.path, 2)}
+                  <span className={CLS.tag}>
+                    {item.reason === 'missing' ? t('unresolvedMissing') : t('unresolvedNotRepo')}
+                  </span>
+                </span>
+                <span className={CLS.rowMeta} title={item.path}>{item.path}</span>
+              </span>
+              <span className={CLS.rowActions}>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => { forget(item.path) }}>
+                  {t('unresolvedForget')}
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+
   const dirty = pending?.entry.dirty
 
   return (
@@ -350,6 +410,7 @@ export function WorktreesPanel({
           : data.repos.length === 0
             ? <p className={CLS.hint}>{t('empty')}</p>
             : data.repos.map(repoCard)}
+        {data !== undefined && data.unresolved.length > 0 ? unresolvedCard : null}
       </div>
       <Modal
         open={target !== undefined}
