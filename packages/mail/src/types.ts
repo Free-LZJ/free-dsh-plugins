@@ -24,9 +24,9 @@ export type MailProvider = 'qq' | 'gmail' | 'custom'
  * `id` must match `/^[a-z][a-z0-9-]*$/` because it is also a credentials key
  * segment — generate it as a lowercase hex hash, never from the raw address.
  *
- * New mail is handled by the triage rules (`$DSH_HOME/mail/triage/rules.yml`),
- * which are the same for every account; there is deliberately nothing
- * per-account to configure here any more.
+ * New mail is handled by the workbench event flows
+ * (`$DSH_HOME/dsh-console/rules/events/*.yml`), which are the same for every
+ * account; there is deliberately nothing per-account to configure here any more.
  */
 export interface MailAccount {
   readonly id: string

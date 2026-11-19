@@ -45,7 +45,7 @@ function llmOf(answer: string): LlmLike {
 function deps(overrides: Partial<MailConnectorDeps> = {}): MailConnectorDeps {
   return {
     mail: mailOps(),
-    config: () => ({ model: 'test-model' }) as never,
+    config: () => ({ model: 'test/model' }) as never,
     log: () => {},
     warn: () => {},
     ...overrides,
@@ -108,7 +108,7 @@ describe('classify', () => {
     const nodes = createMailFlowNodes(deps({ llm: () => llmOf('dev') }))
     const node = nodes.find(n => n.type === 'classify')!
     const result = await node.run(
-      { id: 'c', type: 'classify', config: { labels: ['dev', 'todo'], model: 'm' } },
+      { id: 'c', type: 'classify', config: { labels: ['dev', 'todo'], model: 'test/m' } },
       { event, vars: {}, memory: { body: '正文' }, facts: {}, taskId: 't', flowId: 'f', runId: 'r', record: () => {}, log: () => {} } as FlowContext,
     )
     expect(result.ok).toBe(true)
@@ -119,7 +119,7 @@ describe('classify', () => {
     const nodes = createMailFlowNodes(deps({ llm: () => llmOf('我也不知道') }))
     const node = nodes.find(n => n.type === 'classify')!
     const result = await node.run(
-      { id: 'c', type: 'classify', config: { labels: ['dev', 'todo'], model: 'm' } },
+      { id: 'c', type: 'classify', config: { labels: ['dev', 'todo'], model: 'test/m' } },
       { event, vars: {}, memory: {}, facts: {}, taskId: 't', flowId: 'f', runId: 'r', record: () => {}, log: () => {} } as FlowContext,
     )
     expect(result.ok).toBe(true)
@@ -131,7 +131,7 @@ describe('classify', () => {
     const nodes = createMailFlowNodes(deps())
     const node = nodes.find(n => n.type === 'classify')!
     const result = await node.run(
-      { id: 'c', type: 'classify', config: { labels: ['dev'], model: 'm' } },
+      { id: 'c', type: 'classify', config: { labels: ['dev'], model: 'test/m' } },
       { event, vars: {}, memory: {}, facts: {}, taskId: 't', flowId: 'f', runId: 'r', record: () => {}, log: () => {} } as FlowContext,
     )
     expect('failure' in result && result.failure).toBe('config')
@@ -141,10 +141,45 @@ describe('classify', () => {
     const nodes = createMailFlowNodes(deps({ llm: () => llmOf('dev') }))
     const node = nodes.find(n => n.type === 'classify')!
     const result = await node.run(
-      { id: 'c', type: 'classify', config: { model: 'm' } },
+      { id: 'c', type: 'classify', config: { model: 'test/m' } },
       { event, vars: {}, memory: {}, facts: {}, taskId: 't', flowId: 'f', runId: 'r', record: () => {}, log: () => {} } as FlowContext,
     )
     expect('failure' in result && result.failure).toBe('config')
+  })
+
+  it('把 provider/model 拆开交给宿主，而不是整串塞进 model', async () => {
+    const routes: unknown[] = []
+    const llm: LlmLike = {
+      async prepareCall(route: unknown) {
+        routes.push(route)
+        return {
+          config: {},
+          async *stream() {
+            yield { type: 'text-delta', text: 'dev' }
+          },
+        }
+      },
+    }
+    const nodes = createMailFlowNodes(deps({ llm: () => llm }))
+    const node = nodes.find(n => n.type === 'classify')!
+    await node.run(
+      { id: 'c', type: 'classify', config: { labels: ['dev'], model: 'exe/deepseek-v4.1-flash-1017' } },
+      { event, vars: {}, memory: {}, facts: {}, taskId: 't', flowId: 'f', runId: 'r', record: () => {}, log: () => {} } as FlowContext,
+    )
+    // 宿主要的是 { provider, model }：整串过去会被解析成 provider: undefined。
+    expect(routes[0]).toMatchObject({ provider: 'exe', model: 'deepseek-v4.1-flash-1017' })
+    expect((routes[0] as Record<string, unknown>)['model']).not.toContain('/')
+  })
+
+  it('模型名没写 provider 时记 config 失败，不把 undefined 交给宿主', async () => {
+    const nodes = createMailFlowNodes(deps({ llm: () => llmOf('dev') }))
+    const node = nodes.find(n => n.type === 'classify')!
+    const result = await node.run(
+      { id: 'c', type: 'classify', config: { labels: ['dev'], model: 'deepseek-v4.1-flash-1017' } },
+      { event, vars: {}, memory: {}, facts: {}, taskId: 't', flowId: 'f', runId: 'r', record: () => {}, log: () => {} } as FlowContext,
+    )
+    expect('failure' in result && result.failure).toBe('config')
+    expect('detail' in result && String(result.detail)).toContain('provider/model')
   })
 })
 
@@ -174,7 +209,7 @@ describe('两个节点接进图里', () => {
       connector: 'mail',
       nodes: [
         { id: 'fetch', type: 'mail.fetch', out: [{ to: 'cls' }] },
-        { id: 'cls', type: 'classify', config: { labels: ['dev'], model: 'm' }, out: [{ to: 'sw' }] },
+        { id: 'cls', type: 'classify', config: { labels: ['dev'], model: 'test/m' }, out: [{ to: 'sw' }] },
         { id: 'sw', type: 'switch', out: [{ to: 'done' }] },
         { id: 'done', type: 'end' },
       ],

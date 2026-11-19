@@ -17,6 +17,7 @@
  */
 
 import type { FlowNode, FlowNodeSpec } from '@free-lzj/dsh-decision'
+import { routeOf } from './model-route.ts'
 import type { MailConnectorDeps } from './connector.ts'
 
 /** 默认正文字节上限：够做匹配与分类，又不至于把内存吃光。 */
@@ -119,6 +120,12 @@ function classifyNode(deps: MailConnectorDeps): FlowNode {
       const own = typeof config['model'] === 'string' ? config['model'].trim() : ''
       const model = own !== '' ? own : (deps.config().model ?? '')
       if (model === '') return { ok: false, detail: '没有可用的模型：节点没写，决策配置里也没有', failure: 'config' }
+      // 宿主只要 `{ provider, model }`。整串 `exe/deepseek-xxx` 传过去会被解析成
+      // `provider: undefined`，报「no adapter registered for provider "undefined"」。
+      const route = routeOf(model)
+      if (route === undefined) {
+        return { ok: false, detail: `分类模型名必须是 provider/model：${model}`, failure: 'config' }
+      }
       const maxTokens = typeof config['maxTokens'] === 'number' ? config['maxTokens'] : 4096
 
       // 正文来自 memory（由 mail.fetch 写入）；没有就直接用摘要，不因此失败。
@@ -129,7 +136,7 @@ function classifyNode(deps: MailConnectorDeps): FlowNode {
       let answer = ''
       const seen = new Map<string, number>()
       try {
-        const call = await llm.prepareCall({ model, maxTokens }, controller.signal, current => current)
+        const call = await llm.prepareCall({ ...route, maxTokens }, controller.signal, current => current)
         for await (const chunk of call.stream({
           ...(typeof call.config === 'object' && call.config !== null ? call.config as object : {}),
           // `content` 必须是块数组：给字符串不会报错，只会被当成空消息发出去。

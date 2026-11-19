@@ -551,10 +551,10 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
       }
 
       if (!backfill) {
-        // 新邮件只有一个去处：分诊规则（`$DSH_HOME/dsh-console/rules/rules.yml`，规则
-        // 状态归工作台那一侧的引擎）。没有规则命中的邮件就留在面板里——「什么都不做」
-        // 是一个明确的规则结果，不是一条没走通的路。账号级 trigger 已经去掉：它与分诊
-        // 重叠，而分诊开着时它根本不生效。
+        // 新邮件只有一个去处：工作台的事件流（`$DSH_HOME/dsh-console/rules/events/*.yml`，
+        // 引擎在工作台那一侧）。没有分支命中的邮件就留在面板里——「什么都不做」是一个
+        // 明确的结果，不是一条没走通的路。账号级 trigger 已经去掉：它与事件流重叠，
+        // 而事件流开着时它根本不生效。
         for (const message of outcome.messages) {
           await handOver(message, {
             accountId,

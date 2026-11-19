@@ -28,6 +28,7 @@ import type {
 } from '@free-lzj/dsh-decision'
 import type { ConditionKind, ConditionSpec, Config, MailSummaryLike } from './triage/types.ts'
 import { builtinConditions, type ClassifyRequest, type ClassifyResult, type MatchContext } from './triage/conditions.ts'
+import { routeOf } from './model-route.ts'
 import { createMailFlowNodes } from './nodes.ts'
 import { MAIL_VOCABULARY } from './triage/config.ts'
 
@@ -169,6 +170,7 @@ export function summaryOf(payload: MailEventPayload): MailSummaryLike {
  * 只要规则不碰正文就不该读它。
  */
 export function templateValuesOf(payload: MailEventPayload, repoRoot: string): Readonly<Record<string, string>> {
+  const origin = repoSenderOf(payload.headers)
   return {
     subject: payload.subject,
     account: payload.accountName,
@@ -177,8 +179,43 @@ export function templateValuesOf(payload: MailEventPayload, repoRoot: string): R
     date: payload.date,
     from: payload.from.address,
     sender: payload.from.name ?? payload.from.address,
-    ...(repoRoot === '' ? {} : { repoRoot, repo: repoRoot }),
+    ...(repoRoot === '' ? {} : { repoRoot }),
+    ...(origin === undefined ? {} : { repo: origin.repo, owner: origin.owner }),
   }
+}
+
+/**
+ * 从 `List-Id` 里取出 GitHub 的仓库坐标。
+ *
+ * GitHub 的通知带 `List-Id: Owner/Repo <repo.owner.github.com>`：尖括号前那段就是坐标。
+ * 优先读这一段而不是反推尖括号——仓库名本身可以带点，`<a.b.c.github.com>` 该怎么切
+ * 没有唯一答案；只有这一段缺失时才退回尖端解析，且认得出 `*.github.com` 才认。
+ *
+ * 没有这个头（GitHub 的某些老通知、以及所有非 GitHub 邮件）时返回 undefined：调用方
+ * 就不注入 `{repo}`，模板缺变量会如实报错，而不是拼出一个不存在的路径。
+ * @param headers - 白名单头部（`list-id` 只在其中）。
+ * @returns owner 与仓库名。
+ */
+export function repoSenderOf(headers: Readonly<Record<string, string | undefined>>): { readonly owner: string; readonly repo: string } | undefined {
+  const listId = headers['list-id']
+  if (listId === undefined) return undefined
+  const text = listId.replace(/"/g, '').trim()
+  const before = text.split('<')[0] ?? ''
+  const slash = /^\s*([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\s*$/.exec(before)
+  if (slash !== null) {
+    const owner = slash[1] ?? ''
+    const repo = slash[2] ?? ''
+    if (owner !== '' && repo !== '') return { owner, repo }
+  }
+
+  const inside = /<\s*([^>\s]+)\s*>/.exec(text)
+  const host = inside?.[1]?.toLowerCase() ?? ''
+  if (!host.endsWith('.github.com')) return undefined
+  const parts = host.slice(0, -'.github.com'.length).split('.').filter(part => part !== '')
+  if (parts.length < 2) return undefined
+  const repo = parts[parts.length - 2] ?? ''
+  const owner = parts[parts.length - 1] ?? ''
+  return repo === '' || owner === '' ? undefined : { repo, owner }
 }
 
 /** 邮件身份：去重键与任务 key 都用它。 */
@@ -276,14 +313,7 @@ function emptySummary(): MailSummaryLike {
 
 /* ─────────────────────────────── 分类 ─────────────────────────────── */
 
-/** 把 `provider/model` 拆成路由。 */
-function routeOf(named: string): { readonly provider: string; readonly model: string } | undefined {
-  const at = named.indexOf('/')
-  return at <= 0 || at === named.length - 1
-    ? undefined
-    : { provider: named.slice(0, at), model: named.slice(at + 1) }
-}
-
+// 拆路由的实现挪到 `model-route.ts`：`nodes.ts` 也要用，两边引它会成环。
 /** 分类提示词：只问「属于哪一类」，不告诉模型任何动作。 */
 function buildClassifyPrompt(spec: ClassifySpec, payload: MailEventPayload, body: string): string {
   const labels = spec.labels.map(label => `- ${label}`).join('\n')
