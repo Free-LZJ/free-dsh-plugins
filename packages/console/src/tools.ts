@@ -54,7 +54,9 @@ export function registerAgentTools(ctx: Context, host: ConsoleHost): () => void 
     // 老版本工具运行时不传第二个参数：那时没有会话上下文，就当它不属于任何链。
     const agent = exec?.agent as { readonly sessionId?: unknown } | undefined
     const sessionId = agent?.sessionId
-    return typeof sessionId === 'string' ? host.rootOfSession(sessionId) : undefined
+    if (typeof sessionId !== 'string') return undefined
+    // 精简部署里工作台可能没提供反查（只有通知、没有任务），那就当它不属于任何链。
+    return typeof host.rootOfSession === 'function' ? host.rootOfSession(sessionId) : undefined
   }
 
   const notifyTool = defineTool({
@@ -116,7 +118,7 @@ export function registerAgentTools(ctx: Context, host: ConsoleHost): () => void 
         text: `已在 ${value.cwd} 新建会话 ${value.sessionId}（工作区：${value.workspace}）`,
       }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       if (!isAbsolute(args.cwd)) throw new Error(`工作目录必须是绝对路径：${args.cwd}`)
       assertDirectory(args.cwd)
       const sessions = host.sessions
@@ -136,14 +138,19 @@ export function registerAgentTools(ctx: Context, host: ConsoleHost): () => void 
         kind: 'plugin:dsh-console',
         form: 'open-session',
       })
-      // 让这次派单在看板上成一条任务：工具先把会话建好了，所以把 id 一起发过去——
-      // 触发器的 sessionId 会在链上补一格会话节点，和「规则动作建的会话」一模一样。
-      void host.tasks?.emit({
-        type: 'console.tool.invoked',
-        source: 'console',
-        dedupeKey: `console:tool:${created.sessionId}`,
-        payload: { title: args.title, sessionId: created.sessionId, workspace: args.cwd },
-      })
+      // 会话属于「调这个工具的那条链」：在那个任务上补一格会话节点，看板能点进去，
+      // 不另开一条任务。规则里开会话要用 session 动作（流程自己拥有节点），这里只服务
+      // 交互场景——agent 顺手开个子会话，没有归属任务就不挂。
+      const owner = rootOf(exec)
+      const taskId = owner === undefined ? undefined : host.tasks?.taskOfSession(owner)?.id
+      if (taskId !== undefined) {
+        await host.tasks?.appendNode(taskId, {
+          kind: 'session',
+          detail: `会话 ${created.sessionId.slice(0, 8)}`,
+          sessionId: created.sessionId,
+          data: { title: args.title, workspace: args.cwd },
+        })
+      }
       return { sessionId: created.sessionId, cwd: args.cwd, workspace: args.cwd }
     },
   })

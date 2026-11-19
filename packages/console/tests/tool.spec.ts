@@ -229,25 +229,53 @@ describe('open_session', () => {
     expect(calls).toContain(`create:${cwd}:`)
   })
 
-  it('把这次派单发成事件，让看板上出现一条任务', async () => {
+  it('有归属任务时补一格会话节点，不另开一条任务', async () => {
     const calls: string[] = []
     const opened: RegisteredTool[] = []
+    const appended: { taskId: string; node: Record<string, unknown> }[] = []
     const emitted: unknown[] = []
     const cwd = await tempDir()
     const host = sessionHost(calls)
-    ;(host as unknown as { tasks: unknown }).tasks = {
-      emit: async (event: unknown) => { emitted.push(event) },
-    }
+    Object.assign(host as unknown as Record<string, unknown>, {
+      // 调用这个工具的会话已经登记在链路上：往上找到根卡，再找到那条任务。
+      rootOfSession: () => 'root-1',
+      tasks: {
+        taskOfSession: (root: string) => (root === 'root-1' ? { id: 'task-1' } : undefined),
+        appendNode: async (taskId: string, node: Record<string, unknown>) => { appended.push({ taskId, node }) },
+        emit: async (event: unknown) => { emitted.push(event) },
+      },
+    })
     registerAgentTools(contextOf(toolsOnly(opened)), host)
 
     const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
-    await tool.execute({ cwd, title: 'Jira EXEPD-229676', prompt: 'x' })
-    // emit 是后台的：等一拍让那次调用落地。
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(emitted).toHaveLength(1)
-    expect(emitted[0]).toMatchObject({
-      type: 'console.tool.invoked',
-      payload: { sessionId: 'session-9', workspace: cwd },
+    await tool.execute({ cwd, title: 'Jira EXEPD-229676', prompt: 'x' }, { agent: { sessionId: 'session-9' } })
+
+    expect(emitted).toEqual([])
+    expect(appended).toHaveLength(1)
+    expect(appended[0]?.taskId).toBe('task-1')
+    expect(appended[0]?.node).toMatchObject({
+      kind: 'session',
+      sessionId: 'session-9',
+      data: { title: 'Jira EXEPD-229676', workspace: cwd },
     })
+  })
+
+  it('没有归属任务时什么都不挂：交互场景不该凭空多出一条记录', async () => {
+    const calls: string[] = []
+    const opened: RegisteredTool[] = []
+    const appended: unknown[] = []
+    const cwd = await tempDir()
+    const host = sessionHost(calls)
+    Object.assign(host as unknown as Record<string, unknown>, {
+      tasks: {
+        taskOfSession: () => undefined,
+        appendNode: async () => { appended.push(1); return true },
+      },
+    })
+    registerAgentTools(contextOf(toolsOnly(opened)), host)
+
+    const tool = opened.find(entry => entry.name === 'open_session') as RegisteredTool
+    await tool.execute({ cwd, title: 'x', prompt: 'y' }, { agent: { sessionId: 'session-9' } })
+    expect(appended).toEqual([])
   })
 })
