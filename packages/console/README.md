@@ -174,11 +174,13 @@ ctx.console?.log({
 | 工具 | 用途 | 关键约束 |
 |---|---|---|
 | `console_notify` | 让 agent 主动推一条通知（桌面通知 + 通知中心 + 提示音） | 不阻塞、不等人回答；需要人做决定时仍然要在对话里问 |
-| `open_session` | 在一个已存在的工作目录里新建工作区并开会话，把 `prompt` 作为第一条消息投递进去 | `cwd` 必须是**已存在**的绝对路径；本工具不建目录 |
+| `open_session` | 在一个已存在的工作目录里新建工作区并开会话，把 `prompt` 作为第一条消息投递进去 | `cwd` 必须是**已存在**的绝对路径；本工具不建目录；**只服务交互场景**（人要开一个会话），不制造看板任务 |
 
 `open_session` 解决的是「活要落在某个具体仓库里干」：会话的工作目录在创建那一刻就定了，所以想在读完工单 / 读完邮件之后再决定去哪个仓库，只能让当前会话用这个工具开下一跳。顺序与邮件插件的会话动作一致——先通过工作台的会话端口 `createSession({cwd, agentPreset?})` 建出会话，再 `rename` 起名，最后 `followup` 投递第一条消息。这个端口在本机由 `sessionController` 实现（2026-10-30 实测：`create` / `resolveAgent` / `rename` / `followup` 在 Host 侧可用；`agents.createSession` 不存在）；宿主没有该服务时工具报「这个部署没有提供建会话的能力」，不会建出半成品会话。
 
 会话建好后按 `cwd` 归组；`cwd` 本身必须是已存在的目录。工作区身份由宿主按目录处理，本工具不额外建工作区；`.agents/worktrees/<单号>` 里的会话按它自己的目录分组。缺 `workspaceRegistry` 的宿主不会因此报错，也不会留下「未分组」的孤儿——目录就是会话 header 里的 `cwd`。
+
+**会话归它派生自的那条任务，不自己开一条。** 调用它的会话如果挂在某条任务链上，工具只在那条链上补一格 `session` 节点（会话 id、标题、工作目录），没有归属任务就什么都不挂——以前它会给每次派单发一条 `console.tool.invoked`、看板上凭空多出一张卡，那条路已经删了。事件流要开会话，用连接器的 `session` 动作（它还能挂起等会话跑完），不要靠工具。
 
 缺 `tools` 时不注册（只记一行日志）；缺会话端口（`sessionController`，旧版宿主）时 `open_session` 报一句能读的原因。
 
@@ -243,21 +245,21 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 | 把面板接进工作台 | 浏览器半边 import `@free-lzj/dsh-console/contract` 的 `useConsolePanel` |
 | 发一条通知 | Host 半边 `ctx.console.notify({...})`（可选依赖，用 `?.`） |
 | 加一个通知渠道 | 在本包里 `ctx.console.channels.register({ id, plan, deliver })`，再在设置行加一个名字 |
-| 把自己的条件与动作交给规则引擎 | Host 半边 `ctx.console.decision.use(connector)`（见 `@free-lzj/dsh-decision` 的 `EngineConnector`） |
+| 把自己的条件与动作交给事件流引擎 | Host 半边 `ctx.console.decision.use(connector)`（见 `@free-lzj/dsh-decision` 的 `EngineConnector`） |
 
-前两个是给外部插件的稳定接口；后两个目前是包内扩展点（渠道实现在 `src/builtin-channels.ts`，注册在 `src/index.ts`；规则引擎的装配在 `src/rules/index.ts`）。加渠道**不需要**改通知派发逻辑——派发只认识接口；加连接器也不需要改规则引擎——引擎不认识任何一种实现。
+前两个是给外部插件的稳定接口；后两个目前是包内扩展点（渠道实现在 `src/builtin-channels.ts`，注册在 `src/index.ts`；事件流引擎的装配在 `src/rules/index.ts`）。加渠道**不需要**改通知派发逻辑——派发只认识接口；加连接器也不需要改事件流引擎——引擎不认识任何一种实现。
 
 ## 数据边界
 
-- **路由**：`/dsh-console/state`（读快照）、`/dsh-console/events`（SSE：状态与通知）、`/dsh-console/config`（写配置）。读路由只回答同源请求；写路由额外要求 `x-dsh-console: 1` 与 JSON content-type——跨站表单发不出这个自定义头。看板另有三条：`/dsh-console/workbench/state`（读看板）、`/dsh-console/workbench/ingest`（投递事件）、`/dsh-console/workbench/action`（派单 / 移卡 / 插话 / 暂停 / 继续 / 结束），同一套守卫；其中 ingest 目前只接受同源请求，外部 webhook 接入要先补签名校验。规则引擎另有七条：`/dsh-console/rules/state`、`/rules/runs`、`/rules/enable`、`/rules/condition`、`/rules/priority`、`/rules/undo`、`/rules/test`，同一套守卫。
+- **路由**：`/dsh-console/state`（读快照）、`/dsh-console/events`（SSE：状态与通知）、`/dsh-console/config`（写配置）。读路由只回答同源请求；写路由额外要求 `x-dsh-console: 1` 与 JSON content-type——跨站表单发不出这个自定义头。看板另有三条：`/dsh-console/workbench/state`（读看板）、`/dsh-console/workbench/ingest`（投递事件）、`/dsh-console/workbench/action`（派单 / 移卡 / 插话 / 暂停 / 继续 / 结束），同一套守卫；其中 ingest 目前只接受同源请求，外部 webhook 接入要先补签名校验。事件流引擎另有七条（路由名沿用 `rules`，改的是文件不是路径）：`/dsh-console/rules/state`、`/rules/runs`、`/rules/enable`、`/rules/condition`、`/rules/priority`、`/rules/undo`、`/rules/test`，同一套守卫。
 - **状态**：`$DSH_HOME/dsh-console/prefs.json`（置顶 id 列表 + 当前视图），权限 `0600`，写盘走临时文件 + `rename`；读到坏 JSON 回落为空而不是让插件起不来。当前视图只有四个值住在 `main:console` 里，`focus` 对应第二个 `main` 面板 `console-focus`——切到它是 `ctx.layout.selectPanel`，而布局不持久化，所以刷新后靠这个字段恢复。看板另有 `$DSH_HOME/dsh-console/workbench.json`（卡片与会话，同一写法）和 `routing.json`（路由表，缺失时写入默认表，改坏时沿用上一版并告警）。注意力队列与自动化日志在 `records.json`（同一写法，一次落一份快照）。
-- **规则状态**：`$DSH_HOME/dsh-console/rules/` 下的 `rules.yml`（规则文件）、`runs.json`（命中记录）、`pending.json`（待确认队列：撤销窗口里的动作与等人批准的建议）。三份都是 `0600`、原子写；坏 JSON 回落成空，规则文件解析失败时**保留上一份可用规则**并报错。规则文件被监听，改完下一件事就用新规则，不用重启。首次启动时若上一版的 `$DSH_HOME/mail/triage/` 或更早的 `$DSH_HOME/mailflow/` 还在，三份文件被搬过来（**只搬不删**，旧目录留着）。
+- **事件流状态**：`$DSH_HOME/dsh-console/rules/` 下的 `events/*.yml`（事件流：触发器 + 判定图）、`workflows/*.yml`（子工作流）、`runs.json`（命中记录）、`pending.json`（待确认队列：撤销窗口里的动作与等人批准的建议）。都是 `0600`、原子写；坏 JSON 回落成空，图解析失败时**保留上一份可用的图**并报错。目录被监听，改完下一件事就用新图，不用重启。旧格式的 `rules.yml` 仍读得懂（只在没有事件流时生效），首次启动时上一版的 `$DSH_HOME/mail/triage/` 或更早的 `$DSH_HOME/mailflow/` 里的状态文件也会被搬过来（**只搬不删**，旧目录留着）。
 - **通知**：条目与自动化日志落在 `records.json`（最多 50 条条目、100 条日志，旧的被挤出），重启后原样读回；不对外发送。
 - **卡片审计**：每张卡存着路由决策（动作、执行器、路由 id、路由表版本、分类与理由），路由改了可以拿同一批事件重放对照。
 
 ## 已知限制
 
-- **规则视图不再依赖某个连接器，但它需要连接器才有内容**：规则文件、命中记录与撤销归工作台自己的 `DecisionEngine`（`@free-lzj/dsh-decision`），页面读 `/dsh-console/rules/*`。没有连接器注册时这页说「还没有连接器提供规则」，不画空列表——「没有规则」与「没有连接器」是两件事；「引擎没响应」又是第三件，文案分开。今天唯一的连接器是 `@free-lzj/dsh-mail`，它把自己的条件与动作注册进这个引擎，并优先使用工作台的实例（没装工作台时自己建同一个类、写同一个目录），所以规则文件永远只有一个读/写者。
+- **事件流视图不再依赖某个连接器，但它需要连接器才有内容**：图、命中记录与撤销归工作台自己的 `DecisionEngine`（`@free-lzj/dsh-decision`），页面读 `/dsh-console/rules/*`。没有连接器注册时这页说「还没有连接器」，不画空列表——「没有事件流」与「没有连接器」是两件事；「引擎没响应」又是第三件，文案分开。今天唯一的连接器是 `@free-lzj/dsh-mail`，它把自己的条件与动作注册进这个引擎，并优先使用工作台的实例（没装工作台时自己建同一个类、写同一个目录），所以图永远只有一个读/写者。
 - **规则视图只读回来了最近 20 条命中**：引擎最多给 100 条，页面画 20 条再报一句「共 N 条」；再往前翻要等搜索/分页，v0 不做。
 - **`dsh` 执行器要显式打开**：`workbenchWorkspace` 填一个目录、且宿主的 `sessionController` 可用，`dsh` 才注册成真实会话（派单就跑一轮真实对话）。留空则该 id **根本不存在**，路由表指着它只会得到「执行器未注册」的 hold，而不是一个假装在跑的壳。真实会话**不支持暂停**（一轮对话没法暂停），`end` 会停掉这一轮，`interrupt` 会把话投进会话。没有第二种 `dsh` 实现：派给 DSH 就是把卡变成一条真实会话。
 - **`codex` 仍是模拟执行器**：只跑固定脚本、不调模型、不改代码；接真实 agent 是以后实现同一执行器接口的事，不是改看板。
@@ -265,7 +267,7 @@ dsh plugin --profile desktop add "<本仓库绝对路径>/packages/console"
 - **看板不自动回写**：完工的卡只标「待回写」，钉钉 / Jira / 邮箱的出站动作都没有接；确认后回写的流程等用户定。
 - **判据的文字归页面**：卡片上的「判断依据」在 Host 那边是**代码 + 参数**（`classify-none`、`route-matched{route}`…），文字由工作台按 locales 渲染。英文界面下不会再冒出中文句子；页面不认识的代码退化成卡片上存的原文，再退化成一句通用说明——**任何情况下都不会把代码显示给人**。旧卡片存的是整句，读盘时归一化成 `legacy` 行原样保留，不做一次性迁移脚本。路由与分类各记了一遍的同一条判据只显示一次（按 `code` + 参数去重，不按渲染后的文字——文字可翻译）。
 - **「待处理」只数工作台条目**：状态条的数字是工作台条目数——同一条会话举了多条通知时按会话去重；没有会话的纯提醒各自算一件。会话层面的「等你回答」没有接入本版本（宿主没有可用的会话交互状态来源），所以这个数**不是**它与条目的并集，界面与文档都按「只统计条目」说。以前写成并集，是留了一个兑现不了的承诺。
-- **规则条件值可以点开改**：列表型条件（`any`）在规则页上是可点的值，点开是逗号分隔的输入框，回车/失焦保存、Esc 取消；异构条件（`regex` / `attachment` / `classifier`）仍是只读，因为它们的值和别的字段绑在一起，硬做输入框只会写坏 `rules.yml`。已真机确认交互（点开 → 输入框带出当前值 → Esc 不写盘）；**保存**这一步没有在你的实例上跑，那会改你真实的 `rules.yml`——写入路径由内核与路由的测试覆盖。
+- **分支条件值可以点开改**：列表型条件（`any`）在事件流页上是可点的值，点开是逗号分隔的输入框，回车/失焦保存、Esc 取消；异构条件（`regex` / `attachment` / `classifier`）仍是只读，因为它们的值和别的字段绑在一起，硬做输入框只会写坏 `events/*.yml`。已真机确认交互（点开 → 输入框带出当前值 → Esc 不写盘）；**保存**这一步没有在你的实例上跑，那会改你真实的事件流文件——写入路径由内核与路由的测试覆盖。
 - **「待回写」有出口**：跑完的卡片带着 `awaitingConfirmation`，详情里给一个「已回写」按钮把它清掉。出站系统还没接，所以这是**人的声明**而不是自动判断——也正因为如此，它必须是一次点击，而不是定时器；它在详情里是次要按钮，不是主操作。
 - **LLM 分类器已真机验证**（`--patch` overlay、`workbenchClassifier: llm`、`workbenchModel: deepseek-account/deepseek-chat`）：投一条「导出报表偶发超时」，卡片判据是 `classify-llm`（`model: deepseek-chat`）加一句人话解释，`kind=bug`、`confidence=0.9`、`priority=high`——同一段文字在规则分类器下只是「命中 bug 关键词 1 个」。
 - **LLM 分类器（`workbenchClassifier: 'llm'` + `workbenchModel: 'provider/model'`）**：同一个 `Classifier` 契约的模型实现。调用形状取自宿主自己的 `dsh-session-title-llm`（`llm.prepareCall` → `stream` 的 `text-delta`），不需要 agent、不需要会话。两条硬规则：**绝不抛错**（调用失败、答案读不懂、没配模型都回退到规则分类，并把原因写进卡片判据）、**绝不臆造分类**（答案里的 kind/priority 必须落在看板自己的词表里，否则整条作废）。

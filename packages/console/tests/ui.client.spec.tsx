@@ -328,7 +328,7 @@ describe('the workbench on screen', () => {
     const { face } = shellFace([row('mail', '邮件')])
     render(<ConsoleShell {...face} />)
     fireEvent.click(screen.getByRole('button', { name: t('viewRules') }))
-    fireEvent.click(screen.getByRole('button', { name: '规则列表' }))
+    fireEvent.click(screen.getByRole('button', { name: '列表' }))
     // 引擎回的是空规则表：页面说「一条规则也没有」，不是空壳。
     return screen.findByText(t('rulesNone'))
   })

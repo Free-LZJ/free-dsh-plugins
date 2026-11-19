@@ -456,13 +456,13 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [layoutPositions, setLayoutPositions] = useState<
     ReadonlyMap<string, { readonly x: number; readonly y: number }> | undefined
   >(undefined)
-  /** 等着被选中的新规则边：图重载完才设，因为那时才有 `edgeSpec`。 */
+  /** 等着被选中的新分支边：图重载完才设，因为那时才有 `edgeSpec`。 */
   const [pendingRuleEdge, setPendingRuleEdge] = useState<{ from: string; index: number } | undefined>(undefined)
   /**
-   * 正在新建的规则：名字与条件一起攒着，点「建」才落盘。
+   * 正在新建的分支：名字与条件一起攒着，点「建」才落盘。
    *
    * 条件必须和边一起写：先建边后填条件的话，中间那一刻它是一条**无条件**的边，
-   * 会把后面所有规则挡掉。
+   * 会把后面所有分支挡掉。
    */
   const [creating, setCreating] = useState<{ name: string; conditions: Record<string, unknown>[] } | undefined>(
     undefined,
@@ -478,7 +478,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   /**
    * 试跑的结论：会走哪条边、其余边为什么没走。
    *
-   * 「试跑」这一动作本来就该回答这两个问题，以前它只在规则列表里回一行字，编排的人
+   * 「试跑」这一动作本来就该回答这两个问题，以前它只在列表里回一行字，编排的人
    * 还得自己把「分支 → promo」翻译成画布上的某一根线。
    */
   const [dry, setDry] = useState<
@@ -490,7 +490,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       }
     | undefined
   >(undefined)
-  /** 全屏看板：把规则页其余部分让出来，只留画布与面板。 */
+  /** 全屏看板：把事件流页其余部分让出来，只留画布与面板。 */
   const [full, setFull] = useState(false)
   /**
    * 「画布该重新框一次」的计数器。
@@ -504,15 +504,15 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [strategy, setStrategy] = useState<LayoutStrategy>('layered')
   const [align, setAlign] = useState<LayoutAlign>('center')
   /**
-   * 只看某一条规则的分支。
+   * 只看某一条分支。
    *
    * 一张「全部分支并列」的大图必然拥挤：8 条链横着铺开，每条只占几个像素。聚焦之后
    * 剩下的节点仍留在原位，于是**空间记忆还在**——切回来时不用重新认图。
    */
   /** 当前连接器 tab；undefined 表示「全部」。 */
-  /** vents = 看事件流（路由），workflows = 看子工作流。 */
+  /** events = 看事件流（路由），workflows = 看子工作流。 */
   const [tab, setTab] = useState<'events' | 'workflows'>('events')
-  /** 当前选中的图 id（一规则一文件之后，一张图就是一条规则）。 */
+  /** 当前选中的图 id（一图一文件之后，一张图就是一条事件流）。 */
   const [flowId, setFlowId] = useState<string | undefined>(undefined)
   /**
    * 画布该占多高：**可用空间**，不是一个常数。
@@ -618,7 +618,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    * 只在布局阶段量：这里读的是元素实际落在哪，写回的是它的高度——放到 `useEffect`
    * 里会先闪一帧旧高度。
    *
-   * 依赖里必须带上 `loading`：图还没读完时这一页返回的是「正在读规则图…」，那会儿
+   * 依赖里必须带上 `loading`：图还没读完时这一页返回的是「正在读事件流…」，那会儿
    * 根本没有画布可量；等它换成真画布时得再量一次。
    */
   useLayoutEffect(() => {
@@ -755,7 +755,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     setSelectedEdge(undefined)
     setConfirmingEdge(undefined)
   }, [flow?.id])
-  /** 同一分支上互相抢的规则。静态算，不跑模型。 */
+  /** 同一节点上互相抢的分支。静态算，不跑模型。 */
   const conflicts = useMemo(() => (flow === undefined ? [] : detectConflicts(flow)), [flow])
   /** 还没补开始/结束的子工作流：一张张点进去补太啰嗦，这里给一次补齐的入口。 */
   const withoutEndpoints = useMemo(
@@ -785,13 +785,13 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    * `translate(0,0) scale(1)`：图比画布宽，右边一大半在可视区外面。
    */
   const canvasKey = `${flow?.id ?? ''}#${canvas.nodes.map((node) => node.id).join(',')}#${String(fitTick)}`
-  /** 新规则还差什么：名字、至少一条条件、每条条件的必填字段。「建」按这个禁用。 */
+  /** 新分支还差什么：名字、至少一条条件、每条条件的必填字段。「建」按这个禁用。 */
   const creatingIssues: readonly string[] =
     creating === undefined
       ? []
       : [
-          ...(creating.name.trim() === '' ? ['规则得有个名字'] : []),
-          ...(creating.conditions.length === 0 ? ['至少给一条条件；没有条件的边是兜底，会把后面的规则全挡掉'] : []),
+          ...(creating.name.trim() === '' ? ['分支得有个名字'] : []),
+          ...(creating.conditions.length === 0 ? ['至少给一条条件；没有条件的边是兜底，会把后面的分支全挡掉'] : []),
           ...creating.conditions.flatMap((condition) => conditionIssues(condition)),
         ]
   const node: TriageFlowNode | undefined = flow?.nodes.find((item) => item.id === selected)
@@ -1005,7 +1005,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   /**
    * 拖出一条新连线：把 `分支` 接到某个节点上。
    *
-   * 这是「新建规则」的入口——连线之后在属性面板里给它填条件即可。
+   * 这是「新建分支」的入口——连线之后在属性面板里给它填条件即可。
    */
   const onConnect = useCallback(
     (from: string, to: string) => {
@@ -1027,20 +1027,20 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
    * 连线 id 是 `from->to#index`，按最后一个 `->` 和 `#` 切——节点 id 里允许有横线。
    */
   /**
-   * 新建一条规则：名字 + 条件**一次落盘**，再把那条边选中。
+   * 新建一条分支：名字 + 条件**一次落盘**，再把那条边选中。
    *
    * 以前是「先起个名 → 建一条**无条件**的边 → 再让你去填条件」。中间那一刻文件里躺着
-   * 一条兜底边，它会把后面所有规则都挡掉——新建一条规则顺手改了路由，界面上还会立刻
+   * 一条兜底边，它会把后面所有分支都挡掉——新建一条分支顺手改了路由，界面上还会立刻
    * 报「后面还有 N 条永远不会命中」。现在条件跟边一起写，没有这个中间态。
    */
   const createRule = useCallback(
     (name: string, conditions: readonly Readonly<Record<string, unknown>>[]) => {
       if (flow === undefined || flow.trigger === undefined) {
-        setFailure('规则只能加在事件流上')
+        setFailure('分支只能加在事件流上')
         return
       }
       if (conditions.length === 0) {
-        setFailure('先给它一个条件——没有条件的边是兜底，会把后面的规则全挡掉')
+        setFailure('先给它一个条件——没有条件的边是兜底，会把后面的分支全挡掉')
         return
       }
       setFailure('')
@@ -1048,7 +1048,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
        * 从 **switch** 上连出去——「分支」就是干这个的。
        *
        * 不能取「第一个有出边的节点」：那是 `trigger`，它只该有一条通往分支的边。
-       * 之前就是这么写的，结果每建一条规则都在 trigger 上多挂一条，图直接废掉。
+       * 之前就是这么写的，结果每条分支都在 trigger 上多挂一条，图直接废掉。
        */
       const from =
         flow.nodes.find((item) => item.type === 'switch')?.id ??
@@ -1072,7 +1072,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     },
     [triage, flow, load],
   )
-  /** 图重载完之后，把新建规则那条边选中——此时才查得到 `edgeSpec`。 */
+  /** 图重载完之后，把新建分支那条边选中——此时才查得到 `edgeSpec`。 */
   useEffect(() => {
     if (pendingRuleEdge === undefined) return
     const from = flow?.nodes.find((item) => item.id === pendingRuleEdge.from)
@@ -1117,13 +1117,13 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
       void load()
     })
   }, [node, draft, triage, load])
-  if (loading) return <p style={{ fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' }}>正在读规则图…</p>
+  if (loading) return <p style={{ fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' }}>正在读事件流…</p>
   if (flows.length === 0) {
     return (
       <div style={{ fontSize: 13, color: 'var(--dsw-alias-label-tertiary)', lineHeight: '22px' }}>
         <p>还没有节点图。</p>
         <p style={{ marginTop: 6 }}>
-          现在的规则文件是旧格式（规则列表）。把规则一次性转成节点图之后，这里会显示可编排的流程。
+          现在这份文件是旧格式（旧版规则列表）。把旧版规则一次性转成节点图之后，这里会显示可编排的流程。
         </p>
         {error === '' ? null : <p style={{ marginTop: 6, color: 'var(--dsw-alias-state-error-primary)' }}>{error}</p>}
       </div>
@@ -1170,7 +1170,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
           {notice}
         </p>
       )}
-      {/* 规则冲突：顺序就是优先级，但两条条件重叠时人看不出来。 */}
+      {/* 分支冲突：顺序就是优先级，但两条条件重叠时人看不出来。 */}
       {conflicts.length === 0 ? null : (
         <div
           style={{
@@ -1511,7 +1511,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             </option>
           ))}
         </select>
-        {/* 新建一张独立的子工作流。「+ 新建规则」也能建，但那只在你想让规则命中时才有——
+        {/* 新建一张独立的子工作流。「+ 新建分支」也能建，但那只在你想让分支命中时才有——
             想把一段可复用的流程先搭出来、之后再接事件，之前没有入口。 */}
         {tab !== 'events' ? (
           creatingFlow === undefined ? (
@@ -1664,14 +1664,14 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             + 补「开始 / 结束」
           </button>
         )}
-        {/* 新建规则：规则只能挂在事件流上——子工作流里没有「事件」这回事，
-            所以那里根本不给按钮，而不是让人点开、填完名字、再吃一句「规则只能加在事件流上」。 */}
+        {/* 新建分支：分支只能挂在事件流上——子工作流里没有「事件」这回事，
+            所以那里根本不给按钮，而不是让人点开、填完名字、再吃一句「分支只能加在事件流上」。 */}
         {flow?.trigger === undefined ? null : (
           <button
             type='button'
             onClick={() => {
               setFailure('')
-              // 默认给最便宜的那种条件：判类要过一遍模型，不该是新规则的默认值。
+              // 默认给最便宜的那种条件：判类要过一遍模型，不该是新分支的默认值。
 
               const initial = conditionKinds.includes('from') ? 'from' : (conditionKinds[0] ?? 'from')
               setCreating({ name: '', conditions: [{ kind: initial }] })
@@ -1686,7 +1686,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
               cursor: 'pointer',
             }}
           >
-            + 新建规则
+            + 新建分支
           </button>
         )}
       </div>
@@ -1992,7 +1992,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             </div>
           </aside>
         ) : null}
-        {/* 新建规则：名字与条件一起攒着，点「建」才落盘——中间不留一条无条件边。 */}
+        {/* 新建分支：名字与条件一起攒着，点「建」才落盘——中间不留一条无条件边。 */}
         {creating === undefined ? null : (
           <aside
             style={{
@@ -2013,13 +2013,13 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             }}
           >
             <div>
-              <div style={{ fontSize: 14, lineHeight: '22px', fontWeight: 600 }}>新建规则</div>
+              <div style={{ fontSize: 14, lineHeight: '22px', fontWeight: 600 }}>新建分支</div>
               <div style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' }}>
                 从「分支」接出去一条新边；条件会跟着边一起写进文件，中间不会出现一条谁都命中的兜底边。
               </div>
             </div>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>规则名</span>
+              <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>分支名</span>
               <input
                 autoFocus
                 value={creating.name}

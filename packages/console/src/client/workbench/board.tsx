@@ -300,7 +300,7 @@ export function groupArchived(
         put(task.source, task.source, 0, task)
         break
       case 'rule': {
-        // 命中规则的名字在规则节点里；没有规则节点的任务（工具发起的）归到「没有规则」。
+        // 命中分支的名字在分支节点里；没有分支节点的任务（工具发起的）归到「没有分支」。
         const ruleNode = task.tasks[0]?.nodes.find(node => node.kind === 'rule')
         const name = typeof ruleNode?.data?.['ruleName'] === 'string' ? ruleNode.data['ruleName'] : ''
         const rule = name === '' ? t('archiveNoRule') : name

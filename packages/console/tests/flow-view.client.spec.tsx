@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * 编排视图：工具栏、画布高度、执行足迹、属性面板、试跑、连线、新建规则。
+ * 编排视图：工具栏、画布高度、执行足迹、属性面板、试跑、连线、新建分支。
  *
  * 这一组守的都是实测撞到的坑（每条用例的注释里写了当时怎么撞上的）。
  *
@@ -125,7 +125,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
 /** 画出编排视图，等第一屏读完。 */
 async function draw(source: TriageSource): Promise<void> {
   render(<FlowView triage={source} t={t} />)
-  await waitFor(() => { expect(screen.queryByText('正在读规则图…')).toBeNull() })
+  await waitFor(() => { expect(screen.queryByText('正在读事件流…')).toBeNull() })
 }
 
 /** 点一个方块（jsdom 里跑不了 d3 的拖拽，只发 click）。 */
@@ -150,11 +150,11 @@ function run(overrides: Partial<TriageRun> & { readonly id: string }): TriageRun
 }
 
 describe('工具栏', () => {
-  it('只在事件流上给「+ 新建规则」，子工作流不给', async () => {
+  it('只在事件流上给「+ 新建分支」，子工作流不给', async () => {
     await draw(engine().source)
-    expect(screen.getByRole('button', { name: '+ 新建规则' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '+ 新建分支' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /子工作流/ }))
-    await waitFor(() => { expect(screen.queryByRole('button', { name: '+ 新建规则' })).toBeNull() })
+    await waitFor(() => { expect(screen.queryByRole('button', { name: '+ 新建分支' })).toBeNull() })
   })
 
   it('「排列方式」里「紧凑」只出现一次', async () => {
@@ -441,7 +441,7 @@ describe('抬头摘要', () => {
 })
 
 describe('新建', () => {
-  it('子工作流 tab 上能直接建一张，不用先建规则', async () => {
+  it('子工作流 tab 上能直接建一张，不用先建分支', async () => {
     const created: string[] = []
     await draw(engine({ createFlow: async (name) => { created.push(name); return { ok: true, flowId: 'archive' } } }).source)
     expect(screen.queryByRole('button', { name: '+ 新建子工作流' })).toBeNull()
@@ -454,10 +454,10 @@ describe('新建', () => {
     await waitFor(() => { expect(created).toEqual(['退订邮件归档']) })
   })
 
-  it('新建规则：名字和条件都齐了才能建，条件随边一起提交', async () => {
+  it('新建分支：名字和条件都齐了才能建，条件随边一起提交', async () => {
     const { addedRules, source } = engine()
     await draw(source)
-    fireEvent.click(screen.getByRole('button', { name: '+ 新建规则' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ 新建分支' }))
     const canCreate = (): boolean => (screen.getByRole('button', { name: '建' }) as HTMLButtonElement).disabled === false
     expect(canCreate()).toBe(false)
 

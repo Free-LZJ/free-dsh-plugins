@@ -145,14 +145,14 @@ function engine(overrides: Partial<TriageSource> = {}) {
 async function draw(source: TriageSource): Promise<void> {
   render(<RulesView t={t} triage={source} />)
   // 规则页默认落在编排视图；这些用例讲的是列表，所以先切过去。
-  fireEvent.click(await screen.findByRole('button', { name: '规则列表' }))
+  fireEvent.click(await screen.findByRole('button', { name: '列表' }))
   await screen.findByRole('list', { name: t('rulesList', { count: 2 }) })
 }
 
 /** 渲染规则页并切到列表视图；多数用例讲的是列表。 */
 async function renderList(source: TriageSource): Promise<{ readonly container: HTMLElement }> {
   const { container } = render(<RulesView t={t} triage={source} />)
-  fireEvent.click(await screen.findByRole('button', { name: '规则列表' }))
+  fireEvent.click(await screen.findByRole('button', { name: '列表' }))
   return { container }
 }
 

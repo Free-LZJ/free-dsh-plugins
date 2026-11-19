@@ -59,7 +59,7 @@ export interface TriageAction {
 export interface TriageRule {
   readonly id: string
   readonly name: string
-  /** 这条规则属于哪个域：连接器 id、'*'（任何事件），或缺省（永不执行）。 */
+  /** 这条分支属于哪个域：连接器 id、'*'（任何事件），或缺省（永不执行）。 */
   readonly connector?: string
   readonly enabled: boolean
   readonly priority: number
@@ -75,7 +75,7 @@ export interface TriageRunAction {
   readonly ok: boolean
   readonly detail: string
   readonly sessionId?: string
-  /** 失败的性质：页面据此决定给「去改规则」还是「再试一次」。 */
+  /** 失败的性质：页面据此决定给「去改事件流」还是「再试一次」。 */
   readonly failure?: 'config' | 'transient' | 'fatal'
 }
 
@@ -127,7 +127,7 @@ export interface TriageRules {
   readonly source: 'file' | 'default'
   readonly path: string
   readonly dropped: readonly string[]
-  /** 没写归属、因而永不执行的规则条数。 */
+  /** 没写归属、因而永不执行的分支条数。 */
   readonly unassigned: number
   /** The file's own text, so the page can show what is really on disk. */
   readonly raw?: string
@@ -138,7 +138,7 @@ export interface TriageRules {
    * The page words those two differently.
    */
   readonly connector: boolean
-  /** 这份文件是节点图格式：规则写在图里，
+  /** 这份文件是节点图格式：事件流写在图里，
 ules 空是对的。 */
   readonly flowMode?: boolean
 }
@@ -256,12 +256,12 @@ export interface TriageSource {
   addFlowEdge(input: { from: string; to: string; flowId?: string; when?: readonly Readonly<Record<string, unknown>>[] }): Promise<TriageResult>
   /** 改一条边的条件。 */
   saveFlowEdge(input: { from: string; index: number; flowId?: string; when?: readonly Readonly<Record<string, unknown>>[] }): Promise<TriageResult>
-  /** 新建一条规则：建子工作流 + 加节点 + 连线。 */
+  /** 新建一条分支：建子工作流 + 加节点 + 连线。 */
   addRule(input: {
     flowId: string
     from: string
     name: string
-    /** 条件与边一次落盘：否则中间那一刻文件里会有一条无条件的边，把后面的规则全挡掉。 */
+    /** 条件与边一次落盘：否则中间那一刻文件里会有一条无条件的边，把后面的分支全挡掉。 */
     when?: readonly Readonly<Record<string, unknown>>[]
   }): Promise<TriageResult & { nodeId?: string; edgeIndex?: number }>
   setEnabled(ruleId: string, enabled: boolean): Promise<TriageResult>
@@ -329,7 +329,7 @@ export function createTriageSource(): TriageSource {
    *
    * 回包要**整份交回去**：Host 除了 `ok` 还会说「刚建的是哪个节点 / 第几条出边」，
    * 页面靠这两个 id 把新东西选中。以前这里只 `return { ok: true }`，把 `nodeId` /
-   * `edgeIndex` 一起丢了——于是「加完节点自动选中它」「建完规则自动打开它的条件」两件事
+   * `edgeIndex` 一起丢了——于是「加完节点自动选中它」「建完分支自动打开它的条件」两件事
    * 静悄悄地从来没生效过。
    */
   const write = async (path: string, body: unknown): Promise<TriageResult> => {
@@ -427,9 +427,9 @@ export function runTone(status: string): TagTone {
 }
 
 /**
- * 「哪条规则命中了」这一列显示什么。
+ * 「哪条分支命中了」这一列显示什么。
  *
- * 图模式下的执行**没有** `rule` 那一格（规则就是图里选中的那条分支），所以 `ruleName`
+ * 图模式下的执行**没有** `rule` 那一格（分支就是图里选中的那条线），所以 `ruleName`
  * 是空的——于是整列空白，而这一列正是这张表的意义所在。没有名字就退回被调用的那条
  * 分支（`workflow` 那一格的描述），再退到分支节点 id，实在没有才留空。
  * @param run - 一条执行记录。
@@ -539,7 +539,7 @@ export function RulesView({ t, triage }: {
   const [unavailable, setUnavailable] = useState('')
   /** Why the last read or write did not take, or empty. */
   const [failure, setFailure] = useState('')
-  /** 编排还是列表。默认编排——规则页的第一件事是让人看懂流程。 */
+  /** 编排还是列表。默认编排——这一页的第一件事是让人看懂流程。 */
   const [view, setMode] = useState<'flow' | 'list'>('flow')
 
   const load = useCallback(async (): Promise<void> => {
@@ -587,7 +587,7 @@ export function RulesView({ t, triage }: {
                 borderBottom: view === mode ? '2px solid var(--dsw-alias-state-business-primary)' : '2px solid transparent',
               }}
             >
-              {mode === 'flow' ? '编排' : '规则列表'}
+              {mode === 'flow' ? '编排' : '列表'}
             </button>
           ))}
         </nav>
@@ -598,12 +598,12 @@ export function RulesView({ t, triage }: {
         : data === undefined
           ? <p className={CLS.empty}>{t('boardLoading')}</p>
           : view === 'flow'
-            // 编排视图自己读图，因为图与规则列表是同一份文件的两种读法；
+            // 编排视图自己读图，因为图与列表是同一份文件的两种读法；
             // 没有连接器时它也照样能显示（文件里可能已经有 v2 的图）。
             ? <FlowView t={t as never} triage={triage} />
             : data.rules.connector
               ? <TriageBody t={t} data={data} triage={triage} act={act} />
-              // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把规则喂给它。
+              // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把事件喂给它。
               : <p className={CLS.empty}>{t('rulesNoConnector')}</p>}
     </section>
   )
@@ -625,7 +625,7 @@ function TriageBody({ t, data, triage, act }: {
 }): ReactNode {
   const { rules, runs } = data
   const now = Date.now()
-  /** 按域筛选：一条规则只在它所属连接器的事件上生效，页面得能按这个维度看。 */
+  /** 按域筛选：一条分支只在它所属连接器的事件上生效，页面得能按这个维度看。 */
   const [scope, setScope] = useState('all')
   const scopes = ['all', ...new Set(rules.rules.map(rule => rule.connector ?? 'none'))]
   const shown = scope === 'all'
@@ -684,7 +684,7 @@ function TriageBody({ t, data, triage, act }: {
   }
   return (
     <>
-      {/* 复制回执放在顶部：按钮在每条规则上，回执跟在列表后面就等于没有。 */}
+      {/* 复制回执放在顶部：按钮在每条分支上，回执跟在列表后面就等于没有。 */}
       {notice === '' ? null : <p className={CLS.ruleNotice} role="status">{notice}</p>}
       <p className={CLS.viewMeta} title={rules.path}>
         {t('rulesSource', { source: rules.source === 'file' ? t('rulesSourceFile') : t('rulesSourceDefault') })}
@@ -709,15 +709,15 @@ function TriageBody({ t, data, triage, act }: {
 
       <h3 className={CLS.viewSubheading}>{t('rulesList', { count: shown.length })}</h3>
       {rules.rules.length === 0
-        // 节点图格式下「没有规则」是对的：规则写在图里了。说清楚，别让人以为规则丢了。
+        // 节点图格式下这里是空的：事件流写在图里了。说清楚，别让人以为东西丢了。
         ? <p className={CLS.empty}>
           {rules.flowMode === true
-            ? '这份规则文件是节点图格式（version: 2），规则写在图里——点上面的「编排」看流程。'
+            ? '这份文件是节点图格式（version: 2），事件流写在图里——点上面的「编排」看流程。'
             : t('rulesNone')}
         </p>
         : (
           <>
-            {/* 按域看规则：一条规则只在它所属连接器的事件上生效，这一点得看得见。 */}
+            {/* 按域看分支：一条分支只在它所属连接器的事件上生效，这一点得看得见。 */}
             <div className={CLS.ruleScopes}>
               <SegmentedControl
                 id="dsh-console-rule-scope"
@@ -860,7 +860,7 @@ function TriageBody({ t, data, triage, act }: {
                   <span className={CLS.runTail}>
                     <Tag tone={runTone(run.status)}>{t(runStatusKey(run.status))}</Tag>
                     {/* 试跑要读那封真邮件，所以需要记录里留下邮箱与 uid。以前这种情况
-                        按钮直接不渲染：人会以为「这条规则不支持试跑」，而不是「这条记录
+                        按钮直接不渲染：人会以为「这条分支不支持试跑」，而不是「这条记录
                         没留下邮件位置」。现在按钮在、灰着，鼠标停上去说明原因。 */}
                     <Button
                       size="sm"

@@ -186,10 +186,10 @@ describe('归档按维度分组', () => {
     expect(groupArchived(chains, 'rule', t)[0]?.label).toBe('Jira bug')
   })
 
-  it('没有规则节点的任务归到「没有规则」', () => {
+  it('没有分支节点的任务归到「没有分支」', () => {
     const noRule = task({ id: 'b', nodes: [{ id: 'n', kind: 'trigger', at: AT, ok: true, detail: '收到' }] })
     const chains = buildTasks([noRule], new Set(), 0, Date.now(), t)
-    expect(groupArchived(chains, 'rule', t)[0]?.label).toBe('没有规则')
+    expect(groupArchived(chains, 'rule', t)[0]?.label).toBe('没有分支')
   })
 
   it('按来源：一个来源一组', () => {
