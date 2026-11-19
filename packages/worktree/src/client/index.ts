@@ -91,13 +91,14 @@ function overviewOnHost(): Promise<OverviewResult> {
  * Remove one checkout (and its branch) through the Host.
  * @param dir - directory whose repository owns the checkout.
  * @param path - checkout to remove.
+ * @param force - discard uncommitted changes instead of letting Git refuse them.
  * @returns what was removed.
  */
-function removeOnHost(dir: string, path: string): Promise<RemoveWorktreeResult> {
+function removeOnHost(dir: string, path: string, force = false): Promise<RemoveWorktreeResult> {
   return fetch(REMOVE_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json', [MUTATION_HEADER]: '1' },
-    body: JSON.stringify({ dir, path, deleteBranch: true }),
+    body: JSON.stringify({ dir, path, deleteBranch: true, force }),
   }).then(response => readAnswer<RemoveWorktreeResult>(response, '删除失败'))
 }
 
@@ -161,7 +162,7 @@ export function apply(ctx: Context): void {
     overview: () => overviewOnHost(),
     saveSettings: patch => saveSettingsOnHost(patch),
     createWorktree: (dir, name) => createOnHost(dir, name),
-    removeWorktree: (dir, path) => removeOnHost(dir, path),
+    removeWorktree: (dir, path, force) => removeOnHost(dir, path, force),
     registerWorkspace: async (path) => (await ctx.workspaces.create({ path })).workspaceId,
     forgetWorkspace: path => forget(path),
     openWorkspace: async (workspaceId) => {

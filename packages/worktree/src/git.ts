@@ -207,6 +207,8 @@ export interface WorktreeEntry {
   readonly main: boolean
   /** Git has this checkout locked, so removal would need a force. */
   readonly locked: boolean
+  /** Entries `git status` reports; `0` is clean, absent when unmeasurable. */
+  readonly dirty?: number
 }
 
 /**
@@ -266,6 +268,25 @@ function samePath(left: string, right: string): boolean {
 }
 
 /**
+ * How many entries `git status` reports for one checkout.
+ *
+ * Reading it here, once per linked checkout, is what lets the page warn before a
+ * removal rather than after Git refused it. A checkout that cannot be read is
+ * reported as `undefined` instead of `0`: "unknown" and "clean" are different
+ * sentences to show a user about to delete work.
+ * @param path - the checkout to inspect.
+ * @returns the entry count, or undefined when Git would not answer.
+ */
+async function dirtyCount(path: string): Promise<number | undefined> {
+  try {
+    const text = await git(['status', '--porcelain', '--untracked-files=normal'], path)
+    return text === '' ? 0 : text.split(/\r?\n/).filter(line => line !== '').length
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Every checkout registered with a directory's repository.
  * @param dir - any directory inside the repository.
  * @returns the repository top level and its checkouts, main checkout first.
@@ -300,7 +321,15 @@ export async function listWorktrees(
       locked,
     })
   }
-  return { repo, worktrees }
+  // Every linked checkout is measured at the same time: the page shows the whole
+  // list at once, so one slow checkout must not delay the rows behind it. The
+  // repository's own checkout is never removable and is not measured.
+  const measured = await Promise.all(worktrees.map(async (entry) => {
+    if (entry.main) return entry
+    const dirty = await dirtyCount(entry.path)
+    return dirty === undefined ? entry : { ...entry, dirty }
+  }))
+  return { repo, worktrees: measured }
 }
 
 /**
@@ -312,35 +341,49 @@ export async function listWorktrees(
  * or by hand is the same Git object, and refusing it left the user with a row
  * that only offered "enter". The guards that remain are the ones Git itself
  * cannot be talked out of — the repository's own checkout, and a lock.
- * The branch is dropped with `-d`, so Git refuses an unmerged one instead of
- * losing commits.
- * `ponytail:` no `--force` — a checkout with local changes or a lock refuses and
- * says why; add an explicit force toggle when someone actually needs it.
+ * Without `force`, Git refuses a checkout that holds uncommitted work and the
+ * branch is dropped with `-d`, so an unmerged branch survives too: the safe call
+ * is the default one. `force` exists for the case that actually blocked users —
+ * a checkout with edits they had already given up on — and it discards those
+ * edits (`--force`) and any unmerged commits (`-D`). The page asks once, naming
+ * what will be lost, before it sends that flag.
  * @param dir - any directory inside the repository.
  * @param target - checkout to remove.
  * @param deleteBranch - whether to drop its branch as well.
+ * @param force - discard uncommitted changes and unmerged branch commits.
  * @returns what was removed.
  */
 export async function removeWorktree(
   dir: string,
   target: string,
   deleteBranch: boolean,
-): Promise<{ removed: string; branch?: string }> {
+  force = false,
+): Promise<{ removed: string; branch?: string; alreadyGone?: boolean }> {
   const repo = await repositoryRoot(dir)
   const { worktrees } = await listWorktrees(repo)
   const entry = worktrees.find(candidate => samePath(candidate.path, target))
-  if (entry === undefined) throw new Error(`不是这个仓库的工作树：${target}`)
+  if (entry === undefined) {
+    // The page may predate someone removing this checkout outside the plugin (a
+    // hand deletion, another session). Git no longer lists it, so a guard here
+    // would leave a row that can never be dismissed; when nothing is left on
+    // disk the honest answer is that the removal already happened. A path that
+    // still holds files is a different case — the user may have picked the
+    // wrong repository — and keeps the guard.
+    const gone = await stat(target).then(() => false).catch(() => true)
+    if (gone) return { removed: target, alreadyGone: true }
+    throw new Error(`不是这个仓库的工作树：${target}`)
+  }
   if (entry.main) throw new Error('不能删除仓库自己的主检出')
   if (entry.locked) throw new Error(`该工作树被 Git 锁定：${entry.path}`)
 
   try {
-    await git(['worktree', 'remove', entry.path], repo)
+    await git(['worktree', 'remove', ...force ? ['--force'] : [], entry.path], repo)
   } catch (error: unknown) {
     throw new Error(gitFailure(error, '删除工作树失败'))
   }
   if (deleteBranch && entry.branch !== undefined) {
     try {
-      await git(['branch', '-d', entry.branch], repo)
+      await git(['branch', force ? '-D' : '-d', entry.branch], repo)
     } catch (error: unknown) {
       // The checkout is gone either way; report the branch refusal as guidance.
       throw new Error(`工作树已删除，但分支 ${entry.branch} 未删除（未合并）：${gitFailure(error, '')}`)

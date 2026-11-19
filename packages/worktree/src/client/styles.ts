@@ -45,6 +45,8 @@ export const CLS = {
   formLabel: 'dshw-form-label',
   formControl: 'dshw-form-control',
   tag: 'dshw-tag',
+  alert: 'dshw-alert',
+  alertText: 'dshw-alert-text',
 } as const
 
 /** The style element's identity, so a second apply does not add a second copy. */
@@ -72,6 +74,8 @@ const CSS = `
 .${CLS.panelTitle}{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
 .${CLS.panelTools}{display:flex;flex:none;align-items:center;gap:8px}
 .${CLS.panelBody}{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px;overflow-y:auto;padding:16px 20px 32px}
+.${CLS.alert}{box-sizing:border-box;flex:none;display:flex;align-items:flex-start;gap:8px;padding:8px 20px;border-bottom:0.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-2)}
+.${CLS.alertText}{flex:1;margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);word-break:break-all}
 
 .${CLS.card}{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill)}
 .${CLS.cardHead}{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}

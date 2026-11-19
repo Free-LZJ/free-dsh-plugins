@@ -208,6 +208,7 @@ async function handleRemove(ctx: Context, req: IncomingMessage, res: ServerRespo
       request.value.dir,
       request.value.path,
       request.value.deleteBranch === true,
+      request.value.force === true,
     ))
   } catch (error: unknown) {
     // A removal can fail after the checkout is already gone (the branch was
@@ -305,12 +306,16 @@ function readRemoveRequest(value: unknown): RemoveCommand {
   if (body.deleteBranch !== undefined && typeof body.deleteBranch !== 'boolean') {
     return { ok: false, error: 'deleteBranch must be a boolean when present' }
   }
+  if (body.force !== undefined && typeof body.force !== 'boolean') {
+    return { ok: false, error: 'force must be a boolean when present' }
+  }
   return {
     ok: true,
     value: {
       dir: body.dir,
       path: body.path,
       ...body.deleteBranch === undefined ? {} : { deleteBranch: body.deleteBranch },
+      ...body.force === undefined ? {} : { force: body.force },
     },
   }
 }

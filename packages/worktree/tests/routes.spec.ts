@@ -10,7 +10,7 @@
  * @module @free-dsh/worktree/tests/routes
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -345,5 +345,67 @@ describe('remove', () => {
     const answer = await call(route(routes, REMOVE_PATH), { headers: MUTATION, body: { dir: 'C:\\whatever' } })
     expect(answer.status).toBe(400)
     expect(JSON.parse(answer.body)).toMatchObject({ error: expect.stringContaining('path') })
+  })
+
+  // The half of the reported bug the Host owns: a checkout with local work fails
+  // without `force`, and the answer must carry Git's own sentence so the page can
+  // show it instead of a bare failure.
+  it('refuses a checkout that holds uncommitted work, and says why', async () => {
+    const repo = repository()
+    const created = createManaged(repo, 'route-dirty')
+    writeFileSync(join(created, 'README.md'), 'edited\n', 'utf8')
+    const routes = await mount()
+
+    const answer = await call(route(routes, REMOVE_PATH), {
+      headers: { 'sec-fetch-site': 'same-origin', ...MUTATION },
+      body: { dir: repo, path: created, deleteBranch: true },
+    })
+
+    expect(answer.status).toBe(400)
+    expect(JSON.parse(answer.body)).toMatchObject({ error: expect.stringMatching(/--force|删除工作树失败/) })
+    expect(existsSync(created)).toBe(true)
+  })
+
+  it('removes it anyway when the request forces it', async () => {
+    const repo = repository()
+    const created = createManaged(repo, 'route-forced')
+    writeFileSync(join(created, 'README.md'), 'edited\n', 'utf8')
+    const routes = await mount()
+
+    const answer = await call(route(routes, REMOVE_PATH), {
+      headers: MUTATION,
+      body: { dir: repo, path: created, deleteBranch: true, force: true },
+    })
+
+    expect(answer.status).toBe(200)
+    expect(JSON.parse(answer.body)).toMatchObject({ removed: created })
+    expect(existsSync(created)).toBe(false)
+  })
+
+  // A row rendered before the checkout was removed outside the plugin must not
+  // become a dialog that can never finish: an empty path answers "already gone"
+  // with 200, so the page can drop the stale registration.
+  it('answers 200 with alreadyGone for a checkout that is no longer there', async () => {
+    const repo = repository()
+    const missing = join(repo, '.agents', 'worktrees', 'already-gone')
+    const routes = await mount()
+
+    const answer = await call(route(routes, REMOVE_PATH), {
+      headers: MUTATION,
+      body: { dir: repo, path: missing, deleteBranch: true },
+    })
+
+    expect(answer.status).toBe(200)
+    expect(JSON.parse(answer.body)).toMatchObject({ removed: missing, alreadyGone: true })
+  })
+
+  it('rejects a force that is not a boolean', async () => {
+    const routes = await mount()
+    const answer = await call(route(routes, REMOVE_PATH), {
+      headers: MUTATION,
+      body: { dir: 'C:\\whatever', path: 'C:\\whatever', force: 'yes' },
+    })
+    expect(answer.status).toBe(400)
+    expect(JSON.parse(answer.body)).toMatchObject({ error: expect.stringContaining('force') })
   })
 })

@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createWorktree, listWorktrees, removeWorktree, worktreeName } from '../src/git.ts'
 import { WORKTREE_PARENT } from '../src/protocol.ts'
 import { isMutationRequest, isSameOrigin } from '../src/routes.ts'
-import { cleanupRepositories, git, repository, scratch } from './support/git-repository.ts'
+import { cleanupRepositories, createManaged, git, repository, scratch } from './support/git-repository.ts'
 
 afterEach(cleanupRepositories)
 
@@ -136,6 +136,23 @@ describe('listWorktrees', () => {
     const { worktrees } = await listWorktrees(repo)
     expect(worktrees.find(entry => entry.path === created.path)?.locked).toBe(true)
   })
+
+  // The page has to be able to warn before the press, so the list carries the
+  // amount of work each row would lose.
+  it('reports how much uncommitted work each linked checkout holds', async () => {
+    const repo = repository()
+    const clean = createManaged(repo, 'clean-one')
+    const dirty = createManaged(repo, 'dirty-one')
+    writeFileSync(join(dirty, 'README.md'), 'edited\n', 'utf8')
+    writeFileSync(join(dirty, 'added.txt'), 'new\n', 'utf8')
+
+    const { worktrees } = await listWorktrees(repo)
+
+    expect(worktrees.find(entry => entry.path === clean)?.dirty).toBe(0)
+    expect(worktrees.find(entry => entry.path === dirty)?.dirty).toBe(2)
+    // The repository's own checkout cannot be removed, so it is not inspected.
+    expect(worktrees[0]?.dirty).toBeUndefined()
+  })
 })
 
 describe('removeWorktree', () => {
@@ -168,9 +185,21 @@ describe('removeWorktree', () => {
     expect(git(repo, ['branch', '--list', 'beside']).trim()).toBe('')
   })
 
-  it('refuses an unknown path', async () => {
+  it('answers "already gone" for a checkout that no longer exists', async () => {
     const repo = repository()
-    await expect(removeWorktree(repo, join(repo, '.agents', 'worktrees', 'nope'), false)).rejects.toThrow(/不是这个仓库/)
+    // A page loaded before someone deleted the checkout by hand still offers the
+    // row; Git has nothing to remove, so the removal is already done.
+    const missing = join(repo, '.agents', 'worktrees', 'nope')
+    const answer = await removeWorktree(repo, missing, false)
+    expect(answer).toMatchObject({ removed: missing, alreadyGone: true })
+  })
+
+  it('refuses a directory that exists but is not a checkout of this repository', async () => {
+    const repo = repository()
+    const outsider = join(repo, '.agents', 'worktrees', 'outsider')
+    mkdirSync(outsider, { recursive: true })
+    await expect(removeWorktree(repo, outsider, false)).rejects.toThrow(/不是这个仓库/)
+    expect(existsSync(outsider)).toBe(true)
   })
 
   it('keeps an unmerged branch, saying the checkout is already gone', async () => {
@@ -193,5 +222,44 @@ describe('removeWorktree', () => {
 
     await expect(removeWorktree(repo, created.path, false)).rejects.toThrow(/锁定/)
     expect(existsSync(created.path)).toBe(true)
+  })
+
+  // The bug users reported as "nothing happens": the refused removal never
+  // reached them, so this pins both the refusal and the fact that forcing is
+  // what gets a checkout with local work out of the list.
+  it('refuses a checkout that holds uncommitted work and leaves it in place', async () => {
+    const repo = repository()
+    const created = createManaged(repo, 'dirty-remove')
+    writeFileSync(join(created, 'README.md'), 'edited\n', 'utf8')
+
+    await expect(removeWorktree(repo, created, true)).rejects.toThrow(/--force|删除工作树失败/)
+
+    expect(existsSync(created)).toBe(true)
+    expect(git(repo, ['branch', '--list', 'dirty-remove'])).toContain('dirty-remove')
+  })
+
+  it('removes it anyway when forced, discarding the changes', async () => {
+    const repo = repository()
+    const created = createManaged(repo, 'dirty-forced')
+    writeFileSync(join(created, 'README.md'), 'edited\n', 'utf8')
+
+    await removeWorktree(repo, created, true, true)
+
+    expect(existsSync(created)).toBe(false)
+    expect(git(repo, ['branch', '--list', 'dirty-forced']).trim()).toBe('')
+  })
+
+  it('forces away a checkout that also sits on an unmerged commit', async () => {
+    const repo = repository()
+    const created = createManaged(repo, 'both-dirty')
+    writeFileSync(join(created, 'work.txt'), 'committed\n', 'utf8')
+    git(created, ['add', 'work.txt'])
+    git(created, ['commit', '-m', 'work'])
+    writeFileSync(join(created, 'README.md'), 'edited\n', 'utf8')
+
+    await removeWorktree(repo, created, true, true)
+
+    expect(existsSync(created)).toBe(false)
+    expect(git(repo, ['branch', '--list', 'both-dirty']).trim()).toBe('')
   })
 })

@@ -8,6 +8,12 @@
  * the registered Workspaces, so the page lists exactly the projects the user
  * works in.
  *
+ * Removing a checkout is destructive and Git can refuse it, so the page answers
+ * the two questions a pressed button would otherwise leave open: what exactly is
+ * about to go (a dialog naming the path, the branch and any uncommitted work),
+ * and, when Git still says no, why — the reason stays on screen instead of being
+ * cleared by the refresh that followed it.
+ *
  * @module @free-lzj/dsh-worktree/client/WorktreesPanel
  */
 
@@ -21,8 +27,13 @@ import type { RepoOverview, OverviewResult, WorktreeSettings, WorktreeSummary } 
 import { NS } from './locales.ts'
 import { CLS } from './styles.ts'
 
-/** How long an armed removal waits for its confirming press before disarming. */
-const CONFIRM_MS = 3_000
+/** One removal waiting for its confirmation. */
+interface PendingRemoval {
+  /** Repository that owns the checkout. */
+  readonly repo: string
+  /** The row that was pressed. */
+  readonly entry: WorktreeSummary
+}
 
 /** What the registration hands the page: Host calls and navigation. */
 export interface WorktreesPanelInjected {
@@ -32,8 +43,11 @@ export interface WorktreesPanelInjected {
   saveSettings: (patch: Partial<WorktreeSettings>) => Promise<WorktreeSettings>
   /** Create one checkout in a repository; resolves it. */
   createWorktree: (dir: string, name?: string) => Promise<{ path: string; branch: string; base: string; warning?: string }>
-  /** Remove one checkout, and its branch, through the Host. */
-  removeWorktree: (dir: string, path: string) => Promise<{ removed: string; branch?: string }>
+  /**
+   * Remove one checkout, and its branch, through the Host.
+   * @param force - discard uncommitted changes instead of letting Git refuse.
+   */
+  removeWorktree: (dir: string, path: string, force?: boolean) => Promise<{ removed: string; branch?: string }>
   /** Register the checkout as a Workspace; resolves the Workspace id. */
   registerWorkspace: (path: string) => Promise<string>
   /** Drop the Workspace registration that names a path, if any. */
@@ -60,6 +74,15 @@ function tail(path: string, keep = 2): string {
 }
 
 /**
+ * The sentence to show for a rejection.
+ * @param reason - whatever a promise rejected with.
+ * @returns its message, or the value itself.
+ */
+function sentence(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason)
+}
+
+/**
  * Render the page.
  * @param props - panel currency, the Host calls, and the translator.
  * @returns the settings card and one card per repository.
@@ -75,12 +98,23 @@ export function WorktreesPanel({
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
-  const [armed, setArmed] = useState<string | undefined>(undefined)
   const [target, setTarget] = useState<RepoOverview | undefined>(undefined)
   const [name, setName] = useState('')
+  const [pending, setPending] = useState<PendingRemoval | undefined>(undefined)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState<string | undefined>(undefined)
 
-  const load = useCallback((): void => {
-    setError(undefined)
+  /**
+   * Re-read the page.
+   *
+   * `keepError` exists because of the bug that made every failed removal look
+   * like a no-op: the catch called this loader, whose first act was to clear the
+   * error the same press had just set. The loader now clears the page error only
+   * when the user asked for a refresh, not when a failure refreshes the rows.
+   * @param keepError - leave the page error in place.
+   */
+  const load = useCallback((keepError = false): void => {
+    if (!keepError) setError(undefined)
     void overview()
       .then((result) => {
         setData(result)
@@ -89,19 +123,13 @@ export function WorktreesPanel({
       })
       .catch((reason: unknown) => {
         setData({ settings: { parent: '', fetchBeforeCreate: true }, repos: [] })
-        setError(reason instanceof Error ? reason.message : String(reason))
+        setError(sentence(reason))
       })
   }, [overview])
 
+  // Called through a wrapper, never handed to onClick directly: a press would
+  // otherwise pass its MouseEvent as `keepError`.
   useEffect(() => { load() }, [load])
-
-  // An armed removal disarms on its own, so a first press never becomes a
-  // delete waiting for a stray second one.
-  useEffect(() => {
-    if (armed === undefined) return
-    const timer = setTimeout(() => { setArmed(undefined) }, CONFIRM_MS)
-    return () => { clearTimeout(timer) }
-  }, [armed])
 
   const save = (): void => {
     if (saving) return
@@ -114,7 +142,7 @@ export function WorktreesPanel({
         setSaved(true)
         setTimeout(() => { setSaved(false) }, 2_000)
       })
-      .catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) })
+      .catch((reason: unknown) => { setError(sentence(reason)) })
       .finally(() => { setSaving(false) })
   }
 
@@ -130,7 +158,7 @@ export function WorktreesPanel({
         setTarget(undefined)
         setName('')
       })
-      .catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) })
+      .catch((reason: unknown) => { setError(sentence(reason)) })
       .finally(() => { setBusy(false) })
   }
 
@@ -140,29 +168,54 @@ export function WorktreesPanel({
     setError(undefined)
     void registerWorkspace(path)
       .then(workspaceId => openWorkspace(workspaceId))
-      .catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) })
+      .catch((reason: unknown) => { setError(sentence(reason)) })
       .finally(() => { setBusy(false) })
   }
 
-  const remove = (repo: string, path: string): void => {
+  /** Open the confirmation for one row; nothing is removed yet. */
+  const ask = (repo: string, entry: WorktreeSummary): void => {
     if (busy) return
-    if (armed !== path) {
-      setArmed(path)
-      return
-    }
-    setBusy(true)
-    setArmed(undefined)
-    setError(undefined)
-    void removeWorktree(repo, path)
+    setRemoveError(undefined)
+    setPending({ repo, entry })
+    // The row's own reading may be stale by now, so the dialog starts from the
+    // freshest list instead of a number captured when the page loaded.
+    load(true)
+  }
+
+  /** Leave the confirmation, keeping any failure visible on the page behind it. */
+  const dismiss = (): void => {
+    if (removing) return
+    if (removeError !== undefined) setError(removeError)
+    setPending(undefined)
+    setRemoveError(undefined)
+  }
+
+  /**
+   * Remove the pending checkout.
+   * @param force - discard uncommitted changes and unmerged branch commits.
+   */
+  const confirm = (force: boolean): void => {
+    if (pending === undefined || removing) return
+    const { repo, entry } = pending
+    setRemoving(true)
+    setRemoveError(undefined)
+    void removeWorktree(repo, entry.path, force)
       // The registration naming the removed checkout would otherwise be a
       // sidebar row pointing at nothing, so it goes too.
-      .then(() => forgetWorkspace(path))
-      .then(() => { load() })
-      .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : String(reason))
+      .then(() => forgetWorkspace(entry.path))
+      .then(() => {
+        setPending(undefined)
         load()
       })
-      .finally(() => { setBusy(false) })
+      .catch((reason: unknown) => {
+        // Kept out of `error`: this one belongs in the dialog the user is
+        // looking at, and dismissing the dialog promotes it to the page.
+        setRemoveError(sentence(reason))
+        // A branch refusal happens after the checkout is already gone, so the
+        // rows behind the dialog still have to be re-read.
+        load(true)
+      })
+      .finally(() => { setRemoving(false) })
   }
 
   const entryRow = (repo: string, entry: WorktreeSummary) => (
@@ -172,6 +225,9 @@ export function WorktreesPanel({
           {entry.branch ?? t('detached')}
           {entry.main ? <span className={CLS.tag}>{t('mainCheckout')}</span> : null}
           {entry.locked ? <span className={CLS.tag}>{t('locked')}</span> : null}
+          {entry.dirty !== undefined && entry.dirty > 0
+            ? <span className={CLS.tag}>{t('dirtyCount', { count: entry.dirty })}</span>
+            : null}
         </span>
         <span className={CLS.rowMeta} title={entry.path}>
           {entry.main ? tail(entry.path, 1) : below(repo, entry.path)}
@@ -187,8 +243,8 @@ export function WorktreesPanel({
         )}
         {!entry.main && !entry.locked
           ? (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => { remove(repo, entry.path) }}>
-              {armed === entry.path ? t('removeConfirm') : t('remove')}
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => { ask(repo, entry) }}>
+              {t('remove')}
             </Button>
           )
           : null}
@@ -225,14 +281,28 @@ export function WorktreesPanel({
     </section>
   )
 
+  const dirty = pending?.entry.dirty
+
   return (
     <div className={CLS.panel}>
       <header className={CLS.panelHeader}>
         <h1 className={CLS.panelTitle}>{t('panelTitle')}</h1>
         <div className={CLS.panelTools}>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={load}>{t('refresh')}</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => { load() }}>{t('refresh')}</Button>
         </div>
       </header>
+      {/*
+        Outside the scrolling body on purpose: a removal that failed at the bottom
+        of a long list used to report into a paragraph scrolled out of view.
+      */}
+      {error !== undefined
+        ? (
+          <div className={CLS.alert} role="alert">
+            <p className={CLS.alertText}>{error}</p>
+            <Button variant="ghost" size="sm" onClick={() => { setError(undefined) }}>{t('dismiss')}</Button>
+          </div>
+        )
+        : null}
       <div className={CLS.panelBody}>
         <section className={CLS.card}>
           <div className={CLS.cardHead}>
@@ -275,7 +345,6 @@ export function WorktreesPanel({
           </div>
         </section>
 
-        {error !== undefined ? <p className={CLS.error} role="alert">{error}</p> : null}
         {data === undefined
           ? <p className={CLS.hint} role="status">{t('loading')}</p>
           : data.repos.length === 0
@@ -320,6 +389,36 @@ export function WorktreesPanel({
           <p className={CLS.hint}>
             {t('location', { path: `${parent === '' ? `${target?.repo ?? ''}\\.agents\\worktrees` : `${parent}\\${tail(target?.repo ?? '', 1)}`}\\${name.trim() || '…'}` })}
           </p>
+        </div>
+      </Modal>
+      <Modal
+        open={pending !== undefined}
+        onClose={dismiss}
+        title={t('removeTitle')}
+        closeLabel={t('cancel')}
+        description={t('removeDescription')}
+        footer={(
+          <>
+            <Button variant="outline" disabled={removing} onClick={dismiss}>{t('cancel')}</Button>
+            <Button variant="outline" disabled={removing} onClick={() => { confirm(true) }}>
+              {t('forceRemove')}
+            </Button>
+            <Button variant="primary" disabled={removing} onClick={() => { confirm(false) }}>
+              {removing ? t('busy') : t('remove')}
+            </Button>
+          </>
+        )}
+      >
+        <div className={CLS.field}>
+          <p className={CLS.hint}>{t('removePath')}：{pending?.entry.path ?? ''}</p>
+          <p className={CLS.hint}>{t('removeBranch')}：{pending?.entry.branch ?? t('detached')}</p>
+          {dirty === undefined
+            ? null
+            : dirty > 0
+              ? <p className={CLS.hint}>{t('removeDirty', { count: dirty })}</p>
+              : <p className={CLS.hint}>{t('removeClean')}</p>}
+          {removeError !== undefined ? <p className={CLS.error} role="alert">{removeError}</p> : null}
+          {dirty !== undefined && dirty > 0 ? <p className={CLS.hint}>{t('forceRemoveHint')}</p> : null}
         </div>
       </Modal>
     </div>

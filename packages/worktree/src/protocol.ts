@@ -81,6 +81,12 @@ export interface WorktreeSummary {
   readonly main: boolean
   /** Git holds a lock on it, so it cannot be removed without a force. */
   readonly locked: boolean
+  /**
+   * How many entries `git status` reports for the checkout — modified, staged
+   * and untracked files together. `0` is clean; absent when the checkout could
+   * not be inspected, and the page then says nothing rather than calling it clean.
+   */
+  readonly dirty?: number
 }
 
 /** Every checkout of one repository. */
@@ -107,6 +113,12 @@ export interface RemoveWorktreeRequest {
   readonly path: string
   /** Whether to drop the checkout's branch too. */
   readonly deleteBranch?: boolean
+  /**
+   * Discard the checkout's uncommitted changes instead of letting Git refuse it.
+   * Only ever set from the confirmation that named what would be lost; an
+   * unflagged removal stays the safe one.
+   */
+  readonly force?: boolean
 }
 
 /** What a successful removal reports. */
@@ -115,6 +127,16 @@ export interface RemoveWorktreeResult {
   readonly removed: string
   /** Branch that was dropped with it, when one was. */
   readonly branch?: string
+  /**
+   * The checkout was already gone: Git no longer lists it and nothing sits at
+   * the path.
+   *
+   * A page loaded before someone removed the checkout elsewhere still offers
+   * the row. The guard that refuses an unknown path would leave that dialog
+   * unable to ever finish, so an empty path answers "already removed" instead
+   * and the page only has to drop the stale registration.
+   */
+  readonly alreadyGone?: boolean
 }
 
 /** One settings write from the browser. */

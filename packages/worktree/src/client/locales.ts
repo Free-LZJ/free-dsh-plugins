@@ -16,6 +16,7 @@ export const zh = {
   namePlaceholder: '留空则自动命名',
   location: '位置：{path}',
   cancel: '取消',
+  dismiss: '知道了',
   create: '创建并开始',
   busy: '处理中…',
 
@@ -32,8 +33,17 @@ export const zh = {
   detached: '（分离头）',
   enter: '进入',
   remove: '删除',
-  removeConfirm: '确认删除',
   createHere: '新建',
+
+  removeTitle: '删除工作树',
+  removeDescription: '删除后这个检出和它的分支都会消失，无法恢复。',
+  removePath: '检出',
+  removeBranch: '分支',
+  removeClean: '这个检出没有未提交改动。',
+  removeDirty: '这个检出有 {count} 处未提交改动，普通删除会被 Git 拒绝。强制删除会丢弃这些改动。',
+  forceRemove: '强制删除',
+  forceRemoveHint: '强制删除会丢弃上面这些未提交改动，且无法撤销。',
+  dirtyCount: '{count} 处改动',
 
   settingsTitle: '设置',
   settingsParent: '工作树目录',
@@ -56,6 +66,7 @@ export const en: Record<WorktreeKey, string> = {
   namePlaceholder: 'Generated when left blank',
   location: 'Location: {path}',
   cancel: 'Cancel',
+  dismiss: 'Dismiss',
   create: 'Create and start',
   busy: 'Working…',
 
@@ -72,8 +83,17 @@ export const en: Record<WorktreeKey, string> = {
   detached: '(detached)',
   enter: 'Enter',
   remove: 'Remove',
-  removeConfirm: 'Confirm',
   createHere: 'New',
+
+  removeTitle: 'Remove worktree',
+  removeDescription: 'The checkout and its branch are both gone afterwards, with no way back.',
+  removePath: 'Checkout',
+  removeBranch: 'Branch',
+  removeClean: 'This checkout has no uncommitted changes.',
+  removeDirty: 'This checkout has {count} uncommitted changes, so Git will refuse a plain removal. Forcing it discards those changes.',
+  forceRemove: 'Remove anyway',
+  forceRemoveHint: 'Removing anyway discards the uncommitted changes above and cannot be undone.',
+  dirtyCount: '{count} changes',
 
   settingsTitle: 'Settings',
   settingsParent: 'Worktree directory',
