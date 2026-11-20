@@ -62,7 +62,23 @@ function projection(context: TaskContext): TemplateValues {
 /** 通知动作；不改变外部世界，所以不进撤销窗口。 */
 export const notifyAction: ActionNode<NotifySpec, TaskContext> = defineAction({
   kind: 'notify',
+  label: '发通知',
   sideEffect: false,
+  config: {
+    title: { type: 'string', label: '标题', template: true },
+    body: { type: 'text', label: '正文', template: true },
+    tone: {
+      type: 'enum',
+      label: '语气',
+      options: [
+        { value: 'info', label: '普通' },
+        { value: 'success', label: '成功' },
+        { value: 'warn', label: '警告' },
+        { value: 'error', label: '错误' },
+      ],
+    },
+    link: { type: 'string', label: '链接', template: true },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     const outcome = await runNotify(
       {
@@ -85,7 +101,13 @@ export const notifyAction: ActionNode<NotifySpec, TaskContext> = defineAction({
 /** 脚本动作；默认有副作用。 */
 export const scriptAction: ActionNode<ScriptSpec, TaskContext> = defineAction({
   kind: 'script',
+  label: '跑脚本',
   sideEffect: true,
+  config: {
+    command: { type: 'string', label: '命令', template: true },
+    args: { type: 'json', label: '参数', hint: '字符串数组。' },
+    cwd: { type: 'string', label: '工作目录', template: true },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     const subprocess = portsOf(context).subprocess
     const outcome = await runScript(
@@ -106,7 +128,12 @@ export const scriptAction: ActionNode<ScriptSpec, TaskContext> = defineAction({
 /** MCP 动作；写操作居多，默认有副作用。 */
 export const mcpAction: ActionNode<McpSpec, TaskContext> = defineAction({
   kind: 'mcp',
+  label: '调 MCP 工具',
   sideEffect: true,
+  config: {
+    tool: { type: 'string', label: '工具名', hint: '形如 server__tool。' },
+    input: { type: 'json', label: '入参', template: true },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     const tools = portsOf(context).tools
     const outcome = await runMcp(
@@ -126,7 +153,21 @@ export const mcpAction: ActionNode<McpSpec, TaskContext> = defineAction({
 /** HTTP 动作；请求发出去收不回来，默认有副作用。 */
 export const httpAction: ActionNode<HttpSpec, TaskContext> = defineAction({
   kind: 'http',
+  label: '发 HTTP 请求',
   sideEffect: true,
+  config: {
+    url: { type: 'string', label: '地址', template: true },
+    method: {
+      type: 'enum',
+      label: '方法',
+      options: [
+        { value: 'POST', label: 'POST' },
+        { value: 'PUT', label: 'PUT' },
+        { value: 'PATCH', label: 'PATCH' },
+        { value: 'GET', label: 'GET' },
+      ],
+    },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     const send = portsOf(context).fetch
     // 载荷就是投影：**不含正文**——正文是不可信内容，把它 POST 出去意味着任何能给这个
@@ -163,7 +204,14 @@ export function modelRoute(named: string): { readonly provider: string; readonly
 /** 大模型调用动作：一次请求、一段文本。 */
 export const llmAction: ActionNode<LlmSpec, TaskContext> = defineAction({
   kind: 'llm',
+  label: '问模型',
   sideEffect: false,
+  config: {
+    prompt: { type: 'text', label: '提示词', template: true, hint: '留空则用事件带来的 prompt。' },
+    system: { type: 'text', label: '系统提示词', template: true },
+    model: { type: 'string', label: '模型', hint: 'provider/model；留空用事件带来的 model。' },
+    maxTokens: { type: 'number', label: '最大输出 token' },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     const llm = portsOf(context).llm
     if (llm === undefined) return failure('未挂载 LLM 能力（ctx.llm），无法调用模型', 'config')
