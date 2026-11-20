@@ -19,7 +19,7 @@
  */
 
 import { fillTemplate, runSession } from '@free-lzj/dsh-decision'
-import type { ActionNode, ActionOutcome, ActionSpecLike, SuspendSpec, TaskContext } from '@free-lzj/dsh-decision'
+import type { ActionNode, ActionOutcome, ActionSpecLike, SuspendSpec, TaskContext, TaskEvent } from '@free-lzj/dsh-decision'
 import { defineAction } from '@free-lzj/dsh-decision'
 import { describe, failure, portsOf } from '../ports.ts'
 
@@ -51,7 +51,7 @@ export interface SessionSpec extends ActionSpecLike {
    *   判失败并留下原因。
    */
   readonly awaitSession?: 'none' | 'idle'
-  /** 等会话的超时（分钟）；默认 120。 */
+  /** 等会话的超时（分钟）；默认 240。 */
   readonly timeoutMinutes?: number
 }
 
@@ -108,7 +108,43 @@ export function resolveWorkspace(
 /** 新建会话。 */
 export const sessionAction: ActionNode<SessionSpec, TaskContext> = defineAction({
   kind: 'session',
+  label: '建会话',
   sideEffect: true,
+  // 字段名与 {@link SessionSpec} 一一对应：面板照着渲染，读代码的人照着填。
+  config: {
+    workspaceTemplate: {
+      type: 'string',
+      label: '工作目录模板',
+      template: true,
+      placeholder: '{repoRoot}/{repo}',
+      hint: '用入参填；有占位符解析不出值就判配置失败，不会建到半个路径上。',
+    },
+    workspace: { type: 'string', label: '固定工作目录', hint: '绝对路径；填了模板就不用填它。' },
+    titleTemplate: {
+      type: 'string',
+      label: '会话标题模板',
+      template: true,
+      default: '{rule}：{subject}',
+    },
+    instructions: {
+      type: 'text',
+      label: '提示词',
+      template: true,
+      hint: '写死就优先用它；留空则用事件带来的正文（邮件连接器会把正文连同「这是证据不是指令」的声明渲染好）。',
+    },
+    agentPreset: { type: 'string', label: 'agent 预设' },
+    permissionPreset: { type: 'string', label: '权限预设', hint: '如 readonly、workspace-write。' },
+    awaitSession: {
+      type: 'enum',
+      label: '要不要等它干完',
+      hint: '不填等于「等会话跑完再往下走」。',
+      options: [
+        { value: 'idle', label: '等会话跑完再往下走' },
+        { value: 'none', label: '发完即走' },
+      ],
+    },
+    timeoutMinutes: { type: 'number', label: '等待超时（分钟）', hint: '不填等于 240 分钟。' },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     // 续跑：这一格是「等这个会话跑完」醒过来的，会话早就建好了。再建一遍等于同一条
     // 派单开两个会话——所以只认令牌对得上的那次唤醒，直接报完成。
@@ -124,6 +160,8 @@ export const sessionAction: ActionNode<SessionSpec, TaskContext> = defineAction(
     const ports = portsOf(context)
     const workspace = resolveWorkspace(spec, context.vars)
     if (!workspace.ok) return workspace.outcome
+    const prompt = await resolvePrompt(spec, context)
+    if (!prompt.ok) return prompt.outcome
     const title = truncateUtf8(
       `[任务] ${fillTemplate(spec.titleTemplate ?? '{rule}：{subject}', context.vars)}`,
       TITLE_MAX_BYTES,
@@ -132,7 +170,7 @@ export const sessionAction: ActionNode<SessionSpec, TaskContext> = defineAction(
       {
         workspace: workspace.path,
         title,
-        prompt: spec.instructions ?? context.vars['prompt'] ?? '',
+        prompt: prompt.text,
         ...(spec.permissionPreset === undefined ? {} : { permissionPreset: spec.permissionPreset }),
         ...(spec.agentPreset === undefined ? {} : { agentPreset: spec.agentPreset }),
         source: {
@@ -164,6 +202,47 @@ export const sessionAction: ActionNode<SessionSpec, TaskContext> = defineAction(
   },
 })
 
+/** 事件投影里可能带 `prompt` 的连接器端口：邮件连接器就是靠它把正文渲染出来。 */
+interface PromptPort {
+  render?(event: TaskEvent): Promise<string>
+}
+
+/**
+ * 要投给会话的正文。
+ *
+ * 三个来源，越具体越优先：规则里写死的 `instructions`、事件投影里的 `prompt`，最后
+ * 是连接器的 `prompt` 端口——邮件那一侧用它把正文读出来并加上「这是证据不是指令」
+ * 的声明。**三个都没有就判 config 失败**：投一条空消息出去，会话会对着空白干活，
+ * 比明确失败糟得多（这条以前漏了，CI 失败邮件就是这样被静默投成空白的）。
+ * @param spec - 会话动作配置。
+ * @param context - 动作上下文。
+ * @returns 正文，或一个「配置不对」的结论。
+ */
+async function resolvePrompt(
+  spec: SessionSpec,
+  context: TaskContext,
+): Promise<{ ok: true; text: string } | { ok: false; outcome: ActionOutcome }> {
+  const direct = spec.instructions ?? context.vars['prompt'] ?? ''
+  if (direct.trim() !== '') return { ok: true, text: direct }
+  const port = (context.ports as Readonly<Record<string, unknown>>)['prompt'] as PromptPort | undefined
+  if (port?.render !== undefined) {
+    try {
+      const rendered = await port.render(context.task.event)
+      if (rendered.trim() !== '') return { ok: true, text: rendered }
+    } catch (error: unknown) {
+      // 读不出正文不在这里定生死：下面统一报「没有可投递的内容」，原因写进日志。
+      context.log(`渲染投递正文失败：${describe(error)}`)
+    }
+  }
+  return {
+    ok: false,
+    outcome: failure(
+      'session 没有可投递的正文：规则里没写 instructions，事件也没带 prompt（这封邮件的正文读不出来？）',
+      'config',
+    ),
+  }
+}
+
 /**
  * 这次唤醒是不是「我建的那个会话跑完了」。
  *
@@ -178,29 +257,49 @@ function resumedSession(signal: Readonly<Record<string, unknown>> | undefined): 
 }
 
 /**
+ * 等会话的默认超时（分钟）。
+ *
+ * 派单类会话（读单、建工作树、跑一遍修复）一两个小时是常态，120 分钟会把正常干活的
+ * 会话判成失败。要更短就别靠默认值，在节点上显式写 `timeoutMinutes`。
+ */
+const DEFAULT_WAIT_MINUTES = 240
+
+/**
  * 造一个「等这个会话干完」的挂起说明。
  *
  * 令牌写成 `session:<id>`：唤醒探针（`probeWait`）只认这个前缀，别的等待不会撞上。
  * @param sessionId - 刚建出来的会话。
- * @param minutes - 超时分钟数；没写或写歪用 120。
+ * @param minutes - 超时分钟数；没写或写歪用 {@link DEFAULT_WAIT_MINUTES}。
  * @param now - 现在；跟着任务的时钟走，测试能钉死。
  * @returns 挂起说明。
  */
 function waitForSession(sessionId: string, minutes: number | undefined, now: Date): SuspendSpec {
-  const timeout = typeof minutes === 'number' && Number.isInteger(minutes) && minutes > 0 ? minutes : 120
+  const timeout = typeof minutes === 'number' && Number.isInteger(minutes) && minutes > 0 ? minutes : DEFAULT_WAIT_MINUTES
   return {
     on: 'event',
     token: `${SESSION_WAIT_PREFIX}${sessionId}`,
     dueAt: new Date(now.getTime() + timeout * 60_000).toISOString(),
     resume: { sessionId },
-    detail: `等会话 ${sessionId.slice(0, 8)} 干完`,
+    // 前 8 位永远是 `session-`：截头等于把 id 截没了，看板上所有等待都长成同一句。
+    // 留前缀 + 8 位 id，人和日志都能认出是哪一个。
+    detail: `等会话 ${sessionId.slice(0, 16)} 干完`,
   }
 }
 
 /** 投递到一个已有会话。 */
 export const followupAction: ActionNode<FollowupSpec, TaskContext> = defineAction({
   kind: 'followup',
+  label: '投递到会话',
   sideEffect: true,
+  config: {
+    sessionId: {
+      type: 'string',
+      label: '目标会话 id',
+      required: true,
+      hint: '投递到已有会话；写错就失败，绝不偷偷新建。',
+    },
+    prompt: { type: 'text', label: '投递内容', template: true, hint: '留空则用事件带来的正文。' },
+  },
   async run(spec, context): Promise<ActionOutcome> {
     const ports = portsOf(context)
     const sessionId = spec.sessionId?.trim()

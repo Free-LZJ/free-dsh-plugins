@@ -166,7 +166,8 @@ export function createDshSessionPort(ctx: ServiceLookup, log: (line: string) => 
       const workspace = existing ?? await table.create(cwd)
       await workspace.attachSession(sessionId)
     } catch (error: unknown) {
-      log(`会话 ${sessionId.slice(0, 8)} 没能登记到工作区 ${cwd}：${describe(error)}`)
+      // 截头 8 位只剩 `session-`，日志里看不出是哪个会话；留前缀 + id 前 8 位。
+      log(`会话 ${sessionId.slice(0, 16)} 没能登记到工作区 ${cwd}：${describe(error)}`)
     }
   }
 

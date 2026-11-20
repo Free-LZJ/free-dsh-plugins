@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-connector-dsh",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The built-in DSH connector for the workbench: session creation, delivery to existing sessions, scripts, MCP tools, HTTP, notifications and LLM calls — registered through the same API a third-party connector uses",
   "repository": {
     "type": "git",

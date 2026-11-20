@@ -175,7 +175,7 @@ describe('session 动作', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
     const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
     const outcome = await sessionAction.run(
-      { kind: 'session', workspace: cwd },
+      { kind: 'session', workspace: cwd, instructions: '干活' },
       taskContext({ ports: { sessions: port } }),
     )
     expect(outcome.wait).toMatchObject({
@@ -183,8 +183,10 @@ describe('session 动作', () => {
       token: 'session:session-1',
       resume: { sessionId: 'session-1' },
     })
-    // 上下文里的 now 是 2026-11-10T00:00:00Z，默认等 120 分钟。
-    expect(outcome.wait?.dueAt).toBe('2026-11-10T02:00:00.000Z')
+    // 上下文里的 now 是 2026-11-10T00:00:00Z，默认等 240 分钟。
+    expect(outcome.wait?.dueAt).toBe('2026-11-10T04:00:00.000Z')
+    // 挂起说明要能认出是哪个会话：截头 8 位只剩 `session-`，看板上所有等待都长一样。
+    expect(outcome.wait?.detail).toBe('等会话 session-1 干完')
   })
 
   it('写了 awaitSession: none 就发完即走', async () => {
@@ -192,7 +194,7 @@ describe('session 动作', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
     const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
     const outcome = await sessionAction.run(
-      { kind: 'session', workspace: cwd, awaitSession: 'none' },
+      { kind: 'session', workspace: cwd, awaitSession: 'none', instructions: '干活' },
       taskContext({ ports: { sessions: port } }),
     )
     expect(outcome).toMatchObject({ ok: true, sessionId: 'session-1' })
@@ -220,7 +222,7 @@ describe('session 动作', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
     const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
     const outcome = await sessionAction.run(
-      { kind: 'session', workspace: cwd },
+      { kind: 'session', workspace: cwd, instructions: '干活' },
       taskContext({
         ports: { sessions: port },
         signal: { ticket: 'T1', token: '票:T1:1' },
@@ -236,6 +238,42 @@ describe('session 动作', () => {
     const outcome = await sessionAction.run(
       { kind: 'session', workspaceTemplate: '{repoRoot}/{repo}' },
       taskContext({ ports: { sessions: port }, vars: { repoRoot: 'D:/x' } }),
+    )
+    expect(outcome).toMatchObject({ ok: false, failure: 'config' })
+    expect(calls).toEqual([])
+  })
+
+  it('自己没写正文时走连接器的 prompt 端口渲染（邮件就是这样把正文交给会话的）', async () => {
+    const calls: string[] = []
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
+    const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
+    let rendered = 0
+    const outcome = await sessionAction.run(
+      { kind: 'session', workspace: cwd, awaitSession: 'none' },
+      taskContext({
+        ports: {
+          sessions: port,
+          prompt: {
+            async render() {
+              rendered += 1
+              return '渲染好的正文'
+            },
+          },
+        },
+      }),
+    )
+    expect(outcome).toMatchObject({ ok: true, sessionId: 'session-1' })
+    expect(rendered).toBe(1)
+    expect(calls.some(call => call.includes('渲染好的正文'))).toBe(true)
+  })
+
+  it('三个来源都没有正文就判配置错，绝不建一个收空消息的会话', async () => {
+    const calls: string[] = []
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-'))
+    const port = createDshSessionPort(contextOf(controller(calls)), () => undefined)
+    const outcome = await sessionAction.run(
+      { kind: 'session', workspace: cwd },
+      taskContext({ ports: { sessions: port } }),
     )
     expect(outcome).toMatchObject({ ok: false, failure: 'config' })
     expect(calls).toEqual([])
@@ -357,7 +395,7 @@ describe('console:tool 触发器与词表', () => {
       .toMatchObject({ awaitSession: 'idle', timeoutMinutes: 180 })
     expect(normalizeDshAction({ kind: 'session', awaitSession: 'none' }))
       .toMatchObject({ awaitSession: 'none' })
-    // 写歪了就不带这两个键：默认值（等、120 分钟）由动作自己兜。
+    // 写歪了就不带这两个键：默认值（等、240 分钟）由动作自己兜。
     const sloppy = normalizeDshAction({ kind: 'session', awaitSession: '什么时候好', timeoutMinutes: -5 })
     expect(sloppy).not.toHaveProperty('awaitSession')
     expect(sloppy).not.toHaveProperty('timeoutMinutes')
