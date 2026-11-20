@@ -15,9 +15,10 @@
  * @module @free-lzj/dsh-mail/client/MailPanel
  */
 
-import type { ReactNode } from 'react'
+import { useSyncExternalStore, type ReactNode } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import { currentFocus, subscribeFocus, type MailFocus } from './focus.ts'
 
 /** Route the Host half serves the panel document on. */
 const PANEL_SRC = '/dsh-mail/panel'
@@ -40,13 +41,21 @@ export type MailPanelProps = PropsRuntime<'main'> & PropsLocale<'panel.mail'>
  * @returns the framed panel document.
  */
 export function MailPanel({ t }: MailPanelProps): ReactNode {
+  // 看板跳过来时带着「哪一封」；地址是外部唯一能决定这份文档看什么的东西。
+  const focus = useSyncExternalStore(subscribeFocus, currentFocus, currentFocus)
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 0, minWidth: 0 }}>
       <iframe
-        src={PANEL_SRC}
+        src={srcOf(focus)}
         title={t('title')}
         style={{ flex: 1, width: '100%', border: 0, display: 'block', background: 'transparent' }}
       />
     </div>
   )
+}
+
+/** 面板文档的地址：指定了哪一封就多带三个参数，文档自己会打开它。 */
+function srcOf(focus: MailFocus | undefined): string {
+  if (focus === undefined) return PANEL_SRC
+  return `${PANEL_SRC}?${new URLSearchParams({ accountId: focus.accountId, folder: focus.folder, uid: focus.uid }).toString()}`
 }

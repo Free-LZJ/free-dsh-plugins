@@ -333,6 +333,36 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
   // 最近一次渲染的邮件行，按 `data-i` 下标索引（下标不会被 HTML 属性转义弄坏）。
   let rows = [];
 
+  /**
+   * 地址里点名的那一封。
+   *
+   * 看板的执行流程图点到邮件节点时，靠 iframe 的地址把「账号 / 目录 / uid」带
+   * 过来：面板没有对外 API，地址是外部唯一能决定它看什么的东西。只认一次——
+   * 用户随后切去别处，不该每轮轮询又被拽回来。
+   */
+  const focusMail = (() => {
+    const search = new URLSearchParams(location.search);
+    const accountId = search.get('accountId') || '';
+    const folder = search.get('folder') || '';
+    const uid = Number(search.get('uid') || '');
+    if (!accountId || !folder || !Number.isInteger(uid) || uid <= 0) return null;
+    return { accountId, folder, uid };
+  })();
+  let focusDone = false;
+
+  /** 打开指定的那一封；列表窗口里还没有它的，正文照样能开。 */
+  async function applyFocus() {
+    if (focusDone || !focusMail || !view.data) return;
+    focusDone = true;
+    view.accountId = focusMail.accountId;
+    view.folder = focusMail.folder;
+    renderFolders();
+    renderTop();
+    const known = view.data.messages.find((one) => one.accountId === focusMail.accountId
+      && one.folder === focusMail.folder && one.uid === focusMail.uid);
+    await openMessage(known || { ...focusMail, seen: true, flagged: false });
+  }
+
   const esc = (value) => String(value == null ? '' : value)
     .replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   const text = (value) => document.createTextNode(value);
@@ -452,6 +482,7 @@ body{margin:0;background:var(--mail-page);color:var(--mail-fg);font:14px/1.5 'Se
       view.data = next;
       view.revision = next && typeof next.revision === 'number' ? next.revision : null;
       renderAll();
+      void applyFocus();
     } catch (error) {
       view.error = message(error);
       renderStatus();

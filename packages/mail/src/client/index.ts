@@ -23,6 +23,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { createElement } from 'react'
 import { useConsolePanel, type ConsolePanelDescriptor } from '@free-lzj/dsh-console/contract'
+import { focusMail, focusOfKey } from './focus.ts'
 import { MailIcon } from './MailIcon.tsx'
 import { MailPanel } from './MailPanel.tsx'
 import { en, zh, type MailLocaleKey } from './locales.ts'
@@ -65,6 +66,12 @@ export function apply(ctx: ClientContext): void {
     // two seats it always did.
     render: MailPanel as unknown as ConsolePanelDescriptor['render'],
     icon: createElement(MailIcon, { size: 16 }),
+    // 看板的执行流程图点到邮件节点时，由本面板接手：把 iframe 指到那一封。
+    acceptsTask: task => task.connector === 'mail' && focusOfKey(task.key) !== undefined,
+    openTask: (task) => {
+      const focus = focusOfKey(task.key)
+      if (focus !== undefined) focusMail(focus)
+    },
   }, {
     locale: NS,
     order: 40,

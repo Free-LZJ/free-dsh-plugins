@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-mail",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Mail for DSH: an inbox panel over IMAP (QQ / Gmail) that reads and searches your inbox, and a rule engine that triages what arrives — GitHub notices open a session in the repository they name, promotions get filed away",
   "repository": {
     "type": "git",
