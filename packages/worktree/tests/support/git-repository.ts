@@ -9,7 +9,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -31,7 +31,10 @@ export function git(dir: string, args: readonly string[]): string {
  * @returns its top-level directory.
  */
 export function repository(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-worktree-'))
+  // Git reports the real path. CI's TEMP is an 8.3 short name (RUNNER~1) and
+  // comparing that with what Git hands back fails there while passing locally.
+  // `.native` is the one that expands 8.3; plain realpathSync leaves it short.
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-worktree-')))
   created.push(dir)
   execFileSync('git', ['init', '--initial-branch=main'], { cwd: dir, stdio: 'ignore' })
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore' })
@@ -47,7 +50,8 @@ export function repository(): string {
  * @returns its absolute path.
  */
 export function scratch(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-worktree-plain-'))
+  // Same reason as repository(): start from the real path, not the short one.
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-worktree-plain-')))
   created.push(dir)
   return dir
 }

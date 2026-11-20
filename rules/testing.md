@@ -53,6 +53,7 @@ pnpm run typecheck
 - 新增 Host 路由要有路由层测试（成功路径 + 至少一条拒绝/错误路径）；新增解析或状态机要有边界用例。
 - 不以"覆盖率数字"为目标；不为了覆盖率给一行 getter 写测试。
 - 测试不得依赖真实网络、真实邮箱、真实 `~/.codex` / `~/.claude`；全部用临时目录与夹具替代。
+- 夹具里的临时目录一律用 `realpathSync.native(...)`（或 `await realpath(...)` 的 `.native` 等价物）取真实路径：`realpathSync` **不展开 8.3 短名**。CI 的 `TEMP` 是 `C:\Users\RUNNER~1\...`，git 返回的是长名，夹具停在短名会让 `toBe` / `samePath` 在 CI 全红、本地全绿。
 - 改动了 `packages/agent-import/tests/support/`、`packages/mail/tests/support/` 这类共享接线（模块表、运行时、jsdom 注入）时必须跑全量 `pnpm run test`，而不是单文件。
 
 ## 运行时验证：另开第二实例
