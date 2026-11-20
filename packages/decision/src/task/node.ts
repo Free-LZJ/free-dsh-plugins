@@ -12,7 +12,7 @@
  * @module @free-lzj/dsh-decision/task/node
  */
 
-import type { SuspendSpec } from '../flow/types.ts'
+import type { ConfigSchema, SuspendSpec } from '../flow/types.ts'
 
 /** 一次失败的性质——它决定人**还能做什么**（去改配置 / 再试一次 / 只能放弃）。 */
 export type FailureKind = 'config' | 'transient' | 'fatal'
@@ -50,8 +50,17 @@ export interface NodeOutcome {
 export interface TaskNode<TSpec, TContext, TOutcome extends NodeOutcome = NodeOutcome> {
   /** 稳定 kind；同一部署内全局唯一（跨连接器重名会被注册表拒绝）。 */
   readonly kind: string
+  /** 给人看的中文名；缺省用 kind。画布与面板显示的是它，不是 kind。 */
+  readonly label?: string
   /** 这个节点会不会改外部世界；撤销窗口与「建议」据此判定。 */
   readonly sideEffect?: boolean
+  /**
+   * 属性面板据此生成表单。
+   *
+   * 动作的配置字段本来只有实现自己知道（`spec.foo` 从哪来），所以由**实现**声明：
+   * 面板照它渲染，不必在别处再写一份会漂移的字段表。缺省表示没有可填字段。
+   */
+  readonly config?: ConfigSchema
   /**
    * 跑一次。
    * @param spec - 声明（规则文件里的那一段，或事件本身）。
@@ -95,6 +104,10 @@ export interface ActionDefinition<TSpec, TContext> {
   readonly kind: string
   /** 改了外部世界没有；`true` 才进撤销窗口与建议三态。 */
   readonly sideEffect: boolean
+  /** 给人看的中文名；见 {@link TaskNode.label}。 */
+  readonly label?: string
+  /** 配置字段；见 {@link TaskNode.config}。 */
+  readonly config?: ConfigSchema
   run(spec: TSpec, context: TContext): Promise<ActionOutcome>
 }
 
@@ -113,6 +126,8 @@ export function defineAction<TSpec, TContext>(
   return {
     kind: definition.kind,
     sideEffect: definition.sideEffect,
+    ...(definition.label === undefined ? {} : { label: definition.label }),
+    ...(definition.config === undefined ? {} : { config: definition.config }),
     async run(spec, context) {
       const outcome = await definition.run(spec, context)
       if (outcome.ok) {

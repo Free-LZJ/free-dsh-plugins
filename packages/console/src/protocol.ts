@@ -435,6 +435,14 @@ export interface TaskNodeRecord {
   readonly id: string
   /** `trigger` | `classify` | `rule` | 动作 kind | `session`。 */
   readonly kind: string
+  /**
+   * 它在事件流图上是哪个节点；旧链式任务没有。
+   *
+   * 看板靠这一对把执行记录贴回画布：`flowId` 决定画哪张图（子工作流不一样），
+   * `nodeId` 决定点亮哪一个方块。
+   */
+  readonly nodeId?: string
+  readonly flowId?: string
   readonly at: string
   readonly ok: boolean
   readonly detail: string
@@ -442,7 +450,32 @@ export interface TaskNodeRecord {
   readonly actionIndex?: number
   /** 只有会话节点（与建了会话的动作）才有。 */
   readonly sessionId?: string
+  /**
+   * 这是哪一轮的记录。
+   *
+   * 同一个任务会重跑（重试、追问），记录全留在 `nodes` 里；画布点亮只看本轮，
+   * 否则上一轮的失败会一直红着。旧记录没有这个字段，按「都算」处理。
+   */
+  readonly runId?: string
   readonly data?: Readonly<Record<string, unknown>>
+}
+
+/**
+ * 一次执行走到哪了。
+ *
+ * 节点图执行器的 `FlowProgress` 在页面这一侧的最小投影：页面只需要知道
+ * 「哪些已经跑过、正在跑哪一格、下一步是哪一格、卡在哪一格」，其余字段
+ * （满足的边、等多久、挂起几次）由引擎自己用，不必过桥。
+ */
+export interface TaskProgress {
+  readonly done: readonly string[]
+  readonly satisfied: readonly string[]
+  /** 下一次要跑的节点 id。 */
+  readonly ready: readonly string[]
+  /** 已经交给节点、还没返回的那几个。 */
+  readonly running?: readonly string[]
+  /** 挂在这个节点上等外部结果。 */
+  readonly suspendedAt?: string
 }
 
 /** 一个任务：一个事件被触发器选中后的整条链。 */
@@ -457,9 +490,26 @@ export interface Task {
   readonly updatedAt: string
   readonly status: TaskStatus
   readonly nodes: readonly TaskNodeRecord[]
+  /** 这一轮的执行进度；跑完且没有后续时缺省。 */
+  readonly progress?: TaskProgress
+  /** 这一轮的事件与上游出参，节点配置里的 `{键}` 就查它。 */
+  readonly vars?: Readonly<Record<string, string>>
+  /** 这一轮的 id；节点记录上的 `runId` 指向它。 */
+  readonly runId?: string
   readonly awaitingConfirmation?: boolean
   readonly acknowledged?: boolean
   readonly undoableUntil?: string
+}
+
+/**
+ * 「这条任务在别处长什么样」——连接器用自己的面板接手它时需要的最小身份。
+ *
+ * 不给整条任务：别的插件的面板只该知道「跟进哪一个东西」，不该拿到执行记录。
+ */
+export interface TaskJump {
+  readonly connector: string
+  /** 连接器给的任务身份；邮件就是 `mail:{账号}:{目录}:{uid}`。 */
+  readonly key: string
 }
 
 /** 一个连接器在看板上长什么样。 */

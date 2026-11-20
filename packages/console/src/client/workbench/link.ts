@@ -1,16 +1,15 @@
 /**
  * The page's link to the board.
  *
- * Unlike the workbench's own link (`../link.ts`), this one polls: the board
- * serves state over plain routes and has no event stream of its own yet, so a
- * two-second poll is the v0 shape. A mutation refreshes immediately after the
- * write, so a click never waits for the next poll to repaint.
+ * 两条腿：一条 SSE 信号线（任务引擎一动就重读，页面当场看见走到哪一步），
+ * 一条两秒轮询兜底（信号线断了、或部署里没有它，看板照旧会自己前进）。
+ * 写操作成功后立刻重读一次，点击永远不等到下一次轮询才变样。
  *
  * @module @free-lzj/dsh-console/client/workbench/link
  */
 
 import { MUTATION_HEADER } from '../link.ts'
-import { WORKBENCH_ACTION_PATH, WORKBENCH_STATE_PATH } from '../../paths.ts'
+import { WORKBENCH_ACTION_PATH, WORKBENCH_EVENTS_PATH, WORKBENCH_STATE_PATH } from '../../paths.ts'
 import type { WorkbenchLogDelta, WorkbenchState } from '../../protocol.ts'
 
 /** How often the page re-reads the board while it is open. */
@@ -34,6 +33,8 @@ export class WorkbenchLink {
   private snapshot: WorkbenchState | undefined
   private readonly listeners = new Set<() => void>()
   private timer: ReturnType<typeof setInterval> | undefined
+  /** 引擎的变化信号；断线由浏览器自己重连，页面不必管。 */
+  private stream: EventSource | undefined
   private disposed = false
   /** 最近一条已收到的日志时间；轮询带它只取新增行。 */
   private logCursor = 0
@@ -51,19 +52,26 @@ export class WorkbenchLink {
     }
   }
 
-  /** Start polling (idempotent). */
+  /** Start the stream and the fallback poll (idempotent). */
   open(): void {
     if (this.timer !== undefined) return
     void this.refresh()
+    // 测试环境与极老的浏览器没有 EventSource：轮询还在，页面照样会动。
+    if (typeof EventSource !== 'undefined') {
+      this.stream = new EventSource(WORKBENCH_EVENTS_PATH)
+      this.stream.addEventListener('tasks', () => { void this.refresh() })
+    }
     this.timer = setInterval(() => {
       void this.refresh()
     }, POLL_MS)
     this.timer.unref?.()
   }
 
-  /** Stop polling and drop the readers (the plugin's unload). */
+  /** Stop the stream, the poll, and drop the readers (the plugin's unload). */
   dispose(): void {
     this.disposed = true
+    this.stream?.close()
+    this.stream = undefined
     if (this.timer !== undefined) clearInterval(this.timer)
     this.timer = undefined
     this.listeners.clear()
@@ -142,6 +150,21 @@ export class WorkbenchLink {
     const answer = await this.post(WORKBENCH_ACTION_PATH, body)
     if (answer.ok === true) void this.refresh()
     return answer.ok === true
+  }
+
+  /**
+   * Rerun a failed task.
+   *
+   * Not {@link act}: a refusal here has a reason worth showing (「这条没有失败」),
+   * and `act` throws the body away.
+   * @param taskId - the task to run again.
+   * @returns whether it ran, and why not.
+   */
+  async retry(taskId: string): Promise<{ readonly ok: boolean; readonly message?: string }> {
+    const answer = await this.post(WORKBENCH_ACTION_PATH, { action: 'retry', taskId })
+    const ok = answer.ok === true
+    if (ok) void this.refresh()
+    return typeof answer['message'] === 'string' ? { ok, message: answer['message'] } : { ok }
   }
 
   /** Post one JSON body with the page-only header. */

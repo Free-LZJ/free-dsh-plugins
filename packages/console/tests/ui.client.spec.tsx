@@ -207,6 +207,7 @@ function shellFace(
     flow: async () => ({ flows: [] }),
     nodeTypes: async () => [],
     saveFlowNode: async () => ({ ok: true }),
+    saveFlowParams: async () => ({ ok: true }),
     addFlowNode: async () => ({ ok: true }),
     addFlowScaffold: async () => ({ ok: true }),
     scaffoldFlows: async () => ({ ok: true }),
@@ -458,7 +459,11 @@ describe('the workbench on screen', () => {
       rhythmMs: () => 0,
       undo: async () => ({ ok: true }),
       acknowledge: async () => ({ ok: true }),
+      retry: async () => ({ ok: true }),
       openRules: () => {},
+      flow: async () => ({ flows: [], nodeTypes: [] }),
+      canJumpTo: () => false,
+      jumpTo: () => ({ ok: false }),
     } satisfies BoardFace
     render(<ConsoleShell {...face} board={boards} />)
     // 首帧还在读命中记录，落地才有话说。

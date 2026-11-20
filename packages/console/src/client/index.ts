@@ -194,6 +194,7 @@ export function apply(ctx: ClientContext): void {
       const ok = await workbenchLink.act({ action: 'undo', taskId })
       return ok ? { ok: true } : { ok: false, message: '撤销没有成功' }
     },
+    retry: async (taskId) => await workbenchLink.retry(taskId),
     acknowledge: async (taskIds, acknowledged) => {
       for (const taskId of taskIds) {
         const ok = await workbenchLink.act({ action: 'acknowledge', taskId, acknowledged })
@@ -203,6 +204,31 @@ export function apply(ctx: ClientContext): void {
     },
     // 看板与规则页都在 `main:console` 里，切视图是改一个记住的值，不是换面板。
     openRules: () => { link.setView('rules') },
+    /**
+     * 执行流程图的定义。
+     *
+     * 与编排页同一份数据（同一个 `triage`），所以实例里点亮的那张图，就是用户
+     * 在规则页改的那张；两处各自读一遍会读到不同版本。
+     */
+    flow: async () => {
+      const [graph, nodeTypes] = await Promise.all([triage.flow(), triage.nodeTypes()])
+      return { flows: graph.flows, nodeTypes, ...(graph.error === undefined ? {} : { error: graph.error }) }
+    },
+    canJumpTo: (target) => registry.findTaskOpener(target) !== undefined,
+    /** 切到认领它的面板，再让它自己定位那条记录（邮件面板按 `mail:...` 找那封信）。 */
+    jumpTo: (target) => {
+      const panel = registry.findTaskOpener(target)
+      if (panel === undefined) return { ok: false, message: '没有插件能打开这条记录' }
+      const opened = openPanel({
+        id: panel.id,
+        title: panel.descriptor.title(),
+        order: panel.descriptor.order ?? 0,
+        pinned: false,
+      })
+      if (!opened.ok) return opened
+      panel.descriptor.openTask?.(target)
+      return { ok: true }
+    },
   }
 
   const views = {

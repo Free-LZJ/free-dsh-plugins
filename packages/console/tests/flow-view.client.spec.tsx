@@ -100,6 +100,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
     flow: async () => ({ flows: [EVENT_FLOW, SUB_FLOW] }),
     nodeTypes: async () => TYPES,
     saveFlowNode: async () => ({ ok: true }),
+    saveFlowParams: async () => ({ ok: true }),
     addFlowNode: async () => ({ ok: true, nodeId: 'call-a' }),
     addFlowScaffold: async () => ({ ok: true }),
     scaffoldFlows: async () => ({ ok: true }),
@@ -211,9 +212,43 @@ describe('属性面板', () => {
     })
     await draw(engine({ runs: async () => [failed] }).source)
     pick('call-a')
-    await waitFor(() => { expect(screen.getByText(/上次跑：失败/)).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText(/第 1 次：失败/)).toBeTruthy() })
     expect(screen.getByText('第 2 步挂了')).toBeTruthy()
     expect(screen.getByText('上游（谁连到它）')).toBeTruthy()
+  })
+
+  it('正在跑的那一格在画布上是 running，不是还没跑', async () => {
+    // progress.running 是执行器在把节点交出去之后、还没拿回结果时写的：
+    // 这一格记录还没落盘，只能从进度里看出来。
+    const live = run({
+      id: 'run-live',
+      flows: ['mail-new'],
+      status: 'running',
+      progress: { done: ['trigger'], satisfied: ['trigger'], ready: [], running: ['route'] },
+      nodes: [{ nodeId: 'trigger', flowId: 'mail-new', kind: 'trigger', ok: true, detail: '收到' }],
+    })
+    await draw(engine({ runs: async () => [live] }).source)
+    const card = document.querySelector('.react-flow__node[data-id="route"] .dsh-flow-card')
+    await waitFor(() => { expect(card?.getAttribute('data-state')).toBe('running') })
+  })
+
+  it('循环跑过的节点把每一次都列出来，产出折在里面', async () => {
+    const looped = run({
+      id: 'run-loop',
+      at: '2026-11-17T10:00:00.000Z',
+      flows: ['mail-new'],
+      nodes: [
+        { nodeId: 'call-a', flowId: 'mail-new', kind: 'workflow', ok: true, detail: '第一次', at: '2026-11-17T10:00:00.000Z', sessionId: 'sess-1', data: { steps: ['标了'] } },
+        { nodeId: 'call-a', flowId: 'mail-new', kind: 'workflow', ok: false, detail: '第二次', failure: 'transient', at: '2026-11-17T10:00:02.000Z' },
+      ],
+    })
+    await draw(engine({ runs: async () => [looped] }).source)
+    pick('call-a')
+    await waitFor(() => { expect(screen.getByText(/这一轮跑过 2 次/)).toBeTruthy() })
+    expect(screen.getByText('第一次')).toBeTruthy()
+    expect(screen.getByText('第二次')).toBeTruthy()
+    expect(screen.getByText(/耗时 2\.0s/)).toBeTruthy()
+    expect(screen.getByText('产出')).toBeTruthy()
   })
 
   it('入口节点没有上游是正常的，不说成孤岛', async () => {
@@ -490,7 +525,9 @@ describe('新建', () => {
     )
     fireEvent.change(addSelect as HTMLSelectElement, { target: { value: 'markRead' } })
     await waitFor(() => { expect(addedNodes).toHaveLength(1) })
-    await waitFor(() => { expect(screen.getByText(/workflow · control/)).toBeTruthy() })
+    // 面板第二行现在是人话：分组 + 类型中文名（英文 type）+ id。
+    await waitFor(() => { expect(screen.getByText(/控制 · 工作流/)).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText(/id call-a/)).toBeTruthy() })
   })
 })
 

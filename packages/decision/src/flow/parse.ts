@@ -21,7 +21,7 @@ import { isRecord, text, type RuleVocabulary } from '../config.ts'
 import type { ActionSpecLike, ConditionSpecLike } from '../registry.ts'
 import type { RuleFileError } from '../types.ts'
 import type { FlowNodeRegistry } from './registry.ts'
-import type { Flow, FlowEdgeSpec, FlowNodeSpec } from './types.ts'
+import type { Flow, FlowEdgeSpec, FlowNodeSpec, FlowParamSpec, NodeInputs, NodeOutputDecl } from './types.ts'
 
 /** 解析结果。 */
 export interface ParsedFlows {
@@ -236,14 +236,42 @@ function readFlow(
   // `trigger` 只出现在事件流文件里；子工作流没有它，靠 workflow 节点被调用。
   const trigger = text(raw['trigger'])
   const description = text(raw['description'])
+  const params = readParams(raw['params'], id, dropped)
   return {
     id,
     name: text(raw['name']) ?? id,
     connector,
     ...(trigger === undefined ? {} : { trigger }),
     ...(description === undefined ? {} : { description }),
+    ...(params === undefined ? {} : { params }),
     nodes,
   }
+}
+
+/** 读流程级常量；写歪的单条丢掉，不因此拒绝整张图。 */
+function readParams(raw: unknown, flowId: string, dropped: string[]): readonly FlowParamSpec[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const params: FlowParamSpec[] = []
+  for (const [index, item] of raw.entries()) {
+    if (!isRecord(item)) {
+      dropped.push(`流程「${flowId}」第 ${String(index + 1)} 条流程常量不是对象，已跳过`)
+      continue
+    }
+    const name = text(item['name'])
+    if (name === undefined) {
+      dropped.push(`流程「${flowId}」第 ${String(index + 1)} 条流程常量缺 name，已跳过`)
+      continue
+    }
+    const label = text(item['label'])
+    const value = item['default']
+    params.push({
+      name,
+      ...(label === undefined ? {} : { label }),
+      ...(item['required'] === true ? { required: true } : {}),
+      ...(typeof value === 'string' ? { default: value } : {}),
+    })
+  }
+  return params.length === 0 ? undefined : params
 }
 function readNode(
   raw: unknown,
@@ -288,11 +316,15 @@ function readNode(
   const runner = text(raw['runner'])
   const label = text(raw['label'])
   const desc = text(raw['desc'])
+  const inputs = readInputs(raw['inputs'], id)
+  const outputs = readOutputs(raw['outputs'], id)
 
   return {
     id,
     type,
     ...(isRecord(raw['config']) ? { config: raw['config'] } : {}),
+    ...(inputs === undefined ? {} : { inputs }),
+    ...(outputs === undefined ? {} : { outputs }),
     ...(out === undefined ? {} : { out }),
     ...(runner === undefined ? {} : { runner }),
     ...(pos === undefined ? {} : { pos }),
@@ -301,6 +333,33 @@ function readNode(
     ...(desc === undefined ? {} : { desc }),
     ...(body === undefined ? {} : { body }),
   }
+}
+
+/** 读入参表；不是对象就当没写（保存时会报，加载时不拦）。 */
+function readInputs(raw: unknown, _nodeId: string): NodeInputs | undefined {
+  if (!isRecord(raw)) return undefined
+  const inputs: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'string') inputs[key] = value
+  }
+  return Object.keys(inputs).length === 0 ? undefined : inputs
+}
+
+/** 读出参表；同上的宽松策略。 */
+function readOutputs(raw: unknown, _nodeId: string): Readonly<Record<string, NodeOutputDecl>> | undefined {
+  if (!isRecord(raw)) return undefined
+  const outputs: Record<string, NodeOutputDecl> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (isRecord(value)) {
+      outputs[key] = {
+        ...(value['persist'] === false ? { persist: false } : {}),
+        ...(typeof value['label'] === 'string' ? { label: value['label'] } : {}),
+      }
+    } else if (value === null || value === true) {
+      outputs[key] = {}
+    }
+  }
+  return Object.keys(outputs).length === 0 ? undefined : outputs
 }
 
 /**

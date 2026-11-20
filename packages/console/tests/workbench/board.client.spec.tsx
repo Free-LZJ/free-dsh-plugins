@@ -83,7 +83,11 @@ function face(overrides: Partial<BoardFace> = {}): BoardFace {
     rhythmMs: () => 0,
     undo: async () => ({ ok: true }),
     acknowledge: async () => ({ ok: true }),
+    retry: async () => ({ ok: true }),
     openRules: () => {},
+    flow: async () => ({ flows: [], nodeTypes: [] }),
+    canJumpTo: () => false,
+    jumpTo: () => ({ ok: false }),
     ...overrides,
   }
 }
@@ -282,6 +286,46 @@ describe('看板画出来', () => {
     await waitFor(() => { expect(screen.getByText('忽略')).toBeTruthy() })
     fireEvent.click(screen.getByText('忽略'))
     await waitFor(() => { expect(reloaded).toBeGreaterThan(0) })
+  })
+
+
+  it('跑到哪一格就点亮哪一格，下一步也标出来', async () => {
+    const now = Date.now()
+    const at = new Date(now).toISOString()
+    // 正在跑的那一格还没有记录（执行器只在跑完时落一条），所以它只能来自进度。
+    const one = task({
+      id: 't1',
+      at,
+      updatedAt: at,
+      status: 'running',
+      progress: { done: [], satisfied: [], ready: ['call-jira'], running: ['route'] },
+    })
+    render(<BoardView face={face()} t={t} data={{ tasks: buildTasks([one], new Set(), 60_000, now, t), loaded: true, error: '' }} />)
+    // 「进行中」列的说明文字也叫「正在跑」，所以按 class 找链路里的标记。
+    await waitFor(() => { expect(document.querySelectorAll('.dshc-chain-mark').length).toBe(2) })
+    const marks = Array.from(document.querySelectorAll('.dshc-chain-mark'), el => el.textContent)
+    expect(marks).toEqual(['正在跑', '下一步'])
+    expect(screen.getByText('route')).toBeTruthy()
+    expect(screen.getByText('call-jira')).toBeTruthy()
+  })
+
+  it('点开一步能看到这一步跑了多久、产出了什么', async () => {
+    const now = Date.now()
+    const at = new Date(now).toISOString()
+    const later = new Date(now + 2000).toISOString()
+    const one = task({
+      id: 't1',
+      at,
+      updatedAt: at,
+      nodes: [
+        { id: 'n1', kind: 'http', at, ok: true, detail: '调了接口', data: { status: 200 } },
+        { id: 'n2', kind: 'end', at: later, ok: true, detail: '结束' },
+      ],
+    })
+    render(<BoardView face={face()} t={t} data={{ tasks: buildTasks([one], new Set(), 60_000, now, t), loaded: true, error: '' }} />)
+    fireEvent.click(screen.getByLabelText('EXEPD-1 崩了'))
+    await waitFor(() => { expect(screen.getByText('耗时 2.0s')).toBeTruthy() })
+    expect(document.querySelector('.dshc-chain-data')?.textContent).toContain('\"status\": 200')
   })
 
   it('没有任务时只说一句话，不画三个空框', () => {

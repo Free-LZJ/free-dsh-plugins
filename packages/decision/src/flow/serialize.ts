@@ -31,6 +31,7 @@ export function stringifyFlowFile(flows: readonly Flow[], options: SerializeOpti
       name: flow.name,
       ...(flow.description === undefined ? {} : { description: flow.description }),
       connector: flow.connector,
+      ...(flow.params === undefined || flow.params.length === 0 ? {} : { params: flow.params }),
       nodes: flow.nodes.map(serializeNode),
     })),
   })
@@ -57,6 +58,7 @@ export function stringifyFlowDocument(flow: Flow, options: { readonly header?: s
     name: flow.name,
     ...(flow.description === undefined ? {} : { description: flow.description }),
     connector: flow.connector,
+    ...(flow.params === undefined || flow.params.length === 0 ? {} : { params: flow.params }),
     nodes: flow.nodes.map(serializeNode),
   })
   doc.contents = doc.createNode(doc.toJS())
@@ -79,6 +81,8 @@ function serializeNode(node: FlowNodeSpec): Record<string, unknown> {
     ...(node.label === undefined ? {} : { label: node.label }),
     ...(node.desc === undefined ? {} : { desc: node.desc }),
     ...(node.config === undefined || Object.keys(node.config).length === 0 ? {} : { config: node.config }),
+    ...(node.inputs === undefined || Object.keys(node.inputs).length === 0 ? {} : { inputs: node.inputs }),
+    ...(node.outputs === undefined || Object.keys(node.outputs).length === 0 ? {} : { outputs: node.outputs }),
     ...(node.runner === undefined ? {} : { runner: node.runner }),
     ...(node.enabled === false ? { enabled: false } : {}),
     ...(node.pos === undefined ? {} : { pos: node.pos }),

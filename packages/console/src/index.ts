@@ -152,10 +152,13 @@ export function apply(ctx: Context, config: Config): void {
       const state = decision.view()
       return { tasks: state.tasks, connectors: state.connectors, revision: state.revision }
     },
+    // 引擎每走一步都会 bump：看板靠这条信号把「五秒后看到」变成「当场看到」。
+    subscribe: (listener) => decision.subscribe(() => { listener() }),
     running: () => host.state().running,
     rhythm: () => host.state().archiveRhythm,
     undo: async (taskId) => await decision.undo(taskId),
     acknowledge: async (taskId, acknowledged) => await decision.acknowledge(taskId, acknowledged),
+    retry: async (taskId) => await decision.retry(taskId),
     applyDeferred: async (deferredId) => await decision.applyDeferred(deferredId),
     setConnector: async (id, enabled) => await decision.setConnectorEnabled(id, enabled),
   })

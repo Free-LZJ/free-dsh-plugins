@@ -40,6 +40,16 @@ const holdNode: FlowNode = {
   },
 }
 
+/** 一个「跑完留下产出与会话」的节点：用来验子流程里的记录也带得上这两样。 */
+const produceNode: FlowNode = {
+  type: 'produce',
+  label: '产出',
+  group: 'action',
+  async run() {
+    return { ok: true, detail: '生产完了', sessionId: 'session-x', output: { status: 200 } }
+  },
+}
+
 /** 一台假连接器；`probeWait` 由测试决定什么时候说「好了」。 */
 function connector(state: { ready: boolean; probed: string[] }): TaskConnector {
   return {
@@ -57,7 +67,7 @@ function connector(state: { ready: boolean; probed: string[] }): TaskConnector {
       },
     }],
     actions: [],
-    nodes: [holdNode],
+    nodes: [holdNode, produceNode],
     async probeWait(wait) {
       state.probed.push(wait.token)
       return wait.token.startsWith('probe:') ? { ready: state.ready, payload: { answer: '探针' } } : undefined
@@ -219,6 +229,41 @@ describe('挂起与唤醒（引擎层）', () => {
     const task = engine.view().tasks[0]
     expect(task?.status).toBe('done')
     expect(task?.nodes.some(node => node.detail === '拿到 子图收到')).toBe(true)
+    engine.stop()
+  })
+
+  it('子流程里的那一格也带着产出与会话落盘——摊进同一张图后要能点开', async () => {
+    const event = [
+      'id: a',
+      'trigger: fake:a',
+      'connector: fake',
+      'nodes:',
+      '  - id: call',
+      '    type: workflow',
+      '    config: { workflow: w2 }',
+      '  - id: end',
+      '    type: end',
+      '',
+    ].join('\n')
+    const workflow = [
+      'id: w2',
+      'name: 会产出的子流程',
+      'connector: fake',
+      'nodes:',
+      '  - id: sub-produce',
+      '    type: produce',
+      '',
+    ].join('\n')
+    const { engine } = await boot({ event, workflows: { 'w2.yml': workflow } })
+    await suspendOnce(engine)
+    const task = engine.view().tasks[0]
+    expect(task?.status).toBe('done')
+    const record = task?.nodes.find(node => node.nodeId === 'sub-produce')
+    // 属于哪张图：看板靠它把这一格画进子流程那一块
+    expect(record?.flowId).toContain('w2')
+    // 产出与会话：点开这格时显示的正是这两样
+    expect(record?.sessionId).toBe('session-x')
+    expect(record?.data).toEqual({ status: 200 })
     engine.stop()
   })
 })

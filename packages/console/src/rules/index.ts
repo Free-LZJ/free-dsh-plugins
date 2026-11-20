@@ -21,13 +21,15 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { Task, TaskEngine } from '@free-lzj/dsh-decision'
-import { isMutationRequest, isSameOrigin, readJsonBody, respond } from '../routes.ts'
+import { HEARTBEAT_MS, isMutationRequest, isSameOrigin, readJsonBody, respond } from '../routes.ts'
 import { STATE_DIR } from '../store.ts'
 import {
   RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_PRIORITY_PATH, RULES_FLOW_PATH,
   RULES_FLOW_SAVE_PATH,
+  RULES_FLOW_PARAMS_PATH,
   RULES_FLOW_LAYOUT_PATH,
   RULES_FLOW_NODE_PATH,
+  RULES_EVENTS_PATH,
   RULES_NODE_TYPES_PATH,
   RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
@@ -54,7 +56,9 @@ export function rulesHome(dshHome: string): string {
 export type RulesEngine = Pick<
   TaskEngine,
   | 'rules' | 'setEnabled' | 'setConditionValues' | 'movePriority' | 'listRuns' | 'undo' | 'acknowledge' | 'test'
-  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'moveFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'addRule' | 'autoLayout' | 'addFlowScaffold' | 'scaffoldFlows' | 'addWorkflow'
+  | 'flowView' | 'nodeTypes' | 'saveFlowNode' | 'saveFlowParams' | 'addFlowNode' | 'removeFlowNode' | 'relinkFlowEdge' | 'moveFlowEdge' | 'addFlowEdge' | 'saveFlowEdge' | 'addRule' | 'autoLayout' | 'addFlowScaffold' | 'scaffoldFlows' | 'addWorkflow'
+  // 画布要实时，靠这里订阅；路由本身不挑内容，只推「变了」。
+  | 'subscribe'
 >
 
 /** Everything the routes need from the plugin, injected so this module stays about HTTP. */
@@ -194,17 +198,44 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       const y = isObject(rawPos) ? rawPos['y'] : undefined
       const label = record['label']
       const enabled = record['enabled']
+      // 入参/出参是对象表；给 `{}` 表示清空（引擎会把空表当成删除这一行）。
+      const inputs = record['inputs']
+      const outputs = record['outputs']
       return {
         ok: true,
         command: engine => engine.saveFlowNode({
           nodeId,
           ...(flowId === undefined ? {} : { flowId }),
           ...(isObject(config) ? { config } : {}),
+          ...(isObject(inputs) ? { inputs: inputs as Record<string, string> } : {}),
+          ...(isObject(outputs) ? { outputs: outputs as Record<string, { persist?: boolean; label?: string }> } : {}),
           ...(typeof x === 'number' && typeof y === 'number' ? { pos: { x, y } } : {}),
           ...(typeof label === 'string' ? { label } : {}),
           ...(typeof enabled === 'boolean' ? { enabled } : {}),
         }),
       }
+    })
+
+    registerWrite(RULES_FLOW_PARAMS_PATH, 'saving a flow\'s params', (body) => {
+      const flowId = textOf(body, 'flowId')
+      if (flowId === undefined) return { ok: false, error: 'flowId must not be empty' }
+      const record = isObject(body) ? body : {}
+      const raw = record['params']
+      if (!Array.isArray(raw)) return { ok: false, error: 'params must be an array' }
+      const params = raw.flatMap(item => {
+        if (!isObject(item)) return []
+        const name = textOf(item, 'name')
+        if (name === undefined) return []
+        const label = textOf(item, 'label')
+        const value = item['default']
+        return [{
+          name,
+          ...(label === undefined ? {} : { label }),
+          ...(item['required'] === true ? { required: true } : {}),
+          ...(typeof value === 'string' ? { default: value } : {}),
+        }]
+      })
+      return { ok: true, command: engine => engine.saveFlowParams({ flowId, params }) }
     })
 
     // 增删节点与改边指向。插入时新节点接管前一步的出路，删除时入边接到出边——
@@ -358,6 +389,40 @@ export function registerRulesRoutes(ctx: Context, host: RulesRouteHost): void {
       respond(res, 200, { runs: host.engine.listRuns(since ?? undefined).map(toRunView) })
     }, 'reading hit records'), 'console.rules-runs-route')
 
+    // 执行中的推送：节点开跑 / 跑完都会让引擎 bump 一次，这里把它压成一条信号。
+    // 推裸信号而不是记录本身——记录怎么筛由 /runs 那一次读统一决定，不必在这里猜。
+    register(RULES_EVENTS_PATH, guard((req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      })
+      res.write(': rules stream\n\n')
+      // 一格跑完会连着 bump 好几次；并成一次，页面不必为每一格重画一遍画布。
+      let pending: ReturnType<typeof setTimeout> | undefined
+      const flush = (): void => {
+        pending = undefined
+        if (!res.writableEnded) res.write('event: runs\ndata: {}\n\n')
+      }
+      const unsubscribe = host.engine.subscribe(() => {
+        if (pending !== undefined) return
+        pending = setTimeout(flush, 200)
+        pending.unref?.()
+      })
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) res.write(': ping\n\n')
+      }, HEARTBEAT_MS)
+      heartbeat.unref?.()
+      const finish = (): void => {
+        clearInterval(heartbeat)
+        if (pending !== undefined) clearTimeout(pending)
+        unsubscribe()
+      }
+      req.on('close', finish)
+      res.on('close', finish)
+    }, 'streaming rule runs'), 'console.rules-events-route')
+
     registerWrite(RULES_ENABLE_PATH, 'switching a rule', (body) => {
       const ruleId = textOf(body, 'ruleId')
       if (ruleId === undefined) return { ok: false, error: 'ruleId must not be empty' }
@@ -487,9 +552,13 @@ function toRunView(task: Task): Record<string, unknown> {
       ...(node.nodeId === undefined ? {} : { nodeId: node.nodeId }),
       ...(node.flowId === undefined ? {} : { flowId: node.flowId }),
       kind: node.kind,
+      at: node.at,
       ok: node.ok,
       detail: node.detail,
       ...(node.failure === undefined ? {} : { failure: node.failure }),
+      ...(node.sessionId === undefined ? {} : { sessionId: node.sessionId }),
+      // 点开节点要看的「这一步算出了什么」；与落盘的那一份是同一个对象。
+      ...(node.data === undefined ? {} : { data: node.data }),
     })),
     /**
      * 这条执行**走过哪几张图**。
@@ -500,6 +569,8 @@ function toRunView(task: Task): Record<string, unknown> {
      */
     flows: [...new Set(task.nodes.map(node => node.flowId).filter((id): id is string => id !== undefined))],
     status: task.status,
+    // 跑到哪了：画布靠 running 点亮正在跑的方块，靠 ready 知道下一步是谁。
+    ...(task.progress === undefined ? {} : { progress: task.progress }),
     ...(task.undoableUntil === undefined ? {} : { undoableUntil: task.undoableUntil }),
     ...(task.acknowledged === true ? { acknowledged: true } : {}),
   }

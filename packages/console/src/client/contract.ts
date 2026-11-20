@@ -19,6 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { PropsRuntime, SlotComponent } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ComponentType, ReactNode } from 'react'
+import type { TaskJump } from '../protocol.ts'
 
 /**
  * Name of the client service the workbench shell provides.
@@ -68,6 +69,18 @@ export interface ConsolePanelDescriptor {
   readonly render: SlotComponent<'main'>
   /** Glyph rendered on the home card; the workbench falls back to a letter. */
   readonly icon?: ReactNode
+  /**
+   * 这个面板能不能接手一条任务（「打开这封邮件」）。
+   *
+   * 缺省不接手：只有真正知道自己该拿什么的面板才回答 true。
+   */
+  readonly acceptsTask?: (task: TaskJump) => boolean
+  /**
+   * 接手：工作台已经切到这个面板，它自己按身份定位。
+   *
+   * 此刻面板可能刚挂载，定位要等自己的数据到位。
+   */
+  readonly openTask?: (task: TaskJump) => void
 }
 
 /**

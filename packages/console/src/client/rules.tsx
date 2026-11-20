@@ -108,13 +108,32 @@ export interface TriageRun {
     /** 这一格在哪张图里跑的。 */
     readonly flowId?: string
     readonly kind: string
+    /** 落盘时刻。同一节点跑多次时，相邻两条相减就是这一格花的时间。 */
+    readonly at?: string
     readonly ok: boolean
     readonly detail: string
     readonly failure?: string
+    /** 这一格派出去的会话；有它才能从节点直接跳到那段对话。 */
+    readonly sessionId?: string
+    /** 这一格算出了什么（产出整体落盘），点开节点看的就是它。 */
+    readonly data?: Readonly<Record<string, unknown>>
   }[]
   /** 这条执行走过哪几张图（事件流 + 被它调用的子工作流）。 */
   readonly flows?: readonly string[]
   readonly status: string
+  /**
+   * 跑到哪了。
+   *
+   * `running` 是「已经交给节点、还没返回」的那一批：`done` 只在节点返回后更新，
+   * 光看它分不出「在跑」和「刚排上队」。画布靠这一栏点亮正在跑的方块。
+   */
+  readonly progress?: {
+    readonly done: readonly string[]
+    readonly satisfied: readonly string[]
+    readonly ready: readonly string[]
+    readonly running?: readonly string[]
+    readonly suspendedAt?: string
+  }
   readonly undoableUntil?: string
   /** 人已经说过「这条我看到了」：它不再占待办。 */
   readonly acknowledged?: boolean
@@ -170,6 +189,10 @@ export interface TriageFlowNode {
   /** 第二行说明；缺省用被调用工作流的 `description`。 */
   readonly desc?: string
   readonly config?: Readonly<Record<string, unknown>>
+  /** 入参：键 → 引用表达式（event.x / flow.x / 节点id.x）。 */
+  readonly inputs?: Readonly<Record<string, string>>
+  /** 出参：键 → 声明。 */
+  readonly outputs?: Readonly<Record<string, { readonly persist?: boolean; readonly label?: string }>>
   readonly out?: readonly {
     readonly to: string
     readonly when?: readonly Readonly<Record<string, unknown>>[]
@@ -188,7 +211,17 @@ export interface TriageFlow {
   readonly connector: string
   /** 归属的事件触发器；子工作流没有这个字段。 */
   readonly trigger?: string
+  /** 流程级常量 / 入参。 */
+  readonly params?: readonly TriageFlowParam[]
   readonly nodes: readonly TriageFlowNode[]
+}
+
+/** 一条流程常量 / 入参声明。 */
+export interface TriageFlowParam {
+  readonly name: string
+  readonly label?: string
+  readonly required?: boolean
+  readonly default?: string
 }
 
 /** 一种节点的配置字段声明。 */
@@ -200,6 +233,8 @@ export interface TriageFieldSpec {
   readonly options?: readonly { readonly value: string; readonly label: string }[]
   readonly placeholder?: string
   readonly hint?: string
+  /** 该字段支持 `{变量}`；面板据此列出本节点入参键。 */
+  readonly template?: boolean
 }
 
 /** 一种节点：能放什么、要填什么。 */
@@ -218,6 +253,8 @@ export interface TriageFlowPatch {
   /** 这个节点在哪张图里；	rigger 这类 id 每张图都有，缺了就写错文件。 */
   readonly flowId?: string | undefined
   readonly config?: Readonly<Record<string, unknown>>
+  readonly inputs?: Readonly<Record<string, string>>
+  readonly outputs?: Readonly<Record<string, { readonly persist?: boolean; readonly label?: string }>>
   readonly pos?: { readonly x: number; readonly y: number }
   readonly label?: string
   readonly enabled?: boolean
@@ -233,6 +270,8 @@ export interface TriageSource {
   nodeTypes(): Promise<readonly TriageNodeType[]>
   /** 改一个节点；只写这一处。 */
   saveFlowNode(patch: TriageFlowPatch): Promise<TriageResult>
+  /** 改一张图的流程级常量。 */
+  saveFlowParams(input: { flowId: string; params: readonly TriageFlowParam[] }): Promise<TriageResult>
   /** 重新自动布局：换方向、换策略，位置写回文件。 */
   /** 自动布局：顺手把新坐标带回来，画布不必等下一次整图重读。 */
   autoLayout(input: { flowId: string; direction?: string; strategy?: string; align?: string }): Promise<
@@ -351,6 +390,7 @@ export function createTriageSource(): TriageSource {
     ),
     nodeTypes: async () => (await read<{ types: readonly TriageNodeType[] }>('/node-types')).types,
     saveFlowNode: async (patch) => await write('/flow/save', patch),
+    saveFlowParams: async (input) => await write('/flow/params', input),
     autoLayout: async (input) => await write('/flow/layout', input),
     addFlowNode: async (input) => await write('/flow/node', { action: 'add', ...input }),
     createFlow: async (name, connector) =>
@@ -530,9 +570,12 @@ export function conditionValue(condition: TriageCondition): string {
  * @param props.triage - the engine, as the plugin injected it.
  * @returns the view.
  */
-export function RulesView({ t, triage }: {
+export function RulesView({ t, triage, openSession, canOpenSession }: {
   readonly t: Translate
   readonly triage: TriageSource
+  /** 打开一条会话：节点详情里「这一步派了谁去干」要能跳过去。 */
+  readonly openSession?: (sessionId: string) => { readonly ok: boolean; readonly message?: string }
+  readonly canOpenSession?: () => boolean
 }): ReactNode {
   const [data, setData] = useState<TriageSnapshot | undefined>(undefined)
   /** Why the engine is not answering, or empty. */
@@ -600,7 +643,14 @@ export function RulesView({ t, triage }: {
           : view === 'flow'
             // 编排视图自己读图，因为图与列表是同一份文件的两种读法；
             // 没有连接器时它也照样能显示（文件里可能已经有 v2 的图）。
-            ? <FlowView t={t as never} triage={triage} />
+            ? (
+              <FlowView
+                t={t as never}
+                triage={triage}
+                {...(openSession === undefined ? {} : { openSession })}
+                {...(canOpenSession === undefined ? {} : { canOpenSession })}
+              />
+            )
             : data.rules.connector
               ? <TriageBody t={t} data={data} triage={triage} act={act} />
               // 没有连接器不是「装错了」：规则引擎在，只是还没有谁把事件喂给它。

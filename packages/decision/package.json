@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-decision",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Source-agnostic decision core: a rule file, condition/action registries, hit records and the undo window — a library the connector plugins build on, not a plugin itself",
   "repository": {
     "type": "git",

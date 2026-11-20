@@ -17,7 +17,9 @@ import type { Task } from '@free-lzj/dsh-decision'
 import { registerRulesRoutes, type RulesEngine, type RulesRouteHost } from '../src/rules/index.ts'
 import {
   RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
-  RULES_FLOW_LAYOUT_PATH, RULES_FLOW_NODE_PATH, RULES_NODE_TYPES_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
+  RULES_FLOW_LAYOUT_PATH, RULES_FLOW_NODE_PATH, RULES_FLOW_PARAMS_PATH, RULES_NODE_TYPES_PATH, RULES_PRIORITY_PATH,
+  RULES_EVENTS_PATH,
+  RULES_RUNS_PATH,
   RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
 } from '../src/paths.ts'
 
@@ -43,6 +45,11 @@ class RecordedResponse extends Writable {
   override _write(chunk: Buffer | string, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
     this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     callback()
+  }
+
+  /** Everything written so far, as text (event streams have no JSON shape). */
+  get text(): string {
+    return Buffer.concat(this.chunks).toString('utf8')
   }
 
   /** Everything written so far, parsed as JSON. */
@@ -74,6 +81,7 @@ interface Engaged {
   readonly undo: string[]
   readonly acked: { runId: string; acknowledged: boolean }[]
   readonly flowSaves: { nodeId: string }[]
+  readonly flowParams: { flowId: string; params: readonly { name: string }[] }[]
   readonly addedNodes: { type: string; after?: string; flowId?: string }[]
   readonly addedRules: { flowId: string; from: string; name: string; when?: readonly Readonly<Record<string, unknown>>[] }[]
   readonly tests: { accountId: string; folder: string; uid: number }[]
@@ -126,7 +134,7 @@ function taskFixture(): Task {
 function bench(overrides: Partial<RulesEngine> = {}): Bench {
   const routes = new Map<string, Handler>()
   const written: string[] = []
-  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [], flowSaves: [], addedNodes: [], addedRules: [] }
+  const engaged: Engaged = { enabled: [], conditions: [], priority: [], undo: [], acked: [], tests: [], since: [], flowSaves: [], flowParams: [], addedNodes: [], addedRules: [] }
   const engine: RulesEngine = {
     rules: () => VIEW,
     setEnabled: (ruleId, enabled) => {
@@ -162,6 +170,10 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
       engaged.flowSaves.push(input)
       return Promise.resolve({ ok: true })
     },
+    saveFlowParams: (input) => {
+      engaged.flowParams.push(input)
+      return Promise.resolve({ ok: true })
+    },
     addFlowNode: (input) => { engaged.addedNodes.push(input); return Promise.resolve({ ok: true }) },
     removeFlowNode: () => Promise.resolve({ ok: true }),
     relinkFlowEdge: () => Promise.resolve({ ok: true }),
@@ -174,6 +186,7 @@ function bench(overrides: Partial<RulesEngine> = {}): Bench {
     addWorkflow: async () => ({ ok: true, flowId: 'flow-1' }),
     autoLayout: () => Promise.resolve({ ok: true }),
     nodeTypes: () => [],
+    subscribe: () => () => {},
     ...overrides,
   }
   const host: RulesRouteHost = { engine }
@@ -223,11 +236,33 @@ describe('the rule engine’s routes', () => {
   it('mounts every path the page speaks to', () => {
     const { routes } = bench()
     expect([...routes.keys()].sort()).toEqual([
-      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
-      RULES_FLOW_LAYOUT_PATH, RULES_FLOW_NODE_PATH,
+      RULES_ACK_PATH, RULES_CONDITION_PATH, RULES_ENABLE_PATH, RULES_EVENTS_PATH, RULES_FLOW_PATH, RULES_FLOW_SAVE_PATH,
+      RULES_FLOW_LAYOUT_PATH, RULES_FLOW_NODE_PATH, RULES_FLOW_PARAMS_PATH,
       RULES_NODE_TYPES_PATH, RULES_PRIORITY_PATH, RULES_RUNS_PATH,
       RULES_STATE_PATH, RULES_TEST_PATH, RULES_UNDO_PATH,
     ].sort())
+  })
+
+  it('pushes one bare signal per burst of engine movement', async () => {
+    // 画布靠这条流知道「有节点动了」：推的是空载荷，读什么由 /runs 决定。
+    // 一格跑完会连着 bump 好几次，所以这里数的是被并过的信号。
+    const listeners: (() => void)[] = []
+    const route = bench({
+      subscribe: (listener) => {
+        listeners.push(listener as unknown as () => void)
+        return () => {}
+      },
+    })
+    const res = await call(route, request({ url: RULES_EVENTS_PATH, headers: { 'sec-fetch-site': 'same-origin' } }))
+    expect(res.status).toBe(200)
+    expect(res.headers['content-type']).toContain('text/event-stream')
+    expect(res.text).toContain(': rules stream')
+    expect(listeners).toHaveLength(1)
+
+    listeners[0]!()
+    listeners[0]!()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(res.text.match(/event: runs/g)).toHaveLength(1)
   })
 
   it('answers the flow graph', async () => {

@@ -37,7 +37,47 @@ export interface Flow {
    * 的时候，十一个分支在图上仍然分不清谁是谁。
    */
   readonly description?: string
+  /**
+   * 流程级常量 / 入参的声明。
+   *
+   * 与 `start` 节点 `config.params` 合并成同一个 `flow.*` 命名空间：常量写默认值，
+   * 调用方传入的入参由 `start` 声明。节点引用一律写 `flow.<name>`。
+   */
+  readonly params?: readonly FlowParamSpec[]
   readonly nodes: readonly FlowNodeSpec[]
+}
+
+/**
+ * 流程级常量 / 入参的一条声明。
+ *
+ * `default` 是常量值；`required` 表示必须由调用方 `pass` 进来（子工作流入参）。
+ */
+export interface FlowParamSpec {
+  readonly name: string
+  readonly label?: string
+  readonly required?: boolean
+  readonly default?: string
+}
+
+/**
+ * 节点入参：键 → 引用表达式。
+ *
+ * 引用只有三种写法：
+ *
+ * - `event.<key>`：事件字段（由 `trigger` 节点的 `outputs` 声明）
+ * - `flow.<key>`：流程级常量 / 入参（由 `flow.params` 或 `start` 节点的 `config.params` 声明）
+ * - `<nodeId>.<key>`：某个**上游**节点的出参
+ *
+ * 键必须与引用末段同名（`subject: event.subject`）。这不是洁癖：执行期模板占位符
+ * 直接读 `vars[键]`，同名意味着声明不改变运行期行为，只把「用了什么」写下来。
+ */
+export type NodeInputs = Readonly<Record<string, string>>
+
+/** 节点出参的声明。 */
+export interface NodeOutputDecl {
+  /** 是否落盘。缺省 true（写 `vars`）；false 写 `memory`，挂起恢复后为空。 */
+  readonly persist?: boolean
+  readonly label?: string
 }
 
 /** 图上的一个节点。 */
@@ -47,6 +87,20 @@ export interface FlowNodeSpec {
   readonly type: string
   /** 节点配置；字段由节点类型的 `config` schema 声明。 */
   readonly config?: Readonly<Record<string, unknown>>
+  /**
+   * 本节点用到的入参：键 → 引用表达式。见 {@link NodeInputs}。
+   *
+   * `config` 里的每个 `{占位符}`、每条出边条件里的 `field` 都必须在这里声明，
+   * 保存时校验（`flow/check.ts`）。
+   */
+  readonly inputs?: NodeInputs
+  /**
+   * 本节点产出的变量：键 → 声明。
+   *
+   * 缺省取节点类型自己声明的 `outputs`；写在这里表示「这张图里它实际产出这些」，
+   * 下游节点的 `inputs` 只能引用这里（或类型声明）出现过的键。
+   */
+  readonly outputs?: Readonly<Record<string, NodeOutputDecl>>
   /** 出边。缺省 = 终止节点。 */
   readonly out?: readonly FlowEdgeSpec[]
   /**
@@ -371,6 +425,14 @@ export interface FlowProgress {
   readonly satisfied: readonly string[]
   /** 待执行队列（已就绪但还没跑的节点）。 */
   readonly ready: readonly string[]
+  /**
+   * 这一批正在跑的节点。
+   *
+   * 只在「已交给节点、节点还没返回」这段时间里有值：画布靠它点亮「正在进行」，
+   * 而 `done` 要等节点返回后才更新，光有 `ready` 看不出是「在跑」还是「刚排上队」。
+   * 崩溃重启时这一栏可能残留——那是上一轮没跑完的证据，续跑时会重新排进 `ready`。
+   */
+  readonly running?: readonly string[]
   /** 停在哪里；没有挂起时为 undefined。 */
   readonly suspendedAt?: string
   /** 在等什么；与 `suspendedAt` 同生同灭。 */

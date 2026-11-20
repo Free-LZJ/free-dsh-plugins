@@ -31,6 +31,14 @@ export const EVENTS_PATH = `${ROUTE_PREFIX}/events`
 /** The board's full state: cards, sessions, connectors, routing version. */
 export const WORKBENCH_STATE_PATH = `${ROUTE_PREFIX}/workbench/state`
 
+/**
+ * 看板的变化信号（SSE）。
+ *
+ * 裸信号：任务引擎每落一步就 bump 一次，页面收到就重读
+ * {@link WORKBENCH_STATE_PATH}——筛什么、谁能看，都由那一次读决定。
+ */
+export const WORKBENCH_EVENTS_PATH = `${ROUTE_PREFIX}/workbench/events`
+
 /** The board's inbound event entrance: connectors and the event simulator post here. */
 export const WORKBENCH_INGEST_PATH = `${ROUTE_PREFIX}/workbench/ingest`
 
@@ -51,6 +59,14 @@ export const RULES_STATE_PATH = `${RULES_PREFIX}/state`
 
 /** The hit records, newest first. */
 export const RULES_RUNS_PATH = `${RULES_PREFIX}/runs`
+
+/**
+ * The hit records as they change (SSE).
+ *
+ * A bare signal rather than the records themselves: the page answers it with one
+ * read of {@link RULES_RUNS_PATH}, which already decides what a reader may see.
+ */
+export const RULES_EVENTS_PATH = `${RULES_PREFIX}/events`
 
 /** Switch one rule on or off. */
 export const RULES_ENABLE_PATH = `${RULES_PREFIX}/enable`
@@ -83,8 +99,11 @@ export const RULES_TEST_PATH = `${RULES_PREFIX}/test`
  */
 export const RULES_FLOW_PATH = `${RULES_PREFIX}/flow`
 
-/** 改图上一个节点（配置 / 坐标 / 名字 / 启用）。只写这一处，不整图覆盖。 */
+/** 改图上一个节点（配置 / 坐标 / 名字 / 启用 / 入参 / 出参）。只写这一处，不整图覆盖。 */
 export const RULES_FLOW_SAVE_PATH = `${RULES_PREFIX}/flow/save`
+
+/** 改一张图的流程级常量（`flow.params`）。 */
+export const RULES_FLOW_PARAMS_PATH = `${RULES_PREFIX}/flow/params`
 
 
 /** 重新自动布局一张图：换方向、换策略，位置写回文件。 */

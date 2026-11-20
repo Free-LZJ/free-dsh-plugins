@@ -15,18 +15,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import {
   Background,
+  BaseEdge,
   Controls,
   Handle,
   MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getStraightPath,
   useEdgesState,
   useNodesState,
   useReactFlow,
 } from '@xyflow/react'
-import type { Connection, Edge, Node, NodeProps, NodeTypes } from '@xyflow/react'
+import type { Connection, Edge, EdgeProps, EdgeTypes, Node, NodeProps, NodeTypes } from '@xyflow/react'
 import { REACT_FLOW_CSS } from './flow-styles.ts'
+import { pathOf, routeEdges } from './flow-route.ts'
+import type { RoutePoint } from './flow-route.ts'
+import { useSurface } from './theme.ts'
+
+/** 一格（或一条线）此刻的处境。 */
+export type FlowState = 'ok' | 'failed' | 'suspended' | 'running' | 'next'
 
 /** 画布上的一格。 */
 export interface CanvasNode {
@@ -42,8 +50,12 @@ export interface CanvasNode {
   readonly x: number
   readonly y: number
   readonly enabled: boolean
-  /** 这一格最近一次执行的结果；没跑过就是 undefined。 */
-  readonly state?: 'ok' | 'failed' | 'suspended'
+  /**
+   * 这一格此刻的处境；没跑过、也不在本次路径上就是 undefined。
+   *
+   * `next` = 引擎已经排好、还没轮到它：看板上要能提前看出「下一步是这儿」。
+   */
+  readonly state?: FlowState
 }
 /** 一条连线。 */
 export interface CanvasEdge {
@@ -53,6 +65,8 @@ export interface CanvasEdge {
   /** 边上写的条件摘要；无条件为空。 */
   readonly label?: string
   readonly mode?: 'fork'
+  /** 这条边本次被走过了：整条路径发光，全靠它。 */
+  readonly state?: FlowState
 }
 
 /**
@@ -98,9 +112,11 @@ function lookOf(group: string, sideEffect: boolean): NodeLook {
 }
 
 /** 执行状态 → 小圆点的颜色。 */
-function stateColor(state: 'ok' | 'failed' | 'suspended'): string {
+function stateColor(state: FlowState): string {
   if (state === 'ok') return 'var(--dsw-alias-state-success-primary)'
   if (state === 'failed') return 'var(--dsw-alias-state-error-primary)'
+  if (state === 'running') return 'var(--dsw-alias-state-business-primary)'
+  if (state === 'next') return 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, transparent)'
   return 'var(--dsw-alias-state-warn-primary)'
 }
 
@@ -134,6 +150,72 @@ const CARD_CSS = `
 /* 贴着卡片内沿摆，才不会被 overflow 裁成半个月牙。 */
 .dsh-flow-card .react-flow__handle-top { top: 4px; transform: translate(-50%, 0); }
 .dsh-flow-card .react-flow__handle-bottom { bottom: 4px; transform: translate(-50%, 0); }
+/* 正在跑的方块呼吸：静态蓝点在一屏十几张卡里看不出「就是它还在动」。 */
+@keyframes dsh-flow-running {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(1.6); }
+}
+.dsh-flow-card[data-state="running"] .dsh-flow-dot {
+  animation: dsh-flow-running 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dsh-flow-card[data-state="running"] .dsh-flow-dot { animation: none; }
+}
+/* 走过的路径整条亮起来。这是这张图的主要读法：不是看单个绿点，而是看「从哪儿走到哪儿」。 */
+.dsh-flow-card { box-shadow: var(--dsw-elevation-soft); }
+.dsh-flow-card[data-selected="true"][data-state="none"] {
+  box-shadow: 0 0 0 1.5px var(--dsw-alias-state-business-primary);
+}
+.dsh-flow-card[data-state="ok"] { --dsh-glow: var(--dsw-alias-state-success-primary); }
+.dsh-flow-card[data-state="failed"] { --dsh-glow: var(--dsw-alias-state-error-primary); }
+.dsh-flow-card[data-state="running"] { --dsh-glow: var(--dsw-alias-state-business-primary); }
+.dsh-flow-card[data-state="suspended"] { --dsh-glow: var(--dsw-alias-state-warn-primary); }
+.dsh-flow-card[data-state="next"] { --dsh-glow: color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, transparent); }
+/* 深色背景吃**宽而柔的光晕**（大扩散、低透明度），浅色背景吃**紧描边 + 短投影**。
+   一套配方喂两个背景：深色上像块脏斑，浅色上根本看不见。 */
+.dsh-flow-surface[data-surface="dark"] .dsh-flow-card[data-state]:not([data-state="none"]) {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--dsh-glow) 58%, transparent),
+    0 0 26px 2px color-mix(in srgb, var(--dsh-glow) 30%, transparent);
+}
+.dsh-flow-surface[data-surface="light"] .dsh-flow-card[data-state]:not([data-state="none"]) {
+  box-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--dsh-glow) 72%, transparent),
+    0 8px 18px -8px color-mix(in srgb, var(--dsh-glow) 68%, transparent);
+}
+/* 「下一步」还只是个预告，别跟走过的格子一个亮度。 */
+.dsh-flow-surface[data-surface="dark"] .dsh-flow-card[data-state="next"] {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--dsh-glow) 40%, transparent);
+}
+.dsh-flow-surface[data-surface="light"] .dsh-flow-card[data-state="next"] {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--dsh-glow) 42%, transparent);
+}
+.dsh-flow-card[data-selected="true"] {
+  outline: 1.5px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 0;
+}
+/* 连线跟着走：走过的线段加一点外发光，深色背景才看得出来。 */
+.dsh-flow-surface[data-surface="dark"] .dsh-edge--ok .react-flow__edge-path,
+.dsh-flow-surface[data-surface="dark"] .dsh-edge--failed .react-flow__edge-path,
+.dsh-flow-surface[data-surface="dark"] .dsh-edge--running .react-flow__edge-path {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--dsh-glow) 60%, transparent));
+}
+.dsh-edge--ok { --dsh-glow: var(--dsw-alias-state-success-primary); }
+.dsh-edge--failed { --dsh-glow: var(--dsw-alias-state-error-primary); }
+.dsh-edge--running { --dsh-glow: var(--dsw-alias-state-business-primary); }
+/* 标签压在正交线上会盖住拐角，给个坐底。 */
+.dsh-flow-surface .react-flow__edge-textbg { fill: var(--dsw-alias-bg-layer-1); fill-opacity: 0.85; }
+.dsh-flow-surface .react-flow__edge-text { fill: var(--dsw-alias-label-tertiary); font-size: 10px; }
+/* 缩放条跟着背景走：库只在 .react-flow.dark 下换色，而我们靠 data-surface。 */
+.dsh-flow-surface[data-surface="dark"] .react-flow__controls-button {
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+  fill: var(--dsw-alias-label-secondary);
+}
+.dsh-flow-surface[data-surface="dark"] .react-flow__controls-button:hover {
+  background: var(--dsw-alias-bg-layer-3);
+}
 /* 鼠标在哪张卡上、或者正在拉线，端点就亮起来。 */
 .dsh-flow-card:hover .react-flow__handle,
 .dsh-flow-card:focus-within .react-flow__handle,
@@ -152,6 +234,7 @@ function FlowNodeCard({ data, selected }: NodeProps): ReactNode {
     <div
       className="dsh-flow-card"
       data-state={node.state ?? 'none'}
+      data-selected={selected === true ? 'true' : 'false'}
       style={{
         width: NODE_WIDTH,
         minHeight: NODE_HEIGHT,
@@ -164,9 +247,8 @@ function FlowNodeCard({ data, selected }: NodeProps): ReactNode {
         borderRadius: 'var(--dsw-radius-lg)',
         border: `0.5px solid ${look.border}`,
         background: look.background,
-        // 选中用内环而不是换描边颜色：颜色一变就分不清「选中」和「有副作用」。
-        // 未选中用层级阴影，跟着浅色/深色主题走，不用写死 rgba。
-        boxShadow: selected ? '0 0 0 1.5px var(--dsw-alias-state-business-primary)' : 'var(--dsw-elevation-soft)',
+        // 阴影（层级阴影 / 执行发光 / 选中环）全在 CARD_CSS 里按 data-* 选：
+        // 内联样式会盖掉样式表，而「走到哪」的发光必须能覆盖掉默认阴影。
         opacity: node.enabled ? 1 : 0.5,
         position: 'relative',
         overflow: 'hidden',
@@ -178,7 +260,11 @@ function FlowNodeCard({ data, selected }: NodeProps): ReactNode {
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
         {node.state === undefined ? null : (
-          <span style={{ width: 6, height: 6, borderRadius: 3, flex: 'none', background: stateColor(node.state) }} />
+          <span
+            className='dsh-flow-dot'
+            title={node.state === 'running' ? '正在跑' : node.state === 'next' ? '下一步' : undefined}
+            style={{ width: 6, height: 6, borderRadius: 3, flex: 'none', background: stateColor(node.state) }}
+          />
         )}
         <span style={{ fontSize: 13, lineHeight: '18px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
           {node.label}
@@ -202,6 +288,79 @@ function FlowNodeCard({ data, selected }: NodeProps): ReactNode {
 }
 
 const NODE_TYPES = { card: FlowNodeCard } as unknown as NodeTypes
+
+/** 按长度取折线中点：标签摆这儿，正好落在最长那段的中间，不压拐角。 */
+function midpointOf(points: readonly RoutePoint[]): { x: number; y: number } {
+  const head = points[0] as RoutePoint
+  const tail = points[points.length - 1] as RoutePoint
+  let total = 0
+  for (let index = 1; index < points.length; index += 1) {
+    const prev = points[index - 1] as RoutePoint
+    const point = points[index] as RoutePoint
+    total += Math.abs(point.x - prev.x) + Math.abs(point.y - prev.y)
+  }
+  let walked = 0
+  for (let index = 1; index < points.length; index += 1) {
+    const prev = points[index - 1] as RoutePoint
+    const point = points[index] as RoutePoint
+    const length = Math.abs(point.x - prev.x) + Math.abs(point.y - prev.y)
+    if (walked + length >= total / 2) {
+      const ratio = length === 0 ? 0 : (total / 2 - walked) / length
+      return { x: prev.x + (point.x - prev.x) * ratio, y: prev.y + (point.y - prev.y) * ratio }
+    }
+    walked += length
+  }
+  return { x: (head.x + tail.x) / 2, y: (head.y + tail.y) / 2 }
+}
+
+/**
+ * 连线本体：画 `routeEdges` 算出来的折线。
+ *
+ * 用 `BaseEdge` 而不是自己拼 `<path>`：标签、交互宽度、选中态都由库兜住；自己拼过一次，
+ * 结果连线上的条件文字全丢了。折线没用算出来（极端拥挤）才退回直线。
+ */
+function RoutedEdge(props: EdgeProps): ReactNode {
+  const points = ((props.data ?? {}) as { points?: readonly RoutePoint[] }).points ?? []
+  // 这个版本的 getStraightPath 返回元组 [path, labelX, labelY, offsetX, offsetY]。
+  const [straightPath, straightLabelX, straightLabelY] = getStraightPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    targetX: props.targetX,
+    targetY: props.targetY,
+  })
+  const path = points.length >= 2 ? pathOf(points) : straightPath
+  const mid = points.length >= 2 ? midpointOf(points) : { x: straightLabelX, y: straightLabelY }
+  return (
+    <BaseEdge
+      id={props.id}
+      path={path}
+      style={props.style}
+      label={props.label}
+      labelX={mid.x}
+      labelY={mid.y}
+      interactionWidth={16}
+    />
+  )
+}
+
+const EDGE_TYPES = { routed: RoutedEdge } as unknown as EdgeTypes
+
+/** 边的颜色：走过的线按结局上色，没走过的保持低调。 */
+function edgeStyle(state: FlowState | undefined, highlighted: boolean, dash: boolean): CSSProperties {
+  const width = highlighted || state === 'running' ? 2.2 : 1.6
+  const stroke = state === 'ok'
+    ? 'var(--dsw-alias-state-success-primary)'
+    : state === 'failed'
+      ? 'var(--dsw-alias-state-error-primary)'
+      : state === 'running' || highlighted
+        ? 'var(--dsw-alias-state-business-primary)'
+        : 'var(--dsw-alias-border-l3)'
+  return {
+    stroke,
+    strokeWidth: width,
+    ...(state === 'running' ? { strokeDasharray: '6 4' } : dash ? { strokeDasharray: '5 4' } : {}),
+  }
+}
 
 /** 画布的属性。 */
 export interface FlowCanvasProps {
@@ -237,6 +396,14 @@ export interface FlowCanvasProps {
    * 更是整张图跑到视口外面，等于点了没反应。
    */
   readonly fitToken?: string
+  /**
+   * 框选的可读下限（默认 `READABLE_ZOOM`）。
+   *
+   * 定义页要「缩到文字还认得出」，所以默认 0.7；看板的执行图是**看全貌**用的——
+   * 扁平图（主图 + 子流程）动辄 2900 宽，0.7 只用得上视口中间那一条，左右两侧
+   * 直接被切到负坐标去。那里传 `OVERVIEW_ZOOM`。
+   */
+  readonly minZoom?: number
 }
 
 /**
@@ -254,7 +421,7 @@ export function canvasSignature(nodes: readonly CanvasNode[], edges: readonly Ca
       node.id, node.label, node.type, node.detail ?? [], node.enabled, node.state ?? '',
       node.group, node.sideEffect, node.x, node.y,
     ]),
-    edges: edges.map(edge => [edge.id, edge.from, edge.to, edge.label ?? '', edge.mode ?? '']),
+    edges: edges.map(edge => [edge.id, edge.from, edge.to, edge.label ?? '', edge.mode ?? '', edge.state ?? '']),
     // 点亮哪条边也算画布状态：不进签名的话，试跑改结论时边上的高亮不会重画。
     highlight: highlight ?? '',
   })
@@ -302,17 +469,25 @@ const FIT_PADDING = 0.16
  * 浏览。手动缩放不受这个下限限制（`minZoom≈0.15`），想看全图随时可以缩。
  */
 export const READABLE_ZOOM = 0.7
-/** `fitView` 的上下限：图再大也别缩到看不清，图再小也别放大到糊屏。 */
-const FIT_LIMITS = { minZoom: READABLE_ZOOM, maxZoom: 1 } as const
+/** 「一眼看全整张扁平图」的下限：看板执行图用这个。 */
+export const OVERVIEW_ZOOM = 0.2
+/** 放大上限：图再小也别放大到糊屏。 */
+const FIT_MAX_ZOOM = 1
+/** 一次框选的上下限。下限可传，因为「可读」和「看全」是两种诉求。 */
+const fitLimitsOf = (minZoom: number): { minZoom: number; maxZoom: number } => ({ minZoom, maxZoom: FIT_MAX_ZOOM })
 
 function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
   const { nodes: sourceNodes, edges: sourceEdges, selected, onSelect, onMove, onOpen, onConnect, onEdgeClick, fullscreen, height, fitToken } = props
   useFlowStyles()
+  /** 画布底下是深色还是浅色：发光配方两套，判断靠量一次背景色。 */
+  const surface = useSurface()
 
   /** React Flow 自己管节点位置；外部数据变了才重建。 */
   const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<Node>([])
   const [flowEdges, setFlowEdges] = useEdgesState<Edge>([])
   const { fitView, getNodes, getZoom } = useReactFlow()
+  /** 这一次框选的上下限：看板要「看全」，定义页要「可读」。 */
+  const limits = useMemo(() => fitLimitsOf(props.minZoom ?? READABLE_ZOOM), [props.minZoom])
   /** 画布容器，用来盯住它自己的尺寸变化。 */
   const shell = useRef<HTMLDivElement | null>(null)
   /**
@@ -350,18 +525,19 @@ function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
         }
       })
     })
+    /** 连线走正交折线：先一次算好所有走廊，再画。 */
+    const routes = routeEdges(sourceNodes, sourceEdges)
     setFlowEdges(sourceEdges.map(edge => ({
       id: edge.id,
       source: edge.from,
       target: edge.to,
-      type: 'default',
-      // 试跑说「会走这条」时把它点亮：一行文字说不清是哪根线。
-      animated: edge.id === props.highlightEdge,
+      type: 'routed',
+      // 正在流的边跑虚线动画：静态像素看不出「东西正从这儿过」。
+      animated: edge.state === 'running' || edge.id === props.highlightEdge,
       ...(edge.label === undefined ? {} : { label: edge.label }),
-      style: edge.id === props.highlightEdge
-        ? { stroke: 'var(--dsw-alias-state-business-primary)', strokeWidth: 2.4 }
-        : { stroke: 'var(--dsw-alias-border-l3)', strokeWidth: 1.4 },
-      ...(edge.mode === 'fork' ? { style: { stroke: 'var(--dsw-alias-border-l3)', strokeWidth: 1.4, strokeDasharray: '5 4' } } : {}),
+      className: `dsh-edge${edge.state === undefined ? '' : ` dsh-edge--${edge.state}`}`,
+      data: { points: routes.get(edge.id) ?? [] },
+      style: edgeStyle(edge.state, edge.id === props.highlightEdge, edge.mode === 'fork'),
     })))
   }, [signature, sourceNodes, sourceEdges, selected, setFlowNodes, setFlowEdges])
 
@@ -402,11 +578,11 @@ function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
    * 框完立刻读 zoom，等于 `READABLE_ZOOM` 就说明被下限钳住了（图比视口大）。
    */
   const refit = useCallback((): void => {
-    void fitViewRef.current({ padding: FIT_PADDING, ...FIT_LIMITS }).then((ok) => {
+    void fitViewRef.current({ padding: FIT_PADDING, ...limits }).then((ok) => {
       if (!ok) return
-      setClamped(getNodesRef.current().length > 0 && getZoomRef.current() <= READABLE_ZOOM + 0.001)
+      setClamped(getNodesRef.current().length > 0 && getZoomRef.current() <= limits.minZoom + 0.001)
     })
-  }, [])
+  }, [limits])
   useEffect(() => {
     const base = fitToken ?? ''
     /**
@@ -504,12 +680,15 @@ function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
   return (
     <div
       ref={shell}
+      className="dsh-flow-surface"
+      data-surface={surface}
       style={{ width: '100%', height: fullscreen ? '100%' : (height ?? 640), minHeight: 320, position: 'relative' }}
     >
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
         onNodesChange={onNodesChange}
         onNodeDragStop={handleDragStop}
         onNodeClick={(_event, node) => { onSelect?.(node.id) }}
@@ -523,7 +702,7 @@ function FlowCanvasInner(props: FlowCanvasProps): ReactNode {
          * 居中摆好就够了。`maxZoom` 必须写在这里而不是只写进代码里的那次 `fitView()`：
          * 换图之后 React Flow 自己也会重新框一次，它只读这里的选项。
          */
-        fitViewOptions={{ padding: FIT_PADDING, ...FIT_LIMITS }}
+        fitViewOptions={{ padding: FIT_PADDING, ...limits }}
         minZoom={0.15}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}

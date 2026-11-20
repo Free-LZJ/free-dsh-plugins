@@ -107,6 +107,7 @@ function engine(overrides: Partial<TriageSource> = {}) {
     flow: overrides.flow ?? (async () => ({ flows: [] })),
     nodeTypes: overrides.nodeTypes ?? (async () => []),
     saveFlowNode: overrides.saveFlowNode ?? (async () => ({ ok: true })),
+    saveFlowParams: overrides.saveFlowParams ?? (async () => ({ ok: true })),
     addFlowNode: overrides.addFlowNode ?? (async () => ({ ok: true })),
     addFlowScaffold: async () => ({ ok: true }),
     scaffoldFlows: async () => ({ ok: true }),

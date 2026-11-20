@@ -102,6 +102,7 @@ export async function executeFlow(
     done: string[]
     satisfied: string[]
     ready: string[]
+    running: string[]
     suspendedAt?: string
     pending?: PendingWait
     suspends: number
@@ -109,6 +110,8 @@ export async function executeFlow(
     done: [...(options.progress?.done ?? [])],
     satisfied: [...(options.progress?.satisfied ?? [])],
     ready: [...(options.progress?.ready ?? [])],
+    // 上一轮残留的「正在跑」不是这一轮的：续跑时它们已经回到就绪队列，重跑一遍。
+    running: [],
     ...(options.progress?.suspendedAt === undefined ? {} : { suspendedAt: options.progress.suspendedAt }),
     ...(options.progress?.pending === undefined ? {} : { pending: options.progress.pending }),
     suspends: options.progress?.suspends ?? 0,
@@ -174,6 +177,7 @@ export async function executeFlow(
     done: [...state.done],
     satisfied: [...state.satisfied],
     ready: [...state.ready],
+    ...(state.running.length === 0 ? {} : { running: [...state.running] }),
     ...(state.suspendedAt === undefined ? {} : { suspendedAt: state.suspendedAt }),
     ...(state.pending === undefined ? {} : { pending: state.pending }),
     suspends: state.suspends,
@@ -201,6 +205,9 @@ export async function executeFlow(
   while (state.ready.length > 0) {
     const batch = [...state.ready]
     state.ready = []
+    // 先把「这批在跑」落盘，再真的去跑：否则长耗时节点期间画布什么也看不到。
+    state.running = batch
+    await persist()
 
     const outcomes = await Promise.all(batch.map(async (id) => {
       const spec = byId.get(id)
@@ -313,6 +320,8 @@ export async function executeFlow(
             ...(ran.suspend.dueAt === undefined ? {} : { dueAt: ran.suspend.dueAt }),
           },
         })
+        // 这一批的 run 都已返回（Promise.all 在上面），挂起时不该再有「正在跑」。
+        state.running = []
         await persist()
         return {
           status: 'suspended',
@@ -347,6 +356,8 @@ export async function executeFlow(
         detail: plain.detail,
         ...(kind === undefined ? {} : { failure: kind }),
         ...(plain.sessionId === undefined ? {} : { sessionId: plain.sessionId }),
+        // 产出整体落盘：点开节点能看到「这一步算出了什么」，而不只是一行 detail。
+        ...(plain.ok && plain.output !== undefined ? { data: plain.output } : {}),
       })
       // 挂起的节点跑完了：它已经等到东西，标记与令牌一起清掉，别让下一次挂起继承旧的。
       if (state.suspendedAt === id) {
@@ -372,6 +383,7 @@ export async function executeFlow(
       }
     }
 
+    state.running = []
     await persist()
     if (failure === 'config' || failure === 'fatal') break
   }

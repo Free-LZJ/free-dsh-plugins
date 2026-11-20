@@ -23,16 +23,22 @@
  * @module @free-dsh-plugins/dsh-console/client/workbench/board
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   Button, DisclosureRow, IconChevronDownOutlineRegular, Modal, Pill, StateDot, Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
-  ArchiveRhythm, ConsoleNoticeRecord, Task, TaskNodeRecord, WorkbenchColumn, WorkbenchState,
+  ArchiveRhythm, ConsoleNoticeRecord, Task, TaskJump, TaskNodeRecord, TaskProgress, WorkbenchColumn, WorkbenchState,
 } from '../../protocol.ts'
+import { FlowCanvas, OVERVIEW_ZOOM } from '../flow-canvas.tsx'
 import type { Translate } from '../locales.ts'
+import type { TriageFlow, TriageNodeType } from '../rules.tsx'
 import { CLS } from '../styles.ts'
+import {
+  definitionOf, flatRunGraphOf, markIn, recordsIn, resolveParams, spentBetween, splitFlatId,
+} from './exec-flow.ts'
+import type { FlowMark, FlowScope, NodeDefinition } from './exec-flow.ts'
 
 /**
  * 旧看板的面：卡片、会话、连接器。
@@ -84,6 +90,8 @@ export interface ChainStep {
   readonly sessionId?: string
   /** 失败的性质；页面据此给出「去改规则」或「再试一次」。 */
   readonly failure?: RunFailure
+  /** 这一步的产出（引擎落下的结构化证据）；点开才看得见。 */
+  readonly data?: Readonly<Record<string, unknown>>
 }
 
 /** The three kinds of failure, mirrored from the decision core. */
@@ -122,6 +130,8 @@ export interface TaskChain {
   readonly remedy: Remedy
   /** 人已经说过「这条我看到了」。 */
   readonly acknowledged: boolean
+  /** 这一轮跑到哪了；没有进度（旧记录、已跑完）时不传。 */
+  readonly progress?: TaskProgress
 }
 
 /* ─────────────────────────────── 聚合 ─────────────────────────────── */
@@ -195,8 +205,32 @@ function stepsOf(task: Task, t: Translate): ChainStep[] {
       at: Number.isFinite(at) ? at : 0,
       ...(node.sessionId === undefined ? {} : { sessionId: node.sessionId }),
       ...(node.failure === undefined ? {} : { failure: node.failure }),
+      ...(node.data === undefined ? {} : { data: node.data }),
     }
   })
+}
+
+/**
+ * 把「正在跑」「下一步」补成链上的一格。
+ *
+ * 执行器只在节点**跑完**时落一条记录，所以进度里那个节点在 `task.nodes` 里还没有
+ * 影子——不补一格，看板就只能显示「上一次跑完的样子」，看不到此刻正在哪一格。
+ * 节点 id 就是事件流图上那个 id（`route`、`call-jira-bugfix`），人对得上。
+ * @param steps - the steps the records produced.
+ * @param progress - where this run stands.
+ * @returns the steps, with the live cells at the end.
+ */
+function withProgress(steps: readonly ChainStep[], progress: TaskProgress | undefined): ChainStep[] {
+  if (progress === undefined) return [...steps]
+  const live: ChainStep[] = []
+  const add = (id: string): void => {
+    if (live.some(step => step.key === id) || steps.some(step => step.key === id)) return
+    live.push({ key: id, kind: 'flow', title: id, detail: '', ok: true, at: 0 })
+  }
+  for (const id of progress.running ?? []) add(id)
+  const next = progress.ready[0]
+  if (next !== undefined) add(next)
+  return [...steps, ...live]
 }
 
 /** 这条任务最后一次分类落在哪一类；没有分类节点时退到规则标签。 */
@@ -343,7 +377,7 @@ export function buildTasks(
 ): readonly TaskChain[] {
   const chains: TaskChain[] = []
   for (const task of tasks) {
-    const steps = stepsOf(task, t)
+    const steps = withProgress(stepsOf(task, t), task.progress)
     const failed = task.status === 'partial' || task.status === 'failed'
     const sessionAlive = steps.some(step => step.sessionId !== undefined && runningIds.has(step.sessionId))
     const updatedAt = steps.reduce((newestAt, step) => Math.max(newestAt, step.at), 0)
@@ -365,6 +399,7 @@ export function buildTasks(
       remedy: remedyOf(failure),
       acknowledged,
       ...(failure === undefined ? {} : { failure }),
+      ...(task.progress === undefined ? {} : { progress: task.progress }),
     })
   }
   return chains.sort((left, right) => right.updatedAt - left.updatedAt)
@@ -384,6 +419,8 @@ export interface BoardFace {
   readonly setRhythm: (rhythm: ArchiveRhythm) => void
   /** 撤销一个任务：窗口内取消，窗口外回滚。 */
   readonly undo: (taskId: string) => Promise<{ readonly ok: boolean; readonly message?: string }>
+  /** 重跑一条失败的任务：同一个事件再开一轮，历史那一轮留着。 */
+  readonly retry: (taskId: string) => Promise<{ readonly ok: boolean; readonly message?: string }>
   /** Open a session in the conversation page, when the deployment composes one. */
   readonly openSession?: (sessionId: string) => { readonly ok: boolean; readonly message?: string }
   /** Whether {@link openSession} can reach a real service. */
@@ -398,6 +435,21 @@ export interface BoardFace {
   readonly acknowledge: (runIds: readonly string[], acknowledged: boolean) => Promise<{ readonly ok: boolean; readonly message?: string }>
   /** 跳到规则页：配置错唯一的出路是改规则。 */
   readonly openRules: () => void
+  /**
+   * 这次执行涉及的那几张图。
+   *
+   * 与定义页同一份数据：实例详情里看到的图必须就是用户在编排页改的那张，
+   * 否则「按实例点亮」会点在一张过时的图上。
+   */
+  readonly flow: () => Promise<{
+    readonly flows: readonly TriageFlow[]
+    readonly nodeTypes: readonly TriageNodeType[]
+    readonly error?: string
+  }>
+  /** 有没有插件认领这条任务（邮件面板认领邮件，等等）。 */
+  readonly canJumpTo: (task: TaskJump) => boolean
+  /** 让认领它的插件打开自己那条记录。 */
+  readonly jumpTo: (task: TaskJump) => { readonly ok: boolean; readonly message?: string }
 }
 
 /** What the board shows when the engine cannot be read. */
@@ -542,6 +594,17 @@ export function BoardView(props: {
       .finally(() => { setBusyKey(undefined) })
   }
 
+  /** 重跑一条：跟承认共用一把锁和一个报错位，点下去到页面变样之间不许连点。 */
+  const retry = (task: TaskChain): void => {
+    setBusyKey(task.key)
+    void props.face.retry(task.key)
+      .then((result) => {
+        setFailure(result.ok ? '' : result.message ?? t('boardActionFailed'))
+        if (result.ok) props.reload?.()
+      })
+      .finally(() => { setBusyKey(undefined) })
+  }
+
   return (
     <div className={CLS.board}>
       <div className={CLS.statusBar} role="group" aria-label={t('boardTitle')}>
@@ -561,6 +624,7 @@ export function BoardView(props: {
           t={t}
           onOpen={setOpenKey}
           onAck={task => { acknowledge(task, true) }}
+          onRetry={retry}
           onRules={props.face.openRules}
           busyKey={busyKey}
         />
@@ -573,6 +637,7 @@ export function BoardView(props: {
           t={t}
           onOpen={setOpenKey}
           onAck={task => { acknowledge(task, true) }}
+          onRetry={retry}
           onRules={props.face.openRules}
           busyKey={busyKey}
         />
@@ -609,6 +674,7 @@ export function BoardView(props: {
                   t={t}
                   onOpen={setOpenKey}
                   onAck={task => { acknowledge(task, false) }}
+                  onRetry={retry}
                   onRules={props.face.openRules}
                   archived
                 />
@@ -636,6 +702,7 @@ export function BoardView(props: {
                       t={t}
                       onOpen={setOpenKey}
                       onAck={task => { acknowledge(task, false) }}
+                      onRetry={retry}
                       onRules={props.face.openRules}
                       archived
                     />
@@ -655,6 +722,8 @@ export function BoardView(props: {
           onClose={() => { setOpenKey(undefined) }}
           onFailure={message => { setFailure(message) }}
           onAck={value => { acknowledge(open, value) }}
+          busy={busyKey === open.key}
+          onRetry={() => { retry(open) }}
         />
       )}
     </div>
@@ -671,6 +740,7 @@ function Zone(props: {
   readonly t: Translate
   readonly onOpen: (key: string) => void
   readonly onAck: (task: TaskChain) => void
+  readonly onRetry: (task: TaskChain) => void
   readonly onRules: () => void
   readonly busyKey?: string | undefined
 }): ReactNode {
@@ -692,6 +762,7 @@ function Zone(props: {
             t={props.t}
             onOpen={props.onOpen}
             onAck={props.onAck}
+            onRetry={props.onRetry}
             onRules={props.onRules}
             grid
             {...(props.busyKey === undefined ? {} : { busyKey: props.busyKey })}
@@ -707,6 +778,8 @@ function TaskList(props: {
   readonly t: Translate
   readonly onOpen: (key: string) => void
   readonly onAck: (task: TaskChain) => void
+  /** 失败过就再跑一遍；跑完是成功还是再失败，看引擎。 */
+  readonly onRetry: (task: TaskChain) => void
   readonly onRules: () => void
   /** 归档区里的卡：「忽略」变成「恢复」，因为它们本来就不在待办里。 */
   readonly archived?: boolean
@@ -736,7 +809,12 @@ function TaskList(props: {
                   <RemedyBadge task={task} t={props.t} />
                 </span>
               </span>
-              <ChainLine steps={task.steps} t={props.t} compact />
+              <ChainLine
+                steps={task.steps}
+                t={props.t}
+                compact
+                {...(task.progress === undefined ? {} : { progress: task.progress })}
+              />
               <span className={CLS.taskCardFoot}>
                 <span className={CLS.taskCardHint}>
                   {props.t('linkStepCount', { count: task.steps.length })}
@@ -747,6 +825,11 @@ function TaskList(props: {
               </span>
             </button>
             <span className={CLS.taskCardActions}>
+              {task.failed && (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => { props.onRetry(task) }}>
+                  {props.t('remedyRetry')}
+                </Button>
+              )}
               {task.remedy === 'fix-config' && (
                 <Button size="sm" variant="ghost" onClick={props.onRules}>{props.t('remedyFixConfig')}</Button>
               )}
@@ -788,6 +871,28 @@ function RemedyBadge(props: { readonly task: TaskChain; readonly t: Translate })
   }
 }
 
+/** 这一步花了多久：相邻两条记录相隔的时间；最后一步没有下一条可比。 */
+function spentOf(steps: readonly ChainStep[], index: number): string | undefined {
+  const here = steps[index]
+  const next = steps[index + 1]
+  if (here === undefined || next === undefined) return undefined
+  // 进度补出来的格子没有记录时间（at 是 0）：算出来的不是耗时。
+  if (here.at <= 0 || next.at <= 0) return undefined
+  const ms = next.at - here.at
+  if (!Number.isFinite(ms) || ms < 0) return undefined
+  return ms < 1000 ? `${String(Math.round(ms))}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
+/** 产出折在 details 里：给人看的 JSON，太长就截断（正文不落这里）。 */
+function formatData(data: Readonly<Record<string, unknown>>): string {
+  try {
+    const text = JSON.stringify(data, null, 2)
+    return text.length > 4000 ? `${text.slice(0, 4000)}\n…（已截断）` : text
+  } catch {
+    return '（这份产出无法显示）'
+  }
+}
+
 /**
  * The chain itself: a vertical run of steps joined by a hairline.
  *
@@ -803,30 +908,76 @@ export function ChainLine(props: {
   readonly steps: readonly ChainStep[]
   readonly t: Translate
   readonly compact?: boolean
+  /** 这一轮的执行进度：点亮正在跑的那格，标出下一步与卡住的那格。 */
+  readonly progress?: TaskProgress
 }): ReactNode {
+  const running = new Set(props.progress?.running ?? [])
+  const nextId = props.progress?.ready[0]
+  const suspendedAt = props.progress?.suspendedAt
   return (
     <ol className={CLS.chain}>
-      {props.steps.map((step) => (
-        <li
-          key={step.key}
-          className={step.ok ? CLS.chainStep : `${CLS.chainStep} ${CLS.chainStepFailed}`}
-        >
+      {props.steps.map((step, index) => {
+        const isRunning = running.has(step.key)
+        const isWaiting = suspendedAt === step.key
+        const mark = isRunning
+          ? props.t('chainRunning')
+          : isWaiting ? props.t('chainWaiting') : step.key === nextId ? props.t('chainNext') : ''
+        const spent = spentOf(props.steps, index)
+        const className = [CLS.chainStep, step.ok ? '' : CLS.chainStepFailed, isRunning ? CLS.chainStepRunning : '']
+          .filter(part => part !== '')
+          .join(' ')
+        const glyph = (
           <span className={CLS.chainGlyph} aria-hidden="true">
             <StateDot
-              state={step.ok ? 'done' : 'error'}
+              state={
+                isRunning || isWaiting
+                  ? 'ongoing'
+                  : step.key === nextId ? 'idle' : step.ok ? 'done' : 'error'
+              }
               {...(step.sessionId === undefined ? {} : { appearance: 'step' as const })}
             />
           </span>
-          <span className={CLS.chainBody}>
-            <span className={CLS.chainName}>
-              {step.kind === 'rule' ? `${props.t('linkRule')}·` : ''}{step.title}
-            </span>
-            {props.compact === true || step.detail === '' ? null : (
-              <span className={CLS.chainDetail}>{step.detail}</span>
-            )}
+        )
+        const name = (
+          <span className={CLS.chainName}>
+            {step.kind === 'rule' ? `${props.t('linkRule')}·` : ''}{step.title}
+            {mark === '' ? null : <span className={CLS.chainMark}>{mark}</span>}
           </span>
-        </li>
-      ))}
+        )
+        // 卡片上只画点与名字；没有产出也没有耗时可比的一步，详情里也不必展开。
+        if (props.compact === true || (step.data === undefined && spent === undefined)) {
+          return (
+            <li key={step.key} className={className}>
+              {glyph}
+              <span className={CLS.chainBody}>
+                {name}
+                {props.compact === true || step.detail === '' ? null : (
+                  <span className={CLS.chainDetail}>{step.detail}</span>
+                )}
+              </span>
+            </li>
+          )
+        }
+        return (
+          <li key={step.key} className={className}>
+            {glyph}
+            <span className={CLS.chainBody}>
+              <details className={CLS.chainMore}>
+                <summary className={CLS.chainSummary}>
+                  {name}
+                  {step.detail === '' ? null : <span className={CLS.chainDetail}>{step.detail}</span>}
+                </summary>
+                <span className={CLS.chainOut}>
+                  {spent === undefined ? null : (
+                    <span className={CLS.chainSpent}>{props.t('chainSpent', { spent })}</span>
+                  )}
+                  {step.data === undefined ? null : <pre className={CLS.chainData}>{formatData(step.data)}</pre>}
+                </span>
+              </details>
+            </span>
+          </li>
+        )
+      })}
     </ol>
   )
 }
@@ -860,6 +1011,231 @@ function RhythmRow(props: { readonly face: BoardFace; readonly t: Translate }): 
   )
 }
 
+/** 一格的处境 → 一行字。 */
+function markText(mark: FlowMark, t: Translate): string {
+  switch (mark) {
+    case 'ok': return t('nodeMarkOk')
+    case 'failed': return t('nodeMarkFailed')
+    case 'running': return t('nodeMarkRunning')
+    case 'suspended': return t('nodeMarkSuspended')
+    case 'next': return t('nodeMarkNext')
+    default: return t('nodeMarkIdle')
+  }
+}
+
+/** 一格的处境 → Tag 的色。`Tag` 没有 warn，挂起用描边，别用红色（红=真失败）。 */
+function markTone(mark: FlowMark): 'success' | 'danger' | 'info' | 'outline' | 'quiet' {
+  switch (mark) {
+    case 'ok': return 'success'
+    case 'failed': return 'danger'
+    case 'running': return 'info'
+    case 'suspended': return 'outline'
+    default: return 'quiet'
+  }
+}
+
+/**
+ * 这次执行的流程图：主图 + 本次跑过的子流程摊在同一张画布上，左边图、右边这一格的详情。
+ *
+ * **扁平化**：子工作流以前分 tab，点进去就丢了「父节点是哪一格」这条线索；铺进同一张
+ * 图之后，虚线从父节点直接指到子流程入口，一眼看出这一步钻进了哪个图。
+ *
+ * **为什么详情在右边**：以前详情堆在画布下面——80vh 的弹窗里画布占掉 52vh，点一下
+ * 节点，卡片落到折叠线以下，看着像「点了没反应」。两栏之后点哪格、右边立刻换成哪格的
+ * 参数与产出，不用滚。
+ *
+ * 点亮来自这条任务的记录与 `progress`：引擎每跑完一批就落盘，看板那边有 SSE + 轮询，
+ * 所以这里不用自己连通道，`task` 一变就重算。
+ */
+function ExecutionGraph(props: {
+  readonly task: Task
+  readonly face: BoardFace
+  readonly t: Translate
+  readonly onFailure: (message: string) => void
+}): ReactNode {
+  const { task, face, t } = props
+  const [catalogue, setCatalogue] = useState<{
+    readonly flows: readonly TriageFlow[]
+    readonly nodeTypes: readonly TriageNodeType[]
+  } | undefined>(undefined)
+  const [error, setError] = useState('')
+  const [selected, setSelected] = useState<string | undefined>(undefined)
+  const [full, setFull] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    face.flow().then((answer) => {
+      if (!alive) return
+      if (answer.error !== undefined) {
+        setError(answer.error)
+        return
+      }
+      setCatalogue({ flows: answer.flows, nodeTypes: answer.nodeTypes })
+    }, (reason: unknown) => {
+      if (alive) setError(reason instanceof Error ? reason.message : String(reason))
+    })
+    return () => { alive = false }
+  }, [face])
+
+  /**
+   * 全屏下 Esc 退出。
+   *
+   * 用捕获阶段拦：外面那层弹窗自己也吃 Esc，冒泡阶段会被它先关掉整个详情，
+   * 用户按一次退出全屏结果连任务详情一起没了。
+   */
+  useEffect(() => {
+    if (!full) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      setFull(false)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => { window.removeEventListener('keydown', onKey, true) }
+  }, [full])
+
+  const graph = useMemo(
+    () => (catalogue === undefined ? undefined : flatRunGraphOf(task, catalogue.flows, catalogue.nodeTypes)),
+    [catalogue, task],
+  )
+  const definition = selected === undefined || catalogue === undefined
+    ? undefined
+    : definitionOf(catalogue.flows, selected)
+
+  if (error !== '') return <p className={CLS.empty}>{error}</p>
+  if (catalogue === undefined) return <p className={CLS.empty}>{t('flowLoading')}</p>
+  if (graph === undefined) return <p className={CLS.empty}>{t('flowEmpty')}</p>
+
+  const body = (
+    <div className={CLS.flowSplit}>
+      <div className={CLS.flowSide}>
+        <div className={CLS.flowBar}>
+          {definition === undefined ? null : <span className={CLS.flowHint}>{definition.label}</span>}
+          <Button size='sm' variant='ghost' onClick={() => { setFull(value => !value) }}>
+            {full ? t('flowExitFullscreen') : t('flowFullscreen')}
+          </Button>
+        </div>
+        <div className={CLS.flowBox}>
+          <FlowCanvas
+            height={360}
+            fullscreen={full}
+            minZoom={OVERVIEW_ZOOM}
+            nodes={graph.nodes}
+            edges={graph.edges}
+            selected={selected}
+            onSelect={setSelected}
+            fitToken={`${graph.primary}#${String(task.runId ?? '')}`}
+          />
+        </div>
+      </div>
+      <div className={CLS.flowNodePane}>
+        {selected === undefined || definition === undefined
+          ? <p className={CLS.empty}>{t('flowPickHint')}</p>
+          : (
+            <NodeDetail
+              task={task}
+              flatId={selected}
+              definition={definition}
+              primary={graph.primary}
+              face={face}
+              t={t}
+              onFailure={props.onFailure}
+            />
+          )}
+      </div>
+    </div>
+  )
+  return full
+    ? <div className={CLS.flowFull} role='dialog' aria-label={t('flowTitle')}>{body}</div>
+    : body
+}
+
+/** 点开一格：它这次跑了什么、参数展开成什么、产出是什么。 */
+function NodeDetail(props: {
+  readonly task: Task
+  readonly flatId: string
+  readonly definition: NodeDefinition
+  readonly primary: string
+  readonly face: BoardFace
+  readonly t: Translate
+  readonly onFailure: (message: string) => void
+}): ReactNode {
+  const { task, t, definition } = props
+  const scope: FlowScope = { id: definition.flowId, primary: definition.flowId === props.primary }
+  const nodeId = splitFlatId(props.flatId).nodeId
+  const mark = markIn(task, scope, nodeId)
+  const records = recordsIn(task, scope, nodeId)
+  const params = resolveParams(definition.config, task.vars)
+  const target: TaskJump = { connector: task.connector, key: task.key }
+  const canJump = props.face.canJumpTo(target)
+  const canOpen = props.face.canOpenSession?.() === true
+  return (
+    <div className={CLS.flowNodeCard}>
+      <div className={CLS.flowNodeHead}>
+        <span className={CLS.flowNodeName}>{definition.label}</span>
+        <Tag tone={markTone(mark)}>{markText(mark, t)}</Tag>
+      </div>
+      {scope.primary ? null : <p className={CLS.flowHint}>{t('flowSubflow')} {definition.flowName}</p>}
+      <h5 className={CLS.flowNodeSection}>{t('nodeParams')}</h5>
+      <pre className={CLS.flowNodePre}>{formatData(params.actual)}</pre>
+      {params.missing.length === 0 ? null : (
+        <p className={CLS.flowHint}>{t('paramsApprox')} {params.missing.join('、')}</p>
+      )}
+      <h5 className={CLS.flowNodeSection}>{t('nodeRecords')}</h5>
+      {records.length === 0
+        ? <p className={CLS.empty}>{t('nodeNoRecords')}</p>
+        : (
+          <ul className={CLS.nodeList}>
+            {records.map((record, index) => {
+              const spent = spentBetween(record.at, records[index + 1]?.at)
+              return (
+                <li key={record.id} className={CLS.nodeRow}>
+                  <div className={CLS.nodeRowHead}>
+                    <StateDot state={record.ok ? 'done' : 'error'} />
+                    <span className={CLS.nodeAt}>{new Date(Date.parse(record.at)).toLocaleTimeString()}</span>
+                    {spent === undefined ? null : <span className={CLS.nodeSpent}>{spent}</span>}
+                    <span className={CLS.nodeDetail}>{record.detail}</span>
+                  </div>
+                  {record.data === undefined ? null : <pre className={CLS.flowNodePre}>{formatData(record.data)}</pre>}
+                  {record.sessionId !== undefined && canOpen
+                    ? (
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => {
+                          const answer = props.face.openSession?.(record.sessionId as string)
+                          if (answer !== undefined && !answer.ok) props.onFailure(answer.message ?? t('linkSessionGone'))
+                        }}
+                      >
+                        {t('linkOpenSession')}
+                      </Button>
+                    )
+                    : null}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      {canJump
+        ? (
+          <div className={CLS.detailActions}>
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => {
+                const answer = props.face.jumpTo(target)
+                if (!answer.ok) props.onFailure(answer.message ?? t('jumpFailed'))
+              }}
+            >
+              {t('jumpToSource')}
+            </Button>
+          </div>
+        )
+        : null}
+    </div>
+  )
+}
+
 /** The task detail: the full chain, the trigger, and the one action a human owes. */
 function TaskDetail(props: {
   readonly task: TaskChain
@@ -868,12 +1244,24 @@ function TaskDetail(props: {
   readonly onClose: () => void
   readonly onFailure: (message: string) => void
   readonly onAck: (acknowledged: boolean) => void
+  /** 这条正在跑重试：按钮先锁住，别连点两轮。 */
+  readonly busy?: boolean
+  readonly onRetry: () => void
 }): ReactNode {
   const { t, task } = props
   const canOpen = props.face.canOpenSession?.() === true
   const sessions = task.steps.filter(step => step.sessionId !== undefined)
+  // 流程图画「最后一轮」：重跑会换一条 task，旧轮次的记录留在下面的时间线里。
+  const latest = task.tasks[task.tasks.length - 1]
   return (
-    <Modal open onClose={props.onClose} title={t('detailTitle')} closeLabel={t('detailClose')}>
+    <Modal
+      open
+      onClose={props.onClose}
+      title={t('detailTitle')}
+      closeLabel={t('detailClose')}
+      className={CLS.detailModal}
+      contentClassName={CLS.detailModalContent}
+    >
       <div className={CLS.detail}>
         <header className={CLS.detailHead}>
           <h3 className={CLS.detailTitle}>{task.title}</h3>
@@ -897,11 +1285,17 @@ function TaskDetail(props: {
           </ul>
         </section>
         <section>
-          <h4 className={CLS.detailSection}>{t('detailChain')}</h4>
+          <h4 className={CLS.detailSection}>{t('flowTitle')}</h4>
+          {latest === undefined
+            ? <p className={CLS.empty}>{t('flowEmpty')}</p>
+            : <ExecutionGraph task={latest} face={props.face} t={t} onFailure={props.onFailure} />}
+        </section>
+        <details className={CLS.flowTimeline}>
+          <summary className={CLS.flowTimelineSummary}>{t('detailTimeline')}</summary>
           {task.steps.length === 0
             ? <p className={CLS.empty}>{t('detailNoActions')}</p>
-            : <ChainLine steps={task.steps} t={t} />}
-        </section>
+            : <ChainLine steps={task.steps} t={t} {...(task.progress === undefined ? {} : { progress: task.progress })} />}
+        </details>
         {task.failed && task.failure !== undefined && (
           <p className={CLS.detailNote}>
             {task.remedy === 'fix-config'
@@ -927,6 +1321,11 @@ function TaskDetail(props: {
           ))}
           {task.remedy === 'fix-config' && (
             <Button size="sm" variant="ghost" onClick={props.face.openRules}>{t('remedyFixConfig')}</Button>
+          )}
+          {task.failed && (
+            <Button size="sm" variant="outline" disabled={props.busy === true} onClick={props.onRetry}>
+              {t('remedyRetry')}
+            </Button>
           )}
           {task.acknowledged
             ? <Button size="sm" variant="ghost" onClick={() => { props.onAck(false) }}>{t('remedyRestore')}</Button>

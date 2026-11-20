@@ -15,8 +15,8 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: the `ctx.webServer` service merge these routes register on.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { ArchiveRhythm, RunningSession, TaskConnectorInfo } from './protocol.ts'
-import { isMutationRequest, isSameOrigin, readJsonBody, respond } from './routes.ts'
-import { WORKBENCH_ACTION_PATH, WORKBENCH_STATE_PATH } from './paths.ts'
+import { HEARTBEAT_MS, isMutationRequest, isSameOrigin, readJsonBody, respond } from './routes.ts'
+import { WORKBENCH_ACTION_PATH, WORKBENCH_EVENTS_PATH, WORKBENCH_STATE_PATH } from './paths.ts'
 
 /** 这些路由从引擎与宿主拿到的全部东西。 */
 export interface TasksRouteHost {
@@ -26,6 +26,13 @@ export interface TasksRouteHost {
     readonly connectors: readonly TaskConnectorInfo[]
     readonly revision: number
   }
+  /**
+   * 任务引擎一动就叫一声（落了一步、改了状态）。
+   *
+   * 页面靠它把五秒一次的重读提前到「事情发生的那一刻」，一行都不推——
+   * 推的是信号，内容是那一次读的事。
+   */
+  readonly subscribe: (listener: () => void) => () => void
   /** 正在跑的会话（首页与看板都用它判断「这条链还活着」）。 */
   readonly running: () => readonly RunningSession[]
   /** 归档节奏（用户偏好）。 */
@@ -34,6 +41,8 @@ export interface TasksRouteHost {
   readonly undo: (taskId: string) => Promise<{ readonly ok: boolean; readonly message: string }>
   /** 记下「这个任务我看到了」。 */
   readonly acknowledge: (taskId: string, acknowledged: boolean) => Promise<{ readonly ok: boolean; readonly message?: string }>
+  /** 重跑一条失败的任务。 */
+  readonly retry: (taskId: string) => Promise<{ readonly ok: boolean; readonly message?: string }>
   /** 批准一条排队中的建议。 */
   readonly applyDeferred: (deferredId: string) => Promise<{ readonly ok: boolean; readonly message: string }>
   /** 打开或关掉一个连接器的规则参与（不卸载插件）。 */
@@ -122,6 +131,40 @@ export function registerTasksRoutes(ctx: Context, host: TasksRouteHost): void {
       })
     }, 'reading tasks'), 'console.tasks-state-route')
 
+    // 执行中的推送：任务走到哪一步，引擎就 bump 一次，这里压成一条信号。
+    // 与 /state 的分工和规则页一样——推信号，读内容，筛什么由那一次读决定。
+    register(WORKBENCH_EVENTS_PATH, guard((req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      })
+      res.write(': board stream\n\n')
+      // 一步之内会连着 bump 好几次；并成一次，页面不必为每一跳重画一遍看板。
+      let pending: ReturnType<typeof setTimeout> | undefined
+      const flush = (): void => {
+        pending = undefined
+        if (!res.writableEnded) res.write('event: tasks\ndata: {}\n\n')
+      }
+      const unsubscribe = host.subscribe(() => {
+        if (pending !== undefined) return
+        pending = setTimeout(flush, 200)
+        pending.unref?.()
+      })
+      const heartbeat = setInterval(() => {
+        if (!res.writableEnded) res.write(': ping\n\n')
+      }, HEARTBEAT_MS)
+      heartbeat.unref?.()
+      const finish = (): void => {
+        clearInterval(heartbeat)
+        if (pending !== undefined) clearTimeout(pending)
+        unsubscribe()
+      }
+      req.on('close', finish)
+      res.on('close', finish)
+    }, 'streaming board changes'), 'console.tasks-events-route')
+
     register(WORKBENCH_ACTION_PATH, guardMutation(async (req, res) => {
       const body = await readJsonBody(req)
       if (!body.ok) {
@@ -165,6 +208,10 @@ async function runAction(
     if (taskId === undefined) return { ok: false, message: 'acknowledge needs a taskId' }
     const acknowledged = body['acknowledged'] !== false
     return await host.acknowledge(taskId, acknowledged)
+  }
+  if (action === 'retry') {
+    if (taskId === undefined) return { ok: false, message: 'retry needs a taskId' }
+    return await host.retry(taskId)
   }
   if (action === 'apply') {
     const deferredId = typeof body['deferredId'] === 'string' ? body['deferredId'] : undefined

@@ -505,6 +505,11 @@ export class TaskRunner {
                 detail: entry.detail,
                 runId,
                 ...(entry.failure === undefined ? {} : { failure: entry.failure }),
+                // 子图的一格也要带上会话与产出：看板把子流程摊进同一张图之后，
+                // 「点开这格看它产出了什么 / 跳到它起的会话」全靠这两个字段；
+                // 以前只有主图那条 record 记，子图里点开是一片空白。
+                ...(entry.sessionId === undefined ? {} : { sessionId: entry.sessionId }),
+                ...(entry.data === undefined ? {} : { data: entry.data }),
               } as never)
               this.deps.changed()
             },

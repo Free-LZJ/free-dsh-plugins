@@ -15,7 +15,7 @@
 
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { ReactNode } from 'react'
-import { CONSOLE_PANEL_ID } from '../protocol.ts'
+import { CONSOLE_PANEL_ID, type TaskJump } from '../protocol.ts'
 import type { ConsolePanelDescriptor } from './contract.ts'
 
 /** One adopted panel, plus the rendered glyph the descriptor carried. */
@@ -88,6 +88,21 @@ export class PanelRegistry implements ObservableSnapshot<readonly RegisteredPane
   /** @returns one entry, if it is registered. */
   get(id: string): RegisteredPanel | undefined {
     return this.panels.get(id)
+  }
+
+  /**
+   * 第一个愿意接手这条任务的面板。
+   *
+   * 判定留给面板自己（它知道自己该拿什么），工作台只负责问一遍。
+   * @param task - 要跳过去的那条任务的身份。
+   * @returns 命中的那一行，或 undefined。
+   */
+  findTaskOpener(task: TaskJump): RegisteredPanel | undefined {
+    for (const entry of this.snapshot) {
+      if (entry.descriptor.openTask === undefined) continue
+      if (entry.descriptor.acceptsTask?.(task) === true) return entry
+    }
+    return undefined
   }
 
   /** Replace the snapshot and notify, only when the membership actually moved. */

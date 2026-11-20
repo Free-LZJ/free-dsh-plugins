@@ -486,6 +486,7 @@ function mailOf(context: TaskContext): MailOpsLike | undefined {
 /** 一次批量标志位动作的共同实现。 */
 function flagLike(input: {
   readonly kind: string
+  readonly label: string
   readonly op: string
   readonly back: string
   readonly detail: string
@@ -493,6 +494,7 @@ function flagLike(input: {
 }): ActionNode<ActionSpecLike, TaskContext> {
   return defineAction({
     kind: input.kind,
+    label: input.label,
     sideEffect: true,
     async run(_spec, context): Promise<ActionOutcome> {
       const mail = mailOf(context)
@@ -516,7 +518,11 @@ function flagLike(input: {
 /** 移动；`folder` 由词表保证存在。 */
 const moveAction = defineAction({
   kind: 'move',
+  label: '移动邮件',
   sideEffect: true,
+  config: {
+    folder: { type: 'string', label: '目标文件夹', required: true, hint: '不存在会先建出来；写错就判配置失败。' },
+  },
   async run(spec: ActionSpecLike, context: TaskContext): Promise<ActionOutcome> {
     const mail = mailOf(context)
     if (mail === undefined) return { ok: false, message: '未安装邮件能力，无法移动邮件', failure: 'config' }
@@ -543,7 +549,11 @@ const moveAction = defineAction({
 /** 归档：优先用账号声明的 `\Archive`，不猜路径。 */
 const archiveAction = defineAction({
   kind: 'archive',
+  label: '归档邮件',
   sideEffect: true,
+  config: {
+    folder: { type: 'string', label: '归档到', hint: '留空则用账号声明的 \\Archive；没有声明就失败。' },
+  },
   async run(spec: ActionSpecLike, context: TaskContext): Promise<ActionOutcome> {
     const mail = mailOf(context)
     if (mail === undefined) return { ok: false, message: '未安装邮件能力，无法归档邮件', failure: 'config' }
@@ -573,8 +583,8 @@ const archiveAction = defineAction({
 /** 四个邮件域动作。 */
 export function mailActions(): readonly ActionNode<ActionSpecLike, TaskContext>[] {
   return [
-    flagLike({ kind: 'markRead', op: 'markRead', back: 'markUnread', detail: '已标记为已读', backDetail: '已标记为未读' }),
-    flagLike({ kind: 'flag', op: 'flag', back: 'unflag', detail: '已加星标', backDetail: '已取消星标' }),
+    flagLike({ kind: 'markRead', label: '标记已读', op: 'markRead', back: 'markUnread', detail: '已标记为已读', backDetail: '已标记为未读' }),
+    flagLike({ kind: 'flag', label: '加星标', op: 'flag', back: 'unflag', detail: '已加星标', backDetail: '已取消星标' }),
     moveAction,
     archiveAction,
   ] as readonly ActionNode<ActionSpecLike, TaskContext>[]

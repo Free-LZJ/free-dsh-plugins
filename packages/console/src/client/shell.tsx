@@ -196,7 +196,14 @@ export function ConsoleShell(props: ConsoleShellProps): ReactNode {
             dismissItem={props.dismissItem}
           />
         )}
-        {current === 'rules' && <RulesView t={t} triage={props.triage} />}
+        {current === 'rules' && (
+          <RulesView
+            t={t}
+            triage={props.triage}
+            {...(props.openSession === undefined ? {} : { openSession: props.openSession })}
+            {...(props.canOpenSession === undefined ? {} : { canOpenSession: props.canOpenSession })}
+          />
+        )}
         {current === 'connectors' && (workbench === undefined
           ? <WorkbenchUnavailable t={t} />
           : <ConnectorsView face={workbench} t={t} />)}

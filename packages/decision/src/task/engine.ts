@@ -38,10 +38,11 @@ import { createTaskStore, forwardingStore, openTaskStore, type TaskStore } from 
 import { createDeferredStore, type DeferredStore } from './deferred.ts'
 import { actionsToFlowNodes } from '../flow/adapt.ts'
 import { createControlNodes } from '../flow/control.ts'
+import { checkFlow, describeIssues } from '../flow/check.ts'
 import { parseFlowDocument, parseFlowFile } from '../flow/parse.ts'
 import { stringifyFlowDocument } from '../flow/serialize.ts'
 import { FlowNodeRegistry } from '../flow/registry.ts'
-import type { Flow } from '../flow/types.ts'
+import type { Flow, FlowParamSpec, NodeInputs, NodeOutputDecl } from '../flow/types.ts'
 import type { TaskContext } from './context.ts'
 
 /** connectors.json 的形状：哪些连接器参与规则。 */
@@ -525,6 +526,27 @@ export class TaskEngine {
   async acknowledge(taskId: string, acknowledged = true): Promise<TaskEdit> {
     const updated = await this.store.patch(taskId, { acknowledged })
     if (updated === undefined) return { ok: false, message: `找不到任务 ${taskId}` }
+    this.bump()
+    return { ok: true }
+  }
+
+  /**
+   * 重跑一条失败的任务。
+   *
+   * 不是「接着跑」：上一轮已经收场了，这里是用同一个事件**再开一轮**——换新的
+   * `runId`、丢掉上一轮进度，节点记录按 `runId` 分组，历史那一轮不被覆盖。
+   * 代价是已经成功的动作会再做一次（再标一次已读、再搬一次文件），所以页面上
+   * 只在真的失败时才给这个按钮，并且按失败性质提示人先改配置。
+   * @param taskId - 任务 id。
+   * @returns 跑完了没有；没跑的原因写在 message 里。
+   */
+  async retry(taskId: string): Promise<TaskEdit> {
+    const task = this.store.get(taskId)
+    if (task === undefined) return { ok: false, message: `找不到任务 ${taskId}` }
+    if (task.status !== 'partial' && task.status !== 'failed') {
+      return { ok: false, message: '这条没有失败，不用重试' }
+    }
+    await this.runner.runChain(taskId)
     this.bump()
     return { ok: true }
   }
@@ -1065,6 +1087,10 @@ export class TaskEngine {
     /** 这个节点在哪张图里。`trigger` 这类 id 每张图都有，只按 id 找会写错文件。 */
     readonly flowId?: string
     readonly config?: Readonly<Record<string, unknown>>
+    /** 入参表；给空对象表示清空。 */
+    readonly inputs?: NodeInputs
+    /** 出参表；给空对象表示清空。 */
+    readonly outputs?: Readonly<Record<string, NodeOutputDecl>>
     readonly pos?: { readonly x: number; readonly y: number }
     readonly label?: string
     readonly enabled?: boolean
@@ -1093,17 +1119,107 @@ export class TaskEngine {
     const at = (key: string): (string | number)[] => flowIndex < 0 ? ['nodes', nodeIndex, key] : ['flows', flowIndex, 'nodes', nodeIndex, key]
 
     if (input.config !== undefined) doc.setIn(at('config'), input.config)
+    if (input.inputs !== undefined) {
+      if (Object.keys(input.inputs).length === 0) doc.deleteIn(at('inputs'))
+      else doc.setIn(at('inputs'), input.inputs)
+    }
+    if (input.outputs !== undefined) {
+      if (Object.keys(input.outputs).length === 0) doc.deleteIn(at('outputs'))
+      else doc.setIn(at('outputs'), input.outputs)
+    }
     if (input.pos !== undefined) doc.setIn(at('pos'), { x: input.pos.x, y: input.pos.y })
-    if (input.label !== undefined) doc.setIn(at('label'), input.label)
+    // 空串 = 清掉自定义名，回到自动名（节点类型中文名 / 被调工作流名）。
+    if (input.label !== undefined) {
+      if (input.label.trim() === '') doc.deleteIn(at('label'))
+      else doc.setIn(at('label'), input.label.trim())
+    }
     if (input.enabled !== undefined) {
       // 启用时不写 `enabled: true`——文件里只该出现「关掉了」这个例外。
       if (input.enabled) doc.deleteIn(at('enabled'))
       else doc.setIn(at('enabled'), false)
     }
 
-    await writeTextFile(path, doc.toString())
+    // 保存前把「改完的这张图」完整解析一遍：声明对不上就不落盘，别让坏图进文件。
+    const text = doc.toString()
+    const checked = this.checkFlowText(text, input.flowId ?? located?.flow.id)
+    if (!checked.ok) return { ok: false, message: checked.message }
+
+    await writeTextFile(path, text)
     await this.reloadRules()
     return { ok: true }
+  }
+
+  /**
+   * 保存流程级常量 / 入参声明。
+   *
+   * 与 `saveFlowNode` 同一套校验：`flow.params` 是 `flow.<name>` 引用的唯一来源，写错
+   * 等于让整张图的引用悬空，所以不通过就不落盘。
+   * @param input - 哪张图、常量列表（空数组表示清空）。
+   * @returns 成功，或为什么没改成。
+   */
+  async saveFlowParams(input: {
+    readonly flowId: string
+    readonly params: readonly FlowParamSpec[]
+  }): Promise<TaskEdit> {
+    const located = this.locateFlow(undefined, input.flowId)
+    if (located === undefined) return { ok: false, message: `没有这张图：${input.flowId}` }
+    let raw = ''
+    try { raw = readFileSync(located.path, 'utf8') } catch { raw = '' }
+    if (raw === '') return { ok: false, message: `读不到规则文件：${located.path}` }
+    let doc
+    try {
+      doc = parseYaml(raw)
+    } catch (error: unknown) {
+      return { ok: false, message: `规则文件读不出来：${error instanceof Error ? error.message : String(error)}` }
+    }
+    if (doc.errors.length > 0) {
+      return { ok: false, message: `规则文件有语法错误，先修好它：${doc.errors[0]?.message ?? ''}` }
+    }
+    // 一图一文件时 params 在根上；合集文件时在 flows[i] 上。
+    const flowIndex = locateFlowIndex(doc, input.flowId)
+    const at = flowIndex < 0 ? ['params'] : ['flows', flowIndex, 'params']
+    if (input.params.length === 0) doc.deleteIn(at)
+    else doc.setIn(at, input.params.map(param => ({
+      name: param.name,
+      ...(param.label === undefined ? {} : { label: param.label }),
+      ...(param.required === true ? { required: true } : {}),
+      ...(param.default === undefined ? {} : { default: param.default }),
+    })))
+
+    const text = doc.toString()
+    const checked = this.checkFlowText(text, input.flowId)
+    if (!checked.ok) return { ok: false, message: checked.message }
+    await writeTextFile(located.path, text)
+    await this.reloadRules()
+    return { ok: true }
+  }
+
+  /**
+   * 保存前的声明校验。
+   *
+   * 词表没接上时（引擎还没 mount 任何连接器）跳过：那时条件会被解析成「丢掉」，
+   * 校验会报一堆假问题。
+   */
+  private checkFlowText(text: string, flowId: string | undefined): { readonly ok: true } | { readonly ok: false; readonly message: string } {
+    const vocabulary = this.combinedVocabulary()
+    if (vocabulary === undefined) return { ok: true }
+    // 两种文件形状都要认：一图一文件（顶层就是图），以及还没迁完的合集（flows 数组）。
+    const single = parseFlowDocument(text, this.nodes, vocabulary)
+    let flow = single.flow
+    if (flow === undefined) {
+      const many = parseFlowFile(text, this.nodes, vocabulary)
+      flow = flowId === undefined ? many.flows[0] : many.flows.find(item => item.id === flowId)
+      if (flow === undefined) {
+        return {
+          ok: false,
+          message: `改完之后这张图读不出来：${many.error?.message ?? single.error?.message ?? single.dropped.join('；')}`,
+        }
+      }
+    }
+    if (flowId !== undefined && flow.id !== flowId) return { ok: true }
+    const result = checkFlow(flow, this.nodes)
+    if (result.ok) return { ok: true }
+    return { ok: false, message: `保存前检查没过：${describeIssues(result.issues)}` }
   }
 
   /**
@@ -2138,6 +2254,25 @@ function locateNode(
     }
   }
   return undefined
+}
+
+/**
+ * 在文件里定位一张图。
+ *
+ * 单图文件返回 `-1`（图就在根上），合集文件返回它在 `flows` 里的序号。
+ * @param doc - 解析后的 YAML 文档。
+ * @param flowId - 图 id。
+ * @returns 图序号；找不到为 undefined。
+ */
+function locateFlowIndex(doc: { toJS: () => unknown }, flowId: string): number {
+  const data = doc.toJS()
+  if (!isRecord(data)) return -1
+  if (Array.isArray(data['nodes']) && data['id'] === flowId) return -1
+  if (!Array.isArray(data['flows'])) return -1
+  for (const [index, flow] of data['flows'].entries()) {
+    if (isRecord(flow) && flow['id'] === flowId) return index
+  }
+  return -1
 }
 
 /** 一个抛出物作为一句话。 */

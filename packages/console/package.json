@@ -1,6 +1,6 @@
 {
   "name": "@free-lzj/dsh-console",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The DSH workbench: an attention queue of items that need a decision, the panels adopting its contract, the sessions working right now, and the notice/item hub every other plugin talks to",
   "repository": {
     "type": "git",

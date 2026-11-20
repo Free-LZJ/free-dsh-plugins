@@ -495,3 +495,32 @@ describe('executeFlow：挂起与续跑', () => {
     expect(result.status).toBe('failed')
   })
 })
+/** 等条件成立（最多 500ms），不用测试框架的时序工具。 */
+async function waitFor(check: () => boolean): Promise<void> {
+  const until = Date.now() + 500
+  while (!check() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 5))
+  if (!check()) throw new Error('condition never held')
+}
+
+describe('跑到哪一步：进度里看得见正在跑的那一格', () => {
+  it('节点在跑的时候 running 里是它，跑完就空', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const slow = fakeNode('slow', async () => { await gate; return { ok: true, detail: '慢活' } })
+    const { deps, saved } = harness([slow])
+    const running = executeFlow(chain('slow'), { taskId: 't', runId: 'r', event: {} }, deps)
+    // 节点还没返回时就得看见它——这就是画布点亮当前格子的数据来源。
+    await waitFor(() => saved.some(progress => (progress.running ?? []).includes('n0')))
+    release()
+    await running
+    expect(saved.at(-1)?.running ?? []).toEqual([])
+    expect(saved.at(-1)?.done).toContain('n0')
+  })
+
+  it('节点产出的东西跟着记录一起落盘，点开就能看到', async () => {
+    const out = fakeNode('out', async () => ({ ok: true, detail: '调完了', output: { status: 200 } }))
+    const { deps, records } = harness([out])
+    await executeFlow(chain('out'), { taskId: 't', runId: 'r', event: {} }, deps)
+    expect(records.find(record => record.nodeId === 'n0')?.data).toEqual({ status: 200 })
+  })
+})

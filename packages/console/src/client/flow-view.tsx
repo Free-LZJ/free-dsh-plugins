@@ -5,7 +5,15 @@ import { FlowCanvas, type CanvasEdge, type CanvasNode } from './flow-canvas.tsx'
 import { ConditionEditor, conditionIssues } from './condition-editor.tsx'
 import type { LayoutAlign, LayoutDirection, LayoutStrategy } from '@free-lzj/dsh-decision'
 import { detectConflicts } from './flow-conflicts.ts'
-import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageNodeType, TriageRun, TriageSource } from './rules.tsx'
+import type { TriageFieldSpec, TriageFlow, TriageFlowNode, TriageFlowParam, TriageNodeType, TriageRun, TriageSource } from './rules.tsx'
+
+/**
+ * 执行推送的地址。
+ *
+ * 与 Host 侧 paths.ts 的 RULES_EVENTS_PATH 是同一个路径：浏览器半边不 import Host
+ * 侧模块，所以字面量抄一份，改路由时两处一起改。
+ */
+const EVENTS_URL = '/dsh-console/rules/events'
 /** 一段节点上的条件，压缩成一行给人看。 */ /** 把一组条件读成一句人话；线上就写这一句。 */
 function conditionsOf(edge: { readonly when?: readonly Readonly<Record<string, unknown>>[] }): string | undefined {
   const when = edge.when
@@ -118,12 +126,50 @@ function nodeTitle(
   }
   return type?.label ?? node.type
 }
+/** 节点分组的说法：`action` 这种英文别直接给人看。 */
+/**
+ * 一条记录「用了多久」：拿它和同一节点的上一条记录的时刻差当耗时。
+ *
+ * 执行器只在节点返回后写记录，没有单独的 startedAt；串行时相邻两条之间正好夹着
+ * 一个节点的执行。同一批并发跑的几个节点，这个差值会是一整批的时间。
+ */
+function spentOf(steps: readonly { readonly at?: string }[], index: number): string | undefined {
+  const previous = index === 0 ? undefined : steps[index - 1]?.at
+  const at = steps[index]?.at
+  if (previous === undefined || at === undefined) return undefined
+  const elapsed = Date.parse(at) - Date.parse(previous)
+  if (!Number.isFinite(elapsed) || elapsed < 0) return undefined
+  return elapsed < 1000 ? String(elapsed) + 'ms' : (elapsed / 1000).toFixed(1) + 's'
+}
+
+/** 节点产出折叠起来给人看：截断，别把整个会话正文塞进属性面板。 */
+function formatRecordData(data: Readonly<Record<string, unknown>>): string {
+  let text: string
+  try {
+    text = JSON.stringify(data, null, 2) ?? ''
+  } catch {
+    return '（这份产出无法显示）'
+  }
+  return text.length > 4000 ? text.slice(0, 4000) + '\n…（已截断）' : text
+}
+
+function groupLabel(group: string): string {
+  if (group === 'trigger') return '触发'
+  if (group === 'control') return '控制'
+  if (group === 'action') return '动作'
+  return group
+}
 /** 节点第二行说明：节点自己的 `desc` → 被调用工作流的 `description`。 */
 function nodeDesc(node: TriageFlowNode, workflowOf: ReadonlyMap<string, TriageFlow>): string | undefined {
   return node.desc ?? referencedWorkflow(node, workflowOf)?.description
 }
-/** 把图摊成画布要的两种数组。 */
-function toCanvas(
+/**
+ * 把图摊成画布要的两种数组。
+ *
+ * 定义页与看板实例详情共用这一份：同一张图，两处画出来必须一模一样，
+ * 否则「实例里看到的」对不上「定义里改的」。
+ */
+export function toCanvas(
   flow: TriageFlow,
   types: ReadonlyMap<string, TriageNodeType>,
   workflowOf: ReadonlyMap<string, TriageFlow>,
@@ -303,9 +349,20 @@ function Field(props: {
   readonly spec: TriageFieldSpec
   readonly value: unknown
   readonly onChange: (value: unknown) => void
+  /** 本节点声明过的入参键：模板字段据此提示「能写哪些 {变量}」。 */
+  readonly vars?: readonly string[]
 }): ReactNode {
-  const { name, spec, value, onChange } = props
+  const { name, spec, value, onChange, vars } = props
   const label = spec.label ?? name
+  /** 模板字段要让人看见可用的变量，否则 `{subject}` 只能靠猜。 */
+  const templateHint =
+    spec.template !== true
+      ? undefined
+      : vars === undefined || vars.length === 0
+        ? '支持 {变量}：先在下面的「入参」里声明要用的键。'
+        : `可用变量：${vars.map((item) => `{${item}}`).join('、')}`
+  const hintOf = (text: string | undefined): ReactNode =>
+    text === undefined ? null : <span style={{ display: 'block', marginTop: 2 }}>{text}</span>
   const base = {
     width: '100%',
     boxSizing: 'border-box' as const,
@@ -362,6 +419,7 @@ function Field(props: {
             {spec.hint}
           </span>
         )}
+        {hintOf(templateHint)}
       </div>
     )
   }
@@ -398,7 +456,8 @@ function Field(props: {
             onChange(event.target.value)
           }}
         />
-        {spec.hint === undefined ? null : <span style={{ display: 'block', marginTop: 2 }}>{spec.hint}</span>}
+        {hintOf(spec.hint)}
+        {hintOf(templateHint)}
       </label>
     )
   }
@@ -419,7 +478,8 @@ function Field(props: {
           onChange(event.target.value)
         }}
       />
-      {spec.hint === undefined ? null : <span style={{ display: 'block', marginTop: 2 }}>{spec.hint}</span>}
+      {hintOf(spec.hint)}
+      {hintOf(templateHint)}
     </label>
   )
 }
@@ -427,9 +487,12 @@ function Field(props: {
 export interface FlowViewProps {
   readonly t: (key: never) => string
   readonly triage: TriageSource
+  /** 打开一条会话：节点跑过之后能看到它派了谁去干，并直接跳过去。 */
+  readonly openSession?: (sessionId: string) => { readonly ok: boolean; readonly message?: string }
+  readonly canOpenSession?: () => boolean
 }
 /** * 编排视图。 * @param props - 数据源。 * @returns 画布与属性面板。 */
-export function FlowView({ triage }: FlowViewProps): ReactNode {
+export function FlowView({ triage, openSession, canOpenSession: canOpenSessionFn }: FlowViewProps): ReactNode {
   const [flows, setFlows] = useState<readonly TriageFlow[]>([])
   const [types, setTypes] = useState<readonly TriageNodeType[]>([])
   const [error, setError] = useState('')
@@ -470,6 +533,17 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
+  /** 入参草稿：键 → 引用表达式（event.x / flow.x / 节点id.x）。键就是引用末段。 */
+  const [inputsDraft, setInputsDraft] = useState<Record<string, string>>({})
+  /** 出参草稿：键 → 是否落盘（false = 只给本轮，不写进任务变量）。 */
+  const [outputsDraft, setOutputsDraft] = useState<Record<string, boolean>>({})
+  /** 显示名草稿：空串表示用自动名（节点类型中文名 / 被调工作流名）。 */
+  const [labelDraft, setLabelDraft] = useState('')
+  /** 正在敲的新出参名。 */
+  const [newOutput, setNewOutput] = useState('')
+  /** 流程常量面板是否展开。 */
+  const [paramsOpen, setParamsOpen] = useState(false)
+  const [paramsDraft, setParamsDraft] = useState<readonly TriageFlowParam[]>([])
   /** 最近一次执行在图上留下的状态：节点 id → 成了 / 失败 / 挂起。 */
   /** 最近几次执行：页脚那条足迹条从这里取。 */
   const [runs, setRuns] = useState<readonly TriageRun[]>([])
@@ -562,6 +636,24 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   }, [triage])
   useEffect(() => {
     void load()
+  }, [load])
+  /**
+   * 跟着执行走：Host 在每个节点开跑 / 跑完时推一条信号，这里重读一次。
+   *
+   * 只推信号不推载荷——哪条记录该不该看到由那一次读决定，页面不必自己合并。
+   * 断线由浏览器自己重连，重连成功也会触发一次读，所以这里不写退避。
+   */
+  useEffect(() => {
+    // 测试环境（以及非常老的浏览器）没有 EventSource：没有它就不实时，
+    // 页面仍靠挂载时那一次读把足迹画出来。
+    if (typeof EventSource === 'undefined') return
+    const stream = new EventSource(EVENTS_URL)
+    const reload = (): void => { void load() }
+    stream.addEventListener('runs', reload)
+    return () => {
+      stream.removeEventListener('runs', reload)
+      stream.close()
+    }
   }, [load])
   /**
    * 全屏时按 ESC 退出。
@@ -691,14 +783,23 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   }, [flowRuns, trailRunId])
   /** 方块 id → 那次执行里它的结果。只标当前这张图的方块。 */
   const trail = useMemo(() => {
-    const marks = new Map<string, 'ok' | 'failed' | 'suspended'>()
+    const marks = new Map<string, 'ok' | 'failed' | 'suspended' | 'running'>()
     if (activeRun === undefined || flow === undefined) return marks
     const own = new Set(flow.nodes.map((node) => node.id))
+    // 先铺「跑过的」：记录只在节点返回后才有。
     for (const node of activeRun.nodes ?? []) {
       if (node.nodeId === undefined) continue
       if (node.flowId !== undefined && node.flowId !== flow.id) continue
       if (!own.has(node.nodeId)) continue
       marks.set(node.nodeId, node.ok ? 'ok' : 'failed')
+    }
+    // 再用进度盖上去：正在跑的那一批还没有记录，挂起的那一格记录写着 ok 但其实停在原地。
+    const progress = activeRun.progress
+    for (const id of progress?.running ?? []) {
+      if (own.has(id)) marks.set(id, 'running')
+    }
+    if (progress?.suspendedAt !== undefined && own.has(progress.suspendedAt)) {
+      marks.set(progress.suspendedAt, 'suspended')
     }
     return marks
   }, [activeRun, flow])
@@ -845,6 +946,105 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     }
     return rows
   }, [flow, node])
+  /**
+   * 入参能引用的来源。
+   *
+   * 只列**解析得开**的：事件字段（trigger 声明过的）、流程常量/入参、以及上游节点
+   * 声明过的出参。保存时引擎还会再校验一遍，这里先把错选项挡掉。
+   */
+  const inputChoices = useMemo(() => {
+    /** `name` 是纯中文名（没有就用键），`label` 是下拉里那一行：中文名 + 来源。 */
+    const rows: { value: string; name: string; label: string }[] = []
+    if (flow === undefined || node === undefined) return rows
+    for (const source of flow.nodes) {
+      if (source.type !== 'trigger') continue
+      for (const [key, decl] of Object.entries(source.outputs ?? {})) {
+        const name = decl.label ?? key
+        rows.push({ value: `event.${key}`, name, label: `${name}（事件）` })
+      }
+    }
+    const flowKeys = new Map<string, string>()
+    for (const param of flow.params ?? []) flowKeys.set(param.name, param.label ?? param.name)
+    for (const source of flow.nodes) {
+      if (source.type !== 'start') continue
+      const raw = source.config?.['params']
+      if (!Array.isArray(raw)) continue
+      for (const item of raw) {
+        if (typeof item === 'string') flowKeys.set(item, flowKeys.get(item) ?? item)
+        else if (item !== null && typeof item === 'object' && typeof (item as { name?: unknown }).name === 'string') {
+          const name = (item as { name: string }).name
+          flowKeys.set(name, flowKeys.get(name) ?? name)
+        }
+      }
+    }
+    for (const [key, name] of flowKeys) rows.push({ value: `flow.${key}`, name, label: `${name}（流程）` })
+    // 上游 = 反向可达的闭包；只连到它的那一层不够，隔一层也算。
+    const incoming = new Map<string, string[]>()
+    for (const item of flow.nodes) incoming.set(item.id, [])
+    for (const item of flow.nodes) {
+      for (const edge of item.out ?? []) incoming.get(edge.to)?.push(item.id)
+    }
+    const seen = new Set<string>()
+    const stack = [...(incoming.get(node.id) ?? [])]
+    while (stack.length > 0) {
+      const id = stack.pop() as string
+      if (seen.has(id)) continue
+      seen.add(id)
+      for (const up of incoming.get(id) ?? []) stack.push(up)
+    }
+    for (const source of flow.nodes) {
+      if (!seen.has(source.id)) continue
+      const declared = source.outputs
+      const keys =
+        declared === undefined
+          ? (typeMap.get(source.type)?.outputs ?? []).map((spec) => spec.key)
+          : Object.keys(declared)
+      for (const key of keys) {
+        const declaredLabel = declared?.[key]?.label ?? typeMap.get(source.type)?.outputs?.find((spec) => spec.key === key)?.label
+        const name = declaredLabel ?? key
+        rows.push({ value: `${source.id}.${key}`, name, label: `${name} · ${labelOf(source)}` })
+      }
+    }
+    return rows
+  }, [flow, node, typeMap, labelOf])
+  /** 改一条流程常量。空串等于删掉这个可选字段（exactOptionalPropertyTypes 不让写 undefined）。 */
+  const patchParam = useCallback(
+    (index: number, patch: { name?: string; label?: string; required?: boolean; default?: string }) => {
+      setParamsDraft((prev) =>
+        prev.map((item, at) => {
+          if (at !== index) return item
+          const next: { name: string; label?: string; required?: boolean; default?: string } = {
+            name: patch.name ?? item.name,
+          }
+          const label = patch.label ?? item.label
+          if (label !== undefined && label !== '') next.label = label
+          const fallback = patch.default ?? item.default
+          if (fallback !== undefined && fallback !== '') next.default = fallback
+          const required = patch.required ?? item.required
+          if (required !== undefined) next.required = required
+          return next
+        }),
+      )
+    },
+    [],
+  )
+  /** 保存这张图的流程常量。 */
+  const saveParams = useCallback(() => {
+    if (flow === undefined) return
+    setFailure('')
+    setNotice('')
+    void triage
+      .saveFlowParams({ flowId: flow.id, params: paramsDraft.filter((param) => param.name.trim() !== '') })
+      .then((result) => {
+        if (!result.ok) {
+          setFailure(result.message ?? '流程常量没有存下来')
+          return
+        }
+        setParamsOpen(false)
+        setNotice('流程常量已保存')
+        void load()
+      })
+  }, [triage, flow, paramsDraft, load])
   /** 试跑的结论落在哪条边上（`route->call-promo#1` 这种 id 里切出来）。 */
   /** 试跑的结论落在哪条边上：试跑回的 id 本身就是边的 id（`from->to#index`）。 */
   /**
@@ -882,10 +1082,18 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
     },
     [triage],
   )
-  const nodeStep =
+  /**
+   * 这个节点在这一轮里跑过的全部记录，按发生顺序。
+   *
+   * 以前只 find 第一条：循环体或重试过的节点，后面几次的结果永远看不到，
+   * 而人点开节点想知道的恰恰是「这一次和上一次差在哪」。
+   */
+  const nodeSteps =
     activeRun === undefined || node === undefined
-      ? undefined
-      : (activeRun.nodes ?? []).find((step) => step.nodeId === node.id)
+      ? []
+      : (activeRun.nodes ?? []).filter((step) => step.nodeId === node.id)
+  /** 点开节点时能不能从这一格跳进它派出去的会话。 */
+  const canOpenSession = openSession !== undefined && (canOpenSessionFn?.() ?? true)
   /** 选中连线时它的两端与定义，属性面板据此切成「改条件」。 */
   const edgeFrom = selectedEdge === undefined ? undefined : flow?.nodes.find((item) => item.id === selectedEdge.from)
   const edgeSpec = edgeFrom?.out?.[selectedEdge?.index ?? -1]
@@ -937,8 +1145,16 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   /** 选中时把当前配置抄进草稿；之后的编辑只动草稿。 */
   useEffect(() => {
     setDraft(node?.config === undefined ? {} : { ...node.config })
+    setInputsDraft(node?.inputs === undefined ? {} : { ...node.inputs })
+    setOutputsDraft(
+      node?.outputs === undefined
+        ? {}
+        : Object.fromEntries(Object.entries(node.outputs).map(([key, decl]) => [key, decl.persist !== false])),
+    )
+    setLabelDraft(node?.label ?? '')
+    setNewOutput('')
     setDirty(false)
-  }, [node?.id, node?.config])
+  }, [node?.id, node?.config, node?.inputs, node?.outputs, node?.label])
   /**
    * 拖动结束：只提交坐标，然后**把图重新读回来**。
    *
@@ -1107,16 +1323,38 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
   )
   const onSave = useCallback(() => {
     if (node === undefined) return
-    void triage.saveFlowNode({ nodeId: node.id, config: draft }).then((result) => {
-      if (!result.ok) {
-        setFailure(result.message ?? '没有存下来')
-        return
-      }
-      setFailure('')
-      setDirty(false)
-      void load()
-    })
-  }, [node, draft, triage, load])
+    // 空对象在引擎侧是「清掉这些声明」，不是「没改」——所以这里必须如实传。
+    const inputs = Object.fromEntries(
+      Object.entries(inputsDraft).filter(([key, ref]) => key.trim() !== '' && ref.trim() !== ''),
+    )
+    // 中文名是 yml 里手写的，面板不编辑它——但保存时**不能顺手丢掉**。
+    const outputs = Object.fromEntries(
+      Object.entries(outputsDraft).map(([key, persist]) => {
+        const label = node.outputs?.[key]?.label
+        return [key, { ...(label === undefined ? {} : { label }), ...(persist ? {} : { persist: false }) }]
+      }),
+    )
+    // 显示名只在真改过时才写：没动它就别往文件里塞一行重复的 label。
+    const label = labelDraft.trim()
+    const renamed = label !== (node.label ?? '')
+    void triage
+      .saveFlowNode({
+        nodeId: node.id,
+        config: draft,
+        inputs,
+        outputs,
+        ...(renamed ? { label } : {}),
+      })
+      .then((result) => {
+        if (!result.ok) {
+          setFailure(result.message ?? '没有存下来')
+          return
+        }
+        setFailure('')
+        setDirty(false)
+        void load()
+      })
+  }, [node, draft, inputsDraft, outputsDraft, labelDraft, triage, load])
   if (loading) return <p style={{ fontSize: 13, color: 'var(--dsw-alias-label-tertiary)' }}>正在读事件流…</p>
   if (flows.length === 0) {
     return (
@@ -1689,7 +1927,162 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
             + 新建分支
           </button>
         )}
+        {/* 流程常量：整张图共享的几个值。子工作流里靠 `flow.名字` 引用，
+            节点入参选它就等于「这次运行开始时定下来的值」。 */}
+        {flow === undefined ? null : (
+          <button
+            type='button'
+            title='这张图的流程常量，子工作流里用 flow.名字 引用'
+            onClick={() => {
+              setParamsDraft(flow.params ?? [])
+              setParamsOpen((prev) => !prev)
+            }}
+            style={{
+              fontSize: 12,
+              padding: '4px 10px',
+              borderRadius: 8,
+              border: '0.5px solid var(--dsw-alias-border-l2)',
+              background: paramsOpen ? 'var(--dsw-alias-bg-layer-3)' : 'transparent',
+              color: 'var(--dsw-alias-label-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            流程常量（{String(flow.params?.length ?? 0)}）
+          </button>
+        )}
       </div>
+      {paramsOpen && flow !== undefined ? (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            padding: '8px 10px',
+            marginBottom: 8,
+            borderRadius: 8,
+            border: '0.5px solid var(--dsw-alias-border-l2)',
+            background: 'var(--dsw-alias-settings-card-fill)',
+          }}
+        >
+          <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+            这张图共享的值：节点入参里选「流程 · 名字」，或者模板里写 {'{flow.名字}'}
+          </span>
+          {paramsDraft.length === 0 ? (
+            <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+              还没有声明
+            </span>
+          ) : (
+            paramsDraft.map((param, index) => (
+              <div key={index} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  value={param.name}
+                  placeholder='名字'
+                  onChange={(event) => { patchParam(index, { name: event.target.value }) }}
+                  style={{ width: 110, fontSize: 11 }}
+                />
+                <input
+                  value={param.label ?? ''}
+                  placeholder='说明（可选）'
+                  onChange={(event) => { patchParam(index, { label: event.target.value }) }}
+                  style={{ flex: 1, minWidth: 90, fontSize: 11 }}
+                />
+                <label
+                  style={{
+                    display: 'flex',
+                    gap: 3,
+                    alignItems: 'center',
+                    fontSize: 11,
+                    color: 'var(--dsw-alias-label-tertiary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type='checkbox'
+                    checked={param.required === true}
+                    onChange={(event) => { patchParam(index, { required: event.target.checked }) }}
+                  />
+                  必填
+                </label>
+                <input
+                  value={param.default ?? ''}
+                  placeholder='默认值'
+                  onChange={(event) => { patchParam(index, { default: event.target.value }) }}
+                  style={{ width: 90, fontSize: 11 }}
+                />
+                <button
+                  type='button'
+                  title='删掉这一条'
+                  onClick={() => { setParamsDraft((prev) => prev.filter((_, at) => at !== index)) }}
+                  style={{
+                    flex: '0 0 auto',
+                    fontSize: 11,
+                    lineHeight: '16px',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--dsw-radius-sm)',
+                    border: '0.5px solid var(--dsw-alias-border-l2)',
+                    background: 'transparent',
+                    color: 'var(--dsw-alias-label-tertiary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))
+          )}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              type='button'
+              onClick={() => { setParamsDraft((prev) => [...prev, { name: '' }]) }}
+              style={{
+                fontSize: 11,
+                lineHeight: '16px',
+                padding: '2px 8px',
+                borderRadius: 'var(--dsw-radius-sm)',
+                border: '0.5px solid var(--dsw-alias-border-l2)',
+                background: 'transparent',
+                color: 'var(--dsw-alias-label-secondary)',
+                cursor: 'pointer',
+              }}
+            >
+              + 加一条
+            </button>
+            <button
+              type='button'
+              onClick={saveParams}
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11,
+                lineHeight: '16px',
+                padding: '2px 10px',
+                borderRadius: 'var(--dsw-radius-sm)',
+                border: 'none',
+                background: 'var(--dsw-alias-state-business-primary)',
+                color: 'var(--dsw-alias-bg-layer-1)',
+                cursor: 'pointer',
+              }}
+            >
+              保存
+            </button>
+            <button
+              type='button'
+              onClick={() => { setParamsOpen(false) }}
+              style={{
+                fontSize: 11,
+                lineHeight: '16px',
+                padding: '2px 8px',
+                borderRadius: 'var(--dsw-radius-sm)',
+                border: '0.5px solid var(--dsw-alias-border-l2)',
+                background: 'transparent',
+                color: 'var(--dsw-alias-label-tertiary)',
+                cursor: 'pointer',
+              }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
       {/* 足迹条：这张图最近跑过的几次，点一次就把画布上的标记换成那一次。
           没有它的时候，画布标的是「全库最新一条有足迹的记录」——换个图看同一次执行，
           标记会整片消失，因为那张图的方块 id 在这条记录里一个都没有。 */}
@@ -2143,53 +2536,133 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
           </aside>
         )}
         {node === undefined || nodeType === undefined ? null : (
-          <aside style={{ width: 300, flex: '0 0 300px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <aside style={{ width: 380, flex: '0 0 380px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
             {
               <>
-                <div>
-                  <div style={{ fontSize: 14, lineHeight: '22px', fontWeight: 600 }}>
-                    {node.label ?? nodeType.label}
-                  </div>
-                  <div style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
-                    {node.type} · {nodeType.group}
-                    {nodeType.sideEffect ? ' · 有副作用' : ''}
-                  </div>
-                </div>
-                {/* 上次跑成什么样。画布上那个 6px 的圆点在缩到 0.45 时基本看不见，
-                  真正想确认结果的人都在这儿看。 */}
-                {nodeStep === undefined ? null : (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 2,
-                      padding: '6px 8px',
-                      borderRadius: 'var(--dsw-radius-sm)',
-                      background: 'var(--dsw-alias-bg-layer-3)',
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                    显示名（留空就用自动名：{nodeType.label}）
+                  </span>
+                  <input
+                    value={labelDraft}
+                    placeholder={nodeType.label}
+                    onChange={(event) => {
+                      setDirty(true)
+                      setLabelDraft(event.target.value)
                     }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 11,
-                        lineHeight: '16px',
-                        color: nodeStep.ok
-                          ? 'var(--dsw-alias-state-success-primary)'
-                          : 'var(--dsw-alias-state-error-primary)',
-                      }}
-                    >
-                      上次跑：{nodeStep.ok ? '成功' : '失败'}
-                      {nodeStep.failure === undefined ? '' : `（${nodeStep.failure}）`}
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontSize: 14,
+                      fontWeight: 600,
+                      padding: '5px 8px',
+                      borderRadius: 'var(--dsw-radius-sm)',
+                      border: '0.5px solid var(--dsw-alias-border-l2)',
+                      background: 'var(--dsw-alias-bg-layer-1)',
+                      color: 'inherit',
+                    }}
+                  />
+                  <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                    {groupLabel(nodeType.group)} · {nodeType.label}（{node.type}）
+                    {nodeType.sideEffect ? ' · 有副作用' : ''}
+                    {` · id ${node.id}`}
+                  </span>
+                </div>
+                {/* 这一轮在这个节点上跑过什么。画布上那个 6px 的圆点在缩到 0.45 时
+                  基本看不见，真正想确认结果的人都在这儿看；循环或重试过的节点会列出多条。 */}
+                {nodeSteps.length === 0 ? null : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                      这一轮跑过 {String(nodeSteps.length)} 次
                     </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        lineHeight: '16px',
-                        color: 'var(--dsw-alias-label-secondary)',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {nodeStep.detail}
-                    </span>
+                    {nodeSteps.map((step, index) => {
+                      const spent = spentOf(nodeSteps, index)
+                      const sessionId = step.sessionId
+                      return (
+                        <div
+                          key={(step.at ?? '') + '#' + String(index)}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 4,
+                            padding: '6px 8px',
+                            borderRadius: 'var(--dsw-radius-sm)',
+                            background: 'var(--dsw-alias-bg-layer-3)',
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: 'flex',
+                              gap: 8,
+                              alignItems: 'baseline',
+                              fontSize: 11,
+                              lineHeight: '16px',
+                              color: step.ok
+                                ? 'var(--dsw-alias-state-success-primary)'
+                                : 'var(--dsw-alias-state-error-primary)',
+                            }}
+                          >
+                            第 {String(index + 1)} 次：{step.ok ? '成功' : '失败'}
+                            {step.failure === undefined ? '' : '（' + step.failure + '）'}
+                            {spent === undefined ? null : (
+                              <span style={{ color: 'var(--dsw-alias-label-tertiary)' }}>耗时 {spent}</span>
+                            )}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              lineHeight: '16px',
+                              color: 'var(--dsw-alias-label-secondary)',
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {step.detail}
+                          </span>
+                          {step.data === undefined ? null : (
+                            <details>
+                              <summary style={{ fontSize: 11, lineHeight: '16px', cursor: 'pointer', color: 'var(--dsw-alias-label-secondary)' }}>
+                                产出
+                              </summary>
+                              <pre
+                                style={{
+                                  margin: '4px 0 0',
+                                  maxHeight: 240,
+                                  overflow: 'auto',
+                                  fontSize: 11,
+                                  lineHeight: '16px',
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                  color: 'var(--dsw-alias-label-secondary)',
+                                }}
+                              >
+                                {formatRecordData(step.data)}
+                              </pre>
+                            </details>
+                          )}
+                          {sessionId === undefined || !canOpenSession ? null : (
+                            <button
+                              type='button'
+                              onClick={() => {
+                                const result = openSession?.(sessionId)
+                                if (result !== undefined && !result.ok) setNotice(result.message ?? '打不开这条会话')
+                              }}
+                              style={{
+                                alignSelf: 'flex-start',
+                                fontSize: 11,
+                                padding: '2px 8px',
+                                borderRadius: 'var(--dsw-radius-sm)',
+                                border: '0.5px solid var(--dsw-alias-border-l2)',
+                                background: 'var(--dsw-alias-bg-layer-1)',
+                                color: 'inherit',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              打开会话
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2253,6 +2726,213 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                       </button>
                     ))
                   )}
+                </div>
+                {/* 入参：它从上下文取哪些名字。键固定为引用末段——执行期模板直接读
+                    `vars[键]`，允许自由改名只会让声明和运行期对不上。 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                    入参（它从上下文取什么）
+                  </span>
+                  {Object.keys(inputsDraft).length === 0 ? (
+                    <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                      没有声明：它只用事件本身，或者还没配
+                    </span>
+                  ) : (
+                    Object.entries(inputsDraft).map(([key, ref]) => (
+                      <div key={key} style={{ display: 'flex', gap: 4, alignItems: 'center', minWidth: 0 }}>
+                        {/* 中文名在上、键在下：键是给引擎看的，人认的是中文。 */}
+                        <span
+                          style={{
+                            flex: '0 0 auto',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            maxWidth: 120,
+                            minWidth: 0,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 11,
+                              lineHeight: '16px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {inputChoices.find((choice) => choice.value === ref)?.name ?? key}
+                          </span>
+                          <code style={{ fontSize: 10, lineHeight: '14px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                            {key}
+                          </code>
+                        </span>
+                        <select
+                          value={ref}
+                          onChange={(event) => {
+                            setDirty(true)
+                            setInputsDraft((prev) => ({ ...prev, [key]: event.target.value }))
+                          }}
+                          style={{ flex: 1, minWidth: 0, fontSize: 11 }}
+                        >
+                          {inputChoices.some((choice) => choice.value === ref) ? null : (
+                            <option value={ref}>{ref}（现在解析不开）</option>
+                          )}
+                          {inputChoices.map((choice) => (
+                            <option key={choice.value} value={choice.value}>
+                              {choice.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type='button'
+                          title='删掉这条入参'
+                          onClick={() => {
+                            setDirty(true)
+                            setInputsDraft((prev) => {
+                              const next = { ...prev }
+                              delete next[key]
+                              return next
+                            })
+                          }}
+                          style={{
+                            flex: '0 0 auto',
+                            fontSize: 11,
+                            lineHeight: '16px',
+                            padding: '1px 6px',
+                            borderRadius: 'var(--dsw-radius-sm)',
+                            border: '0.5px solid var(--dsw-alias-border-l2)',
+                            background: 'transparent',
+                            color: 'var(--dsw-alias-label-tertiary)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))
+                  )}
+                  <select
+                    value=''
+                    onChange={(event) => {
+                      const ref = event.target.value
+                      if (ref === '') return
+                      const key = ref.slice(ref.indexOf('.') + 1)
+                      setDirty(true)
+                      setInputsDraft((prev) => ({ ...prev, [key]: ref }))
+                    }}
+                    style={{ fontSize: 11 }}
+                  >
+                    <option value=''>+ 加入参…</option>
+                    {inputChoices
+                      .filter((choice) => !(choice.value.slice(choice.value.indexOf('.') + 1) in inputsDraft))
+                      .map((choice) => (
+                        <option key={choice.value} value={choice.value}>
+                          {choice.label}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                {/* 出参：它往上下文写什么。类型自带的不用写，这里只列本节点额外声明的。 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                    出参（它产出什么）
+                  </span>
+                  {(nodeType.outputs ?? []).length === 0 ? null : (
+                    <span style={{ fontSize: 11, lineHeight: '16px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                      类型自带：
+                      {(nodeType.outputs ?? [])
+                        .map((spec) => (spec.label === undefined ? spec.key : `${spec.label}（${spec.key}）`))
+                        .join('、')}
+                    </span>
+                  )}
+                  {Object.entries(outputsDraft).map(([key, persist]) => (
+                    <div key={key} style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
+                      <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: 11, lineHeight: '16px' }}>
+                          {node.outputs?.[key]?.label ?? key}
+                        </span>
+                        <code style={{ fontSize: 10, lineHeight: '14px', color: 'var(--dsw-alias-label-tertiary)' }}>
+                          {key}
+                        </code>
+                      </span>
+                      <label
+                        title='落盘：后面的节点也能用；不勾就只在本轮内存里'
+                        style={{
+                          display: 'flex',
+                          gap: 3,
+                          alignItems: 'center',
+                          fontSize: 11,
+                          color: 'var(--dsw-alias-label-tertiary)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type='checkbox'
+                          checked={persist}
+                          onChange={(event) => {
+                            setDirty(true)
+                            setOutputsDraft((prev) => ({ ...prev, [key]: event.target.checked }))
+                          }}
+                        />
+                        落盘
+                      </label>
+                      <button
+                        type='button'
+                        title='删掉这条出参声明'
+                        onClick={() => {
+                          setDirty(true)
+                          setOutputsDraft((prev) => {
+                            const next = { ...prev }
+                            delete next[key]
+                            return next
+                          })
+                        }}
+                        style={{
+                          flex: '0 0 auto',
+                          fontSize: 11,
+                          lineHeight: '16px',
+                          padding: '1px 6px',
+                          borderRadius: 'var(--dsw-radius-sm)',
+                          border: '0.5px solid var(--dsw-alias-border-l2)',
+                          background: 'transparent',
+                          color: 'var(--dsw-alias-label-tertiary)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <input
+                      value={newOutput}
+                      onChange={(event) => { setNewOutput(event.target.value) }}
+                      placeholder='新出参名'
+                      style={{ flex: 1, minWidth: 0, fontSize: 11 }}
+                    />
+                    <button
+                      type='button'
+                      onClick={() => {
+                        const key = newOutput.trim()
+                        if (key === '') return
+                        setDirty(true)
+                        setOutputsDraft((prev) => ({ ...prev, [key]: true }))
+                        setNewOutput('')
+                      }}
+                      style={{
+                        flex: '0 0 auto',
+                        fontSize: 11,
+                        lineHeight: '16px',
+                        padding: '1px 8px',
+                        borderRadius: 'var(--dsw-radius-sm)',
+                        border: '0.5px solid var(--dsw-alias-border-l2)',
+                        background: 'transparent',
+                        color: 'var(--dsw-alias-label-secondary)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      加
+                    </button>
+                  </div>
                 </div>
                 {/* 调用方 vs 被调用方：子工作流的「开始」声明了需要哪些变量，这里能看到
                     自己只传了哪些。以前这层对账只能在运行时撞失败才发现。 */}
@@ -2510,6 +3190,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                       key={name}
                       name={name}
                       spec={spec}
+                      vars={Object.keys(inputsDraft)}
                       value={draft[name]}
                       onChange={(value) => {
                         setDirty(true)
@@ -2548,6 +3229,7 @@ export function FlowView({ triage }: FlowViewProps): ReactNode {
                     type='button'
                     onClick={() => {
                       setDraft(node.config === undefined ? {} : { ...node.config })
+                      setLabelDraft(node.label ?? '')
                       setDirty(false)
                     }}
                     disabled={!dirty}

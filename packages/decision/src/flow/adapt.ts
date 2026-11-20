@@ -68,9 +68,11 @@ export function actionToFlowNode(
 ): FlowNode {
   return {
     type: action.kind,
-    label: action.kind,
+    label: action.label ?? action.kind,
     group: 'action',
     sideEffect: action.sideEffect === true,
+    // 动作自己声明的字段直接交给面板：桥只搬，不重新发明一份。
+    ...(action.config === undefined ? {} : { config: action.config }),
     async run(spec: FlowNodeSpec, context: FlowContext): Promise<NodeResult> {
       // runner 注入了 xecuteAction 就走它：撤销、延迟排队、试运行都由那边管。
       if (context.executeAction !== undefined) {

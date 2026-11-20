@@ -223,6 +223,13 @@ export const CLS = {
   chainBody: 'dshc-chain-body',
   chainName: 'dshc-chain-name',
   chainDetail: 'dshc-chain-detail',
+  chainMark: 'dshc-chain-mark',
+  chainStepRunning: 'dshc-chain-step-running',
+  chainMore: 'dshc-chain-more',
+  chainSummary: 'dshc-chain-summary',
+  chainOut: 'dshc-chain-out',
+  chainSpent: 'dshc-chain-spent',
+  chainData: 'dshc-chain-data',
   rhythmRow: 'dshc-rhythm-row',
   rhythmLabel: 'dshc-rhythm-label',
   detail: 'dshc-detail',
@@ -236,6 +243,28 @@ export const CLS = {
   detailEventText: 'dshc-detail-event-text',
   detailEventRule: 'dshc-detail-event-rule',
   detailActions: 'dshc-detail-actions',
+  detailModal: 'dshc-detail-modal',
+  detailModalContent: 'dshc-detail-modal-content',
+  flowBar: 'dshc-flow-bar',
+  flowSplit: 'dshc-flow-split',
+  flowSide: 'dshc-flow-side',
+  flowBox: 'dshc-flow-box',
+  flowNodePane: 'dshc-flow-node-pane',
+  flowFull: 'dshc-flow-full',
+  flowNodeCard: 'dshc-flow-node-card',
+  flowNodeHead: 'dshc-flow-node-head',
+  flowNodeName: 'dshc-flow-node-name',
+  flowNodeSection: 'dshc-flow-node-section',
+  flowNodePre: 'dshc-flow-node-pre',
+  flowHint: 'dshc-flow-hint',
+  nodeList: 'dshc-node-list',
+  nodeRow: 'dshc-node-row',
+  nodeRowHead: 'dshc-node-row-head',
+  nodeAt: 'dshc-node-at',
+  nodeSpent: 'dshc-node-spent',
+  nodeDetail: 'dshc-node-detail',
+  flowTimeline: 'dshc-flow-timeline',
+  flowTimelineSummary: 'dshc-flow-timeline-summary',
 } as const
 
 /** Id of the one style element the workbench installs, keyed so a reload replaces it. */
@@ -335,10 +364,23 @@ const CSS = `
 .${CLS.chainName}{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .${CLS.chainDetail}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.chainStepFailed} .${CLS.chainName}{color:var(--dsw-alias-state-error-primary)}
+.${CLS.chainMark}{margin-left:6px;padding:0 4px;border-radius:var(--dsw-radius-sm);font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-layer-3)}
+.${CLS.chainStepRunning} .${CLS.chainGlyph}{animation:dshc-chain-pulse 1.1s ease-in-out infinite}
+@keyframes dshc-chain-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.${CLS.chainStepRunning} .${CLS.chainGlyph}{animation:none}}
+.${CLS.chainMore}{display:block}
+.${CLS.chainSummary}{display:block;cursor:pointer;list-style:none}
+.${CLS.chainSummary}::-webkit-details-marker{display:none}
+.${CLS.chainOut}{display:flex;flex-direction:column;gap:4px;margin-top:2px;padding:4px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3)}
+.${CLS.chainSpent}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.chainData}{margin:0;max-height:240px;overflow:auto;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}
 /* 归档节奏：四个一档的选择，当前那档是主按钮。 */
 .${CLS.rhythmRow}{display:flex;flex:none;flex-wrap:wrap;align-items:center;gap:6px}
 .${CLS.rhythmLabel}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
-/* 详情弹窗：抬头、触发记录、链路、动作。 */
+/* 详情弹窗：抬头、触发记录、链路、动作。
+   弹窗要装得下一张流程图，所以撑到 80% 视口；内容列自己滚，弹窗本身不滚。 */
+.${CLS.detailModal}{width:80vw;height:80vh;max-height:100%}
+.${CLS.detailModalContent}{flex:1;min-height:0;overflow-y:auto}
 .${CLS.detail}{display:flex;flex-direction:column;gap:16px}
 .${CLS.detailHead}{display:flex;flex-direction:column;gap:4px}
 .${CLS.detailTitle}{margin:0;font-size:15px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
@@ -350,6 +392,35 @@ const CSS = `
 .${CLS.detailEventText}{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
 .${CLS.detailEventRule}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 .${CLS.detailActions}{display:flex;flex-wrap:wrap;gap:6px}
+/* 实例详情里的执行流程：左图画布、右一格详情。
+   两栏是必须的——详情原来堆在画布下面，80vh 的弹窗里画布占掉一半，点一下节点卡片
+   掉到折叠线以下，看着就是「点了没反应」。 */
+.${CLS.flowSplit}{display:flex;align-items:stretch;gap:12px;min-height:0}
+.${CLS.flowSide}{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0;min-height:0}
+.${CLS.flowBar}{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px}
+.${CLS.flowBar} .${CLS.flowHint}{max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.${CLS.flowBox}{border:0.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);overflow:hidden;background:var(--dsw-alias-bg-layer-1)}
+.${CLS.flowNodePane}{flex:none;width:320px;max-height:440px;overflow-y:auto;padding-right:2px}
+/* 全屏：盖住整个视口，Esc 退出。弹窗再大也大不过屏幕。 */
+.${CLS.flowFull}{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;padding:14px 16px;background:var(--dsw-alias-bg-layer-1)}
+.${CLS.flowFull} .${CLS.flowSplit}{flex:1;min-height:0}
+.${CLS.flowFull} .${CLS.flowBox}{flex:1;min-height:0;display:flex}
+.${CLS.flowFull} .${CLS.flowNodePane}{width:400px;max-height:none}
+.${CLS.flowNodeCard}{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:0.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2)}
+.${CLS.flowNodeHead}{display:flex;align-items:center;gap:8px}
+.${CLS.flowNodeName}{font-size:13px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.${CLS.flowNodeSection}{margin:0;font-size:11px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-tertiary)}
+.${CLS.flowNodePre}{margin:0;max-height:220px;overflow:auto;font-size:11px;line-height:16px;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-label-secondary)}
+.${CLS.flowHint}{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-warn-primary)}
+.${CLS.nodeList}{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.${CLS.nodeRow}{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-3)}
+.${CLS.nodeRowHead}{display:flex;align-items:center;gap:8px}
+.${CLS.nodeAt}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.${CLS.nodeSpent}{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.${CLS.nodeDetail}{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.${CLS.flowTimeline}{margin-top:4px}
+.${CLS.flowTimelineSummary}{cursor:pointer;list-style:none;font-size:11px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-tertiary)}
+.${CLS.flowTimelineSummary}::-webkit-details-marker{display:none}
 .${CLS.boardCard}{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:0.5px solid var(--dsw-alias-settings-card-stroke);border-radius:var(--dsw-radius-xl);background:var(--dsw-alias-settings-card-fill);cursor:grab}
 .${CLS.boardCard}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .${CLS.cardFrom}{display:flex;align-items:center;gap:6px;min-width:0}
