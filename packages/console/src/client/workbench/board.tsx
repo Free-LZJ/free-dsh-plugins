@@ -26,7 +26,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  Button, DisclosureRow, IconChevronDownOutlineRegular, Modal, Pill, StateDot, Tag,
+  Button, DisclosureRow, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconCopyOutlineRegular, Modal,
+  Pill, StateDot, Tag, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   ArchiveRhythm, ConsoleNoticeRecord, Task, TaskJump, TaskNodeRecord, TaskProgress, WorkbenchColumn, WorkbenchState,
@@ -825,6 +826,7 @@ function TaskList(props: {
               </span>
             </button>
             <span className={CLS.taskCardActions}>
+              <CopyTaskIdButton id={task.key} t={props.t} />
               {task.failed && (
                 <Button size="sm" variant="outline" disabled={busy} onClick={() => { props.onRetry(task) }}>
                   {props.t('remedyRetry')}
@@ -849,6 +851,39 @@ function TaskList(props: {
         )
       })}
     </ul>
+  )
+}
+
+/**
+ * 「复制 ID」：把这张卡的任务 id 放进剪贴板。
+ *
+ * 回执只换一秒文字：`writeClipboard` 内部已在异步剪贴板不可用时退回 `execCommand`，
+ * 两条路都不通的多半是没有剪贴板的环境，再提示一遍也只是噪音。
+ */
+function CopyTaskIdButton(props: { readonly id: string; readonly t: Translate }): ReactNode {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => {
+    if (timer.current !== undefined) clearTimeout(timer.current)
+  }, [])
+  const copy = (): void => {
+    void writeClipboard(props.id).then((ok) => {
+      if (!ok) return
+      setCopied(true)
+      timer.current = setTimeout(() => { setCopied(false) }, 1000)
+    })
+  }
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className={CLS.taskCardCopy}
+      icon={copied ? <IconCheckOutlineRegular size={14} /> : <IconCopyOutlineRegular size={14} />}
+      title={props.id}
+      onClick={copy}
+    >
+      {copied ? props.t('copyTaskIdDone') : props.t('copyTaskId')}
+    </Button>
   )
 }
 

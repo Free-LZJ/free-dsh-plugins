@@ -213,6 +213,8 @@ export const CLS = {
   taskCardHint: 'dshc-task-card-hint',
   taskCardOpen: 'dshc-task-card-open',
   taskCardActions: 'dshc-task-card-actions',
+  /** 复制 ID 靠左：它与右边那排「处理这条」的动作不是一回事。 */
+  taskCardCopy: 'dshc-task-card-copy',
   archiveGroups: 'dshc-archive-groups',
   dimRow: 'dshc-dim-row',
   dimLabel: 'dshc-dim-label',
@@ -344,6 +346,7 @@ const CSS = `
 .${CLS.taskCardOpen}{display:flex;flex-direction:column;gap:6px;width:100%;padding:10px 12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .${CLS.taskCardOpen}:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}
 .${CLS.taskCardActions}{display:flex;justify-content:flex-end;gap:6px;padding:0 12px 8px}
+.${CLS.taskCardCopy}{margin-right:auto}
 /* 归档里的分组：每组一个折叠行，组与组之间留一点呼吸。 */
 .${CLS.archiveGroups}{display:flex;flex-direction:column;gap:8px}
 /* 归档的维度切换：一行胶囊，选中那档自己亮着。 */

@@ -338,3 +338,26 @@ describe('看板画出来', () => {
     expect(screen.getByText('看板读不到')).toBeTruthy()
   })
 })
+
+describe('复制任务 ID', () => {
+  /** 装一个只记录写入的剪贴板。 */
+  function stubClipboard(): string[] {
+    const written: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text: string) => { written.push(text) } },
+    })
+    return written
+  }
+
+  it('点一下就复制这张卡的任务 id，并回一句已复制', async () => {
+    const written = stubClipboard()
+    const now = Date.now()
+    const at = new Date(now).toISOString()
+    const one = task({ id: 'tsk-42', at, updatedAt: at })
+    render(<BoardView face={face()} t={t} data={{ tasks: buildTasks([one], new Set(), 60_000, now, t), loaded: true, error: '' }} />)
+    fireEvent.click(screen.getByRole('button', { name: t('copyTaskId') }))
+    await waitFor(() => { expect(written).toEqual(['tsk-42']) })
+    expect(await screen.findByText(t('copyTaskIdDone'))).toBeTruthy()
+  })
+})
