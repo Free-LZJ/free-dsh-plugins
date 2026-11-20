@@ -11,6 +11,17 @@
 
 因此 tsdown 的 entry 指向 `lib/types/...`，不要改成 `src/...`。
 
+## 构建顺序
+
+根 `build` 是**两阶段**，不是一次 `pnpm -r run build`：
+
+1. `pnpm -r --workspace-concurrency=1 --filter "@free-lzj/dsh-console..." run build`：先按拓扑建 console 及其依赖。
+2. `pnpm -r --filter "!@free-lzj/dsh-console..." run build`：再建其余包。
+
+原因：mail 的浏览器半边 import `@free-lzj/dsh-console/contract`，该子路径的 `exports.types` 指向 console 的 `lib/`。console 只是 mail 的 `devDependency`，pnpm 的递归分层会把 console 与 mail 放进同一波并行跑，干净 checkout 上 mail 会先于 console 产物开始并报 `TS2307`（本地有 `lib/` 残留时看不到）。各子包自己的 `build` 脚本保持原样。
+
+不要简化回 `pnpm -r run build`。新增依赖 console 契约的包不需要改脚本，它天然落在第二阶段。
+
 ## 依赖
 
 - 仓库使用 `typescript`、`tsdown`、`vitest` 作为根 devDependencies，包只声明自己真正用到的。

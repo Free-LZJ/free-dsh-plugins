@@ -12,7 +12,33 @@ pnpm run test       # vitest run
 
 **先 build 再 test**：产物本身有契约测试（注册 id、`dsh.client` 声明、`exports["./client"]`、浏览器入口不含 Host 半边取值）。没有 `lib/` 时其中一条会显示 skipped —— 看到 skipped 就说明你漏了 build，不是通过。
 
-CI 在 `windows-latest` 上跑同样三步。`tests/**` 里 adapter 类 spec 断言 Windows 盘符路径（`C:`、`D:` 夹具），不要在本地以 Linux 结果判断通过与否。
+CI 在 `windows-latest` 上跑同样三步（`.github/workflows/ci.yml`，Node 24 + `pnpm install --frozen-lockfile`）。
+
+## 提交前：CI 同款检查
+
+改完 `src/` 或任何跨包代码后，提交前必须完整跑一遍上面三步，以**退出码**为准：输出里出现 `error` 字样不算通过，`exit 0` 才算。三条命令顺序不能换。
+
+CI 红了先定位，不要猜：
+
+```sh
+gh run list --limit 5                      # 找到失败的 run id
+gh run view <id> --log-failed              # 看第一条 ##[error]，那才是根因
+```
+
+### 干净 checkout 必须能 typecheck
+
+本地 `packages/*/lib/` 是 gitignore 的构建残留。它存在时 typecheck 可能通过一条**干净 checkout 过不了**的解析，CI 因此变红——本地全绿不代表 CI 绿。
+
+- 新增任何跨包 import（尤其是子路径导出，如 `@free-lzj/dsh-console/contract`）时，必须在 `tsconfig.base.json` 的 `paths` 里加一条指向该包**源码**的映射，写法与既有的 `@free-lzj/dsh-decision` 一致。包的 `exports` 指向 `lib/` 里的构建产物，干净 checkout 上还没有它。
+- 改完删掉被依赖包的 `lib/` 再 typecheck 一次，证明干净态能过：
+
+```sh
+Remove-Item -Recurse -Force packages/console/lib   # 换成实际被 import 的那个包
+pnpm run typecheck
+```
+
+- 各包的 `tsconfig.build.json` 会清空 `paths`、改解析构建产物；新增映射后不要动这一步，构建仍必须走 `lib/`。`tests/**` 里 adapter 类 spec 断言 Windows 盘符路径（`C:`、`D:` 夹具），不要在本地以 Linux 结果判断通过与否。
+- 验证一律走 `pnpm run typecheck`（脚本带 `--noEmit`）。不要直接 `tsc -p packages/<包>/tsconfig.json`：它会把 `.js` / `.d.ts` / `.map` 吐进 `src/`，污染工作区，还让后续 typecheck 解析到这些残骸。
 
 ## 命名与位置
 
